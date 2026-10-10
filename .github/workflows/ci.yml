@@ -23,10 +23,49 @@ jobs:
         working-directory: web
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race -count=1 ./...
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_PASSWORD: pw, POSTGRES_DB: consolidarr }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26" }
+      - run: mkdir -p web/dist && touch web/dist/.gitkeep
+      - run: go test -count=1 ./internal/store
+        env:
+          CONSOLIDARR_TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/consolidarr?sslmode=disable
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm audit --audit-level=high
+        working-directory: web
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.26"
+          go-package: ./...
+
+  smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t consolidarr:ci .
+      - run: scripts/smoke.sh consolidarr:ci
 
   image:
-    needs: test
+    needs: [test, test-postgres, security, smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

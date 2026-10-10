@@ -414,7 +414,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		for _, ep := range it.Episodes {
 			packEps[ep.EpisodeNumber] = true
 		}
-		ok, why := probe(inst, it.Path)
+		ok, why := probeFn(inst, it.Path)
 		if why == "unverified" {
 			unverified = true
 		} else if !ok {
@@ -494,6 +494,9 @@ func maxf(a, b float64) float64 {
 	}
 	return b
 }
+
+// probeFn is swappable so tests can simulate bad downloads without ffprobe.
+var probeFn = probe
 
 // probe checks a file with ffprobe through the instance's path mapping.
 // why == "unverified" means ffprobe or the file isn't reachable (not an error).

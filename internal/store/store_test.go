@@ -1,15 +1,29 @@
 package store
 
 import (
+	"database/sql"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
 )
 
+// open uses SQLite, or Postgres when CONSOLIDARR_TEST_DATABASE_URL is set (CI runs both).
 func open(t *testing.T) *Store {
 	t.Helper()
-	st, err := Open(t.TempDir(), "")
+	url := os.Getenv("CONSOLIDARR_TEST_DATABASE_URL")
+	if url != "" {
+		db, err := sql.Open("pgx", url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`drop schema public cascade; create schema public`); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+	st, err := Open(t.TempDir(), url)
 	if err != nil {
 		t.Fatal(err)
 	}
