@@ -38,9 +38,9 @@ func (s *Store) rebind(q string) string {
 	return b.String()
 }
 
-func (s *Store) Exec(q string, a ...any) (sql.Result, error) { return s.Exec(s.rebind(q), a...) }
-func (s *Store) Query(q string, a ...any) (*sql.Rows, error) { return s.Query(s.rebind(q), a...) }
-func (s *Store) QueryRow(q string, a ...any) *sql.Row        { return s.QueryRow(s.rebind(q), a...) }
+func (s *Store) Exec(q string, a ...any) (sql.Result, error) { return s.DB.Exec(s.rebind(q), a...) }
+func (s *Store) Query(q string, a ...any) (*sql.Rows, error) { return s.DB.Query(s.rebind(q), a...) }
+func (s *Store) QueryRow(q string, a ...any) *sql.Row        { return s.DB.QueryRow(s.rebind(q), a...) }
 
 const schemaTmpl = `
 create table if not exists users(id {{PK}}, username text unique not null, pw_hash text not null);

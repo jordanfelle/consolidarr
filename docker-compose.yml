@@ -1,0 +1,16 @@
+services:
+  consolidarr:
+    image: ghcr.io/jordanfelle/consolidarr:latest
+    container_name: consolidarr
+    restart: unless-stopped
+    ports:
+      - "7480:7480"
+    environment:
+      TZ: Etc/UTC
+      # Optional: use Postgres instead of the bundled SQLite file.
+      # CONSOLIDARR_DATABASE_URL: postgres://consolidarr:password@postgres:5432/consolidarr?sslmode=disable
+    volumes:
+      - ./data:/data
+      # Optional: mount the download directory your Sonarr(s) import from so packs can be
+      # verified with ffprobe before anything is deleted. Then fill both path fields on the instance.
+      # - /downloads:/downloads:ro
