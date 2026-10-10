@@ -17,12 +17,21 @@ import (
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
 
+// removal records one bulk removal of download-queue items.
+type removal struct {
+	IDs   []int
+	Query string
+}
+
 // fakeSonarr serves just enough of Sonarr's API for the job lifecycle and records destructive calls.
 type fakeSonarr struct {
 	mu            sync.Mutex
 	deleted       [][]int
 	imports       int
 	grabs         int
+	searches      [][2]int         // SeasonSearch commands (series, season)
+	removed       []removal        // queue removals
+	series        []map[string]any // what GET /series reports (default: empty)
 	cmds          []map[string]any // what GET /command reports
 	itemPath      string           // path manualimport reports for every file (default inside the download folder)
 	queueItems    []map[string]any // what GET /queue reports (default: empty)
@@ -67,10 +76,29 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Unlock()
 	})
 	mux.HandleFunc("POST /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Name         string `json:"name"`
+			SeriesID     int    `json:"seriesId"`
+			SeasonNumber int    `json:"seasonNumber"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
-		f.imports++
+		if b.Name == "SeasonSearch" {
+			f.searches = append(f.searches, [2]int{b.SeriesID, b.SeasonNumber})
+		} else {
+			f.imports++
+		}
 		f.mu.Unlock()
 		js(w, map[string]int{"id": 42})
+	})
+	mux.HandleFunc("DELETE /api/v3/queue/bulk", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			IDs []int `json:"ids"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		f.mu.Lock()
+		f.removed = append(f.removed, removal{b.IDs, r.URL.RawQuery})
+		f.mu.Unlock()
 	})
 	mux.HandleFunc("GET /api/v3/command/42", func(w http.ResponseWriter, r *http.Request) {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
@@ -93,7 +121,13 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		js(w, f.cmds)
 	})
-	mux.HandleFunc("GET /api/v3/series", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
+	mux.HandleFunc("GET /api/v3/series", func(w http.ResponseWriter, r *http.Request) {
+		if f.series != nil {
+			js(w, f.series)
+			return
+		}
+		js(w, []any{})
+	})
 	mux.HandleFunc("GET /api/v3/health", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
 	mux.HandleFunc("GET /api/v3/queue", func(w http.ResponseWriter, r *http.Request) {
 		if f.queueItems != nil {

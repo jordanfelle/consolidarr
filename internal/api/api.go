@@ -96,12 +96,18 @@ func (a *API) Routes() []route {
 
 		{"GET", "/api/jobs", a.jobs, false},
 		{"GET", "/api/jobs/{id}", a.job, false},
+		{"POST", "/api/jobs/{id}/retry", a.retryJob, false},
+		{"POST", "/api/jobs/{id}/reject", a.rejectJob, false},
 		{"POST", "/api/jobs/{id}/approve", a.approve, false},
 		{"DELETE", "/api/jobs/{id}", a.deleteJob, false},
 
 		{"GET", "/api/settings", func(w http.ResponseWriter, r *http.Request) { ok(w, a.St.Settings()) }, false},
 		{"PUT", "/api/settings", a.putSettings, false},
 		{"GET", "/api/indexers", a.indexers, false},
+		{"GET", "/api/attention", a.attention, false},
+		{"POST", "/api/attention/{inst}/{series}/{season}/adopt", a.adopt, false},
+		{"POST", "/api/attention/{inst}/{series}/{season}/retry", a.retryImport, false},
+		{"POST", "/api/attention/{inst}/{series}/{season}/remove", a.removePack, false},
 		{"GET", "/api/events", a.events, false},
 		{"GET", "/api/status", a.status, false},
 		{"POST", "/api/engine/run", a.runNow, false},

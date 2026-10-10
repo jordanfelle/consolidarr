@@ -23,6 +23,11 @@ export type Settings = {
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
 export type Once = { active: boolean; limit: number; started: number; began: number; finished: number };
 export type IndexerList = { indexers: { name: string; protocol: string; searchable: boolean; instances: number[] }[]; errors: string[] };
+export type Attention = {
+  instId: number; instance: string; seriesId: number; series: string; season: number; pack: string; indexer: string;
+  sizeGB: number; items: number; state: string; haveFiles: number; aired: number;
+  reasons: { kind: string; count: number; example: string; hint: string }[];
+};
 export type Event = { id: number; ts: number; level: string; msg: string };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -64,6 +69,13 @@ export const api = {
   startOnce: (limit: number) => req<Once>("POST", "/engine/once", { limit }),
   cancelOnce: () => req<Once>("POST", "/engine/once/cancel"),
   indexers: () => req<IndexerList>("GET", "/indexers"),
+  attention: () => req<{ items: Attention[]; errors: string[] }>("GET", "/attention"),
+  adopt: (a: Attention) => req<Job>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/adopt`),
+  retryImport: (a: Attention) => req<{ commandId: number }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/retry`),
+  removePack: (a: Attention, o: { blocklist: boolean; deleteFiles: boolean; research: boolean }) =>
+    req<{ removed: number; searched: boolean }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/remove`, o),
+  retryJob: (id: number) => req<Job>("POST", `/jobs/${id}/retry`),
+  rejectJob: (id: number, research = true) => req<Job>("POST", `/jobs/${id}/reject`, { research }),
   keys: () => req<ApiKey[]>("GET", "/keys"),
   createKey: (name: string) => req<{ id: number; name: string; prefix: string; key: string }>("POST", "/keys", { name }),
   deleteKey: (id: number) => req("DELETE", `/keys/${id}`),

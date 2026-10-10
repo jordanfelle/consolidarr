@@ -131,6 +131,12 @@ type Release struct {
 }
 
 type QueueItem struct {
+	Indexer        string `json:"indexer"`
+	TrackedStatus  string `json:"trackedDownloadStatus"`
+	StatusMessages []struct {
+		Title    string   `json:"title"`
+		Messages []string `json:"messages"`
+	} `json:"statusMessages"`
 	ID           int     `json:"id"`
 	SeriesID     int     `json:"seriesId"`
 	SeasonNumber int     `json:"seasonNumber"`
@@ -250,6 +256,21 @@ func (c *Client) ManualImportFolder(ctx context.Context, folder string) (out []M
 func (c *Client) Commands(ctx context.Context) (out []Command, err error) {
 	err = c.do(ctx, "GET", "/command", nil, &out, 30*time.Second)
 	return
+}
+
+// RemoveQueue removes items from Sonarr's queue. removeFromClient also deletes the download (and its files in
+// the download directory) from the download client; library files are never touched. Sonarr is told not to
+// search again on its own: callers decide whether to search.
+func (c *Client) RemoveQueue(ctx context.Context, ids []int, removeFromClient, blocklist bool) error {
+	p := fmt.Sprintf("/queue/bulk?removeFromClient=%t&blocklist=%t&skipRedownload=true", removeFromClient, blocklist)
+	return c.do(ctx, "DELETE", p, map[string]any{"ids": ids}, nil, 2*time.Minute)
+}
+
+// SeasonSearch asks Sonarr to search all indexers for a season (async command).
+func (c *Client) SeasonSearch(ctx context.Context, seriesID, season int) (id int, err error) {
+	var cmd Command
+	err = c.do(ctx, "POST", "/command", map[string]any{"name": "SeasonSearch", "seriesId": seriesID, "seasonNumber": season}, &cmd, time.Minute)
+	return cmd.ID, err
 }
 
 func (c *Client) DeleteEpisodeFiles(ctx context.Context, ids []int) error {
