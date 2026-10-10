@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -85,34 +86,37 @@ func (s *Store) DeleteInstance(id int64) error {
 }
 
 type Job struct {
-	ID         int64   `json:"id"`
-	InstID     int64   `json:"instId"`
-	SeriesID   int     `json:"seriesId"`
-	Season     int     `json:"season"`
-	Title      string  `json:"title"`
-	OldFileIDs []int   `json:"oldFileIds"`
-	Release    string  `json:"release"`
-	Indexer    string  `json:"indexer"`
-	SizeGB     float64 `json:"sizeGB"`
-	Status     string  `json:"status"` // downloading ready holding importing done lost failed
-	Message    string  `json:"message"`
-	Progress   int     `json:"progress"`
-	ImportCmd  int     `json:"importCmd"`
-	Created    int64   `json:"created"`
-	Updated    int64   `json:"updated"`
-	Deleted    int64   `json:"deleted"`    // unix time the old files began to be deleted; 0 = never (nothing was touched)
-	DownloadID string  `json:"downloadId"` // the download client hash this job owns
-	Expected   int     `json:"expected"`   // episodes the pack must supply for the season to count as replaced
+	ID          int64   `json:"id"`
+	InstID      int64   `json:"instId"`
+	SeriesID    int     `json:"seriesId"`
+	Season      int     `json:"season"`
+	Title       string  `json:"title"`
+	OldFileIDs  []int   `json:"oldFileIds"`
+	Release     string  `json:"release"`
+	Indexer     string  `json:"indexer"`
+	SizeGB      float64 `json:"sizeGB"`
+	Status      string  `json:"status"` // downloading ready holding importing done lost failed
+	Message     string  `json:"message"`
+	Progress    int     `json:"progress"`
+	ImportCmd   int     `json:"importCmd"`
+	Created     int64   `json:"created"`
+	Updated     int64   `json:"updated"`
+	Deleted     int64   `json:"deleted"`     // unix time the old files began to be deleted; 0 = never (nothing was touched)
+	DownloadID  string  `json:"downloadId"`  // the download client hash this job owns
+	Expected    int     `json:"expected"`    // how many episodes the pack must supply for the season to count as replaced
+	ExpectedEps []int   `json:"expectedEps"` // exactly which episode numbers; done means each has a new file
+	ImportAt    int64   `json:"importAt"`    // when the current import attempt started (resets on retry)
 }
 
-const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected`
+const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected,expected_eps,import_at`
 
 func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
-	var old string
+	var old, eps string
 	err := sc.Scan(&j.ID, &j.InstID, &j.SeriesID, &j.Season, &j.Title, &old, &j.Release, &j.Indexer, &j.SizeGB,
-		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected)
+		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected, &eps, &j.ImportAt)
 	_ = json.Unmarshal([]byte(old), &j.OldFileIDs)
+	_ = json.Unmarshal([]byte(eps), &j.ExpectedEps)
 	return j, err
 }
 
@@ -176,17 +180,29 @@ func (s *Store) AddJob(j Job) (int64, error) {
 	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,download_id)
 		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
 		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, "downloading", "", 0, 0, now, now, j.DownloadID).Scan(&j.ID)
+	if err != nil && isUniqueViolation(err) {
+		return 0, ErrDuplicate // lost a race to another caller that created the season's job first
+	}
 	return j.ID, err
 }
 
 // UpdateJob saves a job's mutable state.
 func (s *Store) UpdateJob(j Job) error {
-	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,deleted=?,download_id=?,expected=?,updated=? where id=?`,
-		j.Status, j.Message, j.Progress, j.ImportCmd, j.Deleted, j.DownloadID, j.Expected, time.Now().Unix(), j.ID)
+	eps, _ := json.Marshal(j.ExpectedEps)
+	if j.ExpectedEps == nil {
+		eps = []byte("[]")
+	}
+	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,deleted=?,download_id=?,expected=?,expected_eps=?,import_at=?,updated=? where id=?`,
+		j.Status, j.Message, j.Progress, j.ImportCmd, j.Deleted, j.DownloadID, j.Expected, string(eps), j.ImportAt, time.Now().Unix(), j.ID)
 	return err
 }
 
 func (s *Store) DeleteJob(id int64) error {
 	_, err := s.Exec(`delete from jobs where id=?`, id)
 	return err
+}
+
+func isUniqueViolation(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "unique constraint") || strings.Contains(m, "duplicate key") || strings.Contains(m, "sqlstate 23505")
 }

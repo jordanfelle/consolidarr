@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jordanfelle/consolidarr/internal/audit"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
@@ -50,7 +51,7 @@ func TestDeleteAndImportSurviveACancelledRequest(t *testing.T) {
 	j := readyJob(t, v)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the browser went away / the proxy timed out
-	v.e.replace(ctx, v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3}, completed(), "test")
+	v.e.replace(ctx, v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3, ExpectedEps: []int{1, 2, 3}, Items: completed(), At: time.Now()}, completed(), "test")
 	if len(v.fake.deleted) != 1 || v.fake.imports != 1 || v.status(t, j.ID).Status != "importing" {
 		t.Fatalf("once started, delete+import must finish: deleted=%v imports=%d status=%s", v.fake.deleted, v.fake.imports, v.status(t, j.ID).Status)
 	}
@@ -61,7 +62,7 @@ func TestTheDeleteIsRecordedBeforeItHappens(t *testing.T) {
 	j := readyJob(t, v)
 	var atDelete store.Job
 	v.fake.onDelete = func() { atDelete, _ = v.st.Job(j.ID) }
-	v.e.replace(context.Background(), v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3}, completed(), "test")
+	v.e.replace(context.Background(), v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3, ExpectedEps: []int{1, 2, 3}, Items: completed(), At: time.Now()}, completed(), "test")
 	if atDelete.Status != "importing" || atDelete.Deleted == 0 || atDelete.Expected != 3 || atDelete.DownloadID != "d" {
 		t.Fatalf("when the delete request arrived the job must already say so: %+v", atDelete)
 	}
@@ -71,7 +72,7 @@ func TestAnImportThatFailsToStartAfterTheDeleteIsRetriedNotAbandoned(t *testing.
 	v := setup(t, []int{1, 2, 3})
 	v.fake.failImport = 1
 	j := readyJob(t, v)
-	v.e.replace(context.Background(), v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3}, completed(), "test")
+	v.e.replace(context.Background(), v.inst, v.c, &j, verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", Expected: 3, ExpectedEps: []int{1, 2, 3}, Items: completed(), At: time.Now()}, completed(), "test")
 	got := v.status(t, j.ID)
 	if got.Status != "importing" || got.ImportCmd != 0 || got.Deleted == 0 || len(v.fake.deleted) != 1 {
 		t.Fatalf("a failed import start after the delete must stay importing for a retry, got %+v", got)
@@ -87,22 +88,24 @@ func TestAnImportThatFailsToStartAfterTheDeleteIsRetriedNotAbandoned(t *testing.
 func TestAPartialImportIsNeverMarkedDone(t *testing.T) {
 	v := setup(t, nil)
 	j := v.job(t, time.Time{})
-	j.Status, j.ImportCmd, j.Expected, j.Deleted = "importing", 42, 3, time.Now().Unix()
+	j.Status, j.ImportCmd, j.Expected, j.ExpectedEps, j.Deleted = "importing", 42, 3, []int{1, 2, 3}, time.Now().Unix()
+	j.ImportAt = j.Deleted
 	_ = v.st.UpdateJob(j)
-	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 99, SeasonNumber: 3}} // 1 of 3 episodes imported
+	v.fake.seasonEps = map[int]int{1: 99, 2: 12, 3: 13} // 1 of 3 episodes has a new file
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "importing" {
 		t.Fatalf("1 of 3 episodes is not done, and not yet failed either: %s", got.Status)
 	}
 	j = v.status(t, j.ID)
 	j.Deleted = time.Now().Add(-time.Hour).Unix()
+	j.ImportAt = j.Deleted
 	_ = v.st.UpdateJob(j)
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	got := v.status(t, j.ID)
 	if got.Status != "failed" || got.Message == "" || got.Deleted == 0 {
 		t.Fatalf("after the settle period a partial import is reported as failed (and remembers the delete): %+v", got)
 	}
-	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 99, SeasonNumber: 3}, {ID: 98, SeasonNumber: 3}, {ID: 97, SeasonNumber: 3}}
+	v.fake.seasonEps = map[int]int{1: 99, 2: 98, 3: 97}
 	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
 	again, err := v.e.AdvanceJob(context.Background(), j.ID)
 	if err != nil {
@@ -231,5 +234,111 @@ func TestACurrentFileThatMapsToNoEpisodeBlocksTheReplacement(t *testing.T) {
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, completed())
 	if got := v.status(t, id); got.Status != "holding" || len(v.fake.deleted) != 0 {
 		t.Fatalf("an unmapped file means coverage cannot be confirmed: %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}
+
+func TestMultiEpisodeFilesCountEpisodesNotFiles(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	j.Status, j.ImportCmd, j.ExpectedEps, j.Expected, j.Deleted = "importing", 42, []int{1, 2, 3}, 3, time.Now().Unix()
+	j.ImportAt = j.Deleted
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 99, 2: 99, 3: 98} // ONE file (99) holds episodes 1 and 2: two files, three episodes
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "done" {
+		t.Fatalf("a successful import with a multi-episode file must be done, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestFilesSonarrImportedBeforeTheDeleteAreNotTheResult(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	// Sonarr had already upgraded episodes 1 and 2 on its own (files 90, 91); only episode 3 was ours to replace.
+	j.Status, j.ImportCmd, j.ExpectedEps, j.Expected, j.Deleted = "importing", 42, []int{3}, 1, time.Now().Unix()
+	j.ImportAt = j.Deleted
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 90, 2: 91, 3: 0} // 1 and 2 have (pre-existing) new files; 3 has nothing yet
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("episode 3 is still missing: the job is not done just because other episodes have files, got %s", got.Status)
+	}
+	v.fake.seasonEps[3] = 99
+	v.e.advance(context.Background(), v.inst, v.c, live(), v.status(t, j.ID), nil)
+	if got := v.status(t, j.ID); got.Status != "done" {
+		t.Fatalf("once episode 3 has a file it is done, got %s", got.Status)
+	}
+}
+
+func TestARetryGetsAFreshSettleWindow(t *testing.T) {
+	// The pack is no longer in Sonarr's queue, so the retry cannot restart the import. It must still wait the normal
+	// grace period from NOW, not fail instantly because the original delete was hours ago.
+	v := attentionEnv(t)
+	j := v.job(t, time.Time{})
+	hoursAgo := time.Now().Add(-5 * time.Hour).Unix()
+	j.Status, j.Deleted, j.ImportAt, j.ExpectedEps, j.Expected = "failed", hoursAgo, hoursAgo, []int{1, 2, 3}, 3
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 11, 2: 12, 3: 13} // still no new files
+	got, err := v.e.AdvanceJob(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "importing" || got.ImportAt < time.Now().Add(-time.Minute).Unix() {
+		t.Fatalf("a retried job must restart its clock and get a fresh grace period instead of failing again at once: %+v", got)
+	}
+}
+
+func TestRacingGrabsReserveTheSeasonSoOnlyOneDownloads(t *testing.T) {
+	grabPause = 0
+	v := setup(t, nil)
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	inst := store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}
+	s := audit.Season{InstID: 1, SeriesID: 1, Season: 3, Title: "Show"}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := v.e.Grab(context.Background(), inst, s, "g", 1, "Show.S03", 10, "BTN")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	ok := 0
+	for err := range errs {
+		if err == nil {
+			ok++
+		} else if err != store.ErrDuplicate {
+			t.Fatalf("unexpected error %v", err)
+		}
+	}
+	if ok != 1 || v.fake.grabs != 1 {
+		t.Fatalf("eight racing grabs must produce one job and one download: ok=%d downloads=%d", ok, v.fake.grabs)
+	}
+}
+
+func TestAStaleVerdictIsVerifiedAgainBeforeTheDelete(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := readyJob(t, v)
+	probeFn = func(store.Instance, string) (bool, string) { return false, "e.mkv: unreadable or DRM-encrypted" }
+	stale := verdict{State: "ok", DownloadID: "d", OutputPath: "/dl/pack", ExpectedEps: []int{1, 2, 3}, Expected: 3,
+		Items: completed(), At: time.Now().Add(-5 * time.Minute)} // verified minutes ago, while we waited behind another season
+	v.e.replace(context.Background(), v.inst, v.c, &j, stale, completed(), "test")
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.deleted) != 0 {
+		t.Fatalf("a verdict that is no longer true must not delete: %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}
+
+func TestWithSeveralDownloadsForASeasonTheJobBindsToTheBiggest(t *testing.T) {
+	q := []sonarr.QueueItem{
+		{SeriesID: 1, SeasonNumber: 3, Title: "an.episode", DownloadID: "SMALL", Size: 1},
+		{SeriesID: 1, SeasonNumber: 3, Title: "the.pack", DownloadID: "BIG", Size: 50},
+		{SeriesID: 1, SeasonNumber: 3, Title: "the.pack", DownloadID: "BIG", Size: 50},
+	}
+	j := &store.Job{SeriesID: 1, Season: 3, Release: "no title matches"}
+	mine := ownedItems(q, j)
+	if len(mine) != 2 || j.DownloadID != "BIG" {
+		t.Fatalf("with no title match the job must bind to the pack (the biggest download), got %d items id=%q", len(mine), j.DownloadID)
 	}
 }

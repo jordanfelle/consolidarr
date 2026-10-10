@@ -129,14 +129,62 @@ func TestAnExistingDatabaseIsMigratedInPlace(t *testing.T) {
 		t.Fatalf("opening a v1 database must migrate it, not fail: %v", err)
 	}
 	j, err := st.Job(1)
-	if err != nil || j.Title != "Old" || j.ImportCmd != 7 || j.Deleted != 0 || j.Expected != 0 {
-		t.Fatalf("existing rows must survive with the new columns defaulted: %+v err=%v", j, err)
+	if err != nil || j.Title != "Old" || j.ImportCmd != 7 || j.Deleted != 100 || j.ImportAt != 100 || j.Expected != 0 {
+		t.Fatalf("existing rows must survive; an in-flight one is aged from its last update: %+v err=%v", j, err)
 	}
 	if _, err := st.AddJob(Job{InstID: 1, SeriesID: 2, Season: 1, Title: "new", DownloadID: "abc"}); err != nil {
 		t.Fatalf("the new columns must be writable: %v", err)
 	}
 	st.DB.Close()
-	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "3" {
-		t.Fatalf("reopening must be a no-op at version 3, got version %q err=%v", st2.KV("schema_version"), err)
+	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "5" {
+		t.Fatalf("reopening must be a no-op at version 5, got version %q err=%v", st2.KV("schema_version"), err)
+	}
+}
+
+func TestMigrationsSurviveACrashBetweenTheAlterAndTheVersionBump(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetKV("schema_version", "0") // the columns exist but the process died before recording that
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatalf("re-running migrations over existing columns must not fail: %v", err)
+	}
+	if v := st2.KV("schema_version"); v != "5" {
+		t.Fatalf("version must catch up to 5, got %q", v)
+	}
+}
+
+func TestTheDatabaseItselfRefusesASecondActiveJobForASeason(t *testing.T) {
+	st := open(t)
+	ins := `insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated) values(1,1,3,'t','[]','r','i',1,?,'',0,0,1,1)`
+	if _, err := st.Exec(ins, "downloading"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ins, "ready"); err == nil {
+		t.Fatal("a second unfinished job for the same season must violate the unique index, bypassing any application check")
+	}
+	if _, err := st.Exec(ins, "done"); err != nil {
+		t.Fatalf("finished jobs are not constrained: %v", err)
+	}
+}
+
+func TestLegacyImportingJobsGetSensibleTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := Open(dir, "")
+	_, _ = st.Exec(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,import_at) values(1,1,3,'t','[]','r','i',1,'importing','',0,7,100,555,0,0)`)
+	st.SetKV("schema_version", "3")
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var del, at int64
+	_ = st2.QueryRow(`select deleted, import_at from jobs where title='t'`).Scan(&del, &at)
+	if del != 555 || at != 555 {
+		t.Fatalf("an in-flight job from before the columns existed must be aged from its last update, got deleted=%d import_at=%d", del, at)
 	}
 }

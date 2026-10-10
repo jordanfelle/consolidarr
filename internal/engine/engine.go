@@ -244,9 +244,6 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 
 // Grab records the season's current files, grabs the release and starts tracking a job.
 func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer string) (int64, error) {
-	if e.St.ActiveJob(inst.ID, s.SeriesID, s.Season) {
-		return 0, store.ErrDuplicate
-	}
 	c := client(inst)
 	files, err := c.EpisodeFiles(ctx, s.SeriesID)
 	if err != nil {
@@ -258,19 +255,23 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 			old = append(old, f.ID)
 		}
 	}
+	// Reserve the season first. The database allows one unfinished job per season, so of two racing callers (a
+	// double click, the scheduler and a user) only one gets here, and only that one tells Sonarr to download.
+	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: s.SeriesID, Season: s.Season, Title: s.Title,
+		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB})
+	if err != nil {
+		return 0, err
+	}
 	if err := c.Grab(ctx, guid, indexerID); err != nil {
 		// a grab that timed out may still have reached the download client
 		time.Sleep(30 * time.Second)
 		if q, qerr := c.Queue(ctx, 2*time.Minute); qerr != nil || !inQueue(q, s.SeriesID, s.Season) {
+			_ = e.St.DeleteJob(id) // release the reservation
 			return 0, err
 		}
 	}
-	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: s.SeriesID, Season: s.Season, Title: s.Title,
-		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB})
-	if err == nil {
-		e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
-	}
-	return id, err
+	e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
+	return id, nil
 }
 
 func inQueue(q []sonarr.QueueItem, series, season int) bool {
@@ -509,7 +510,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			j.Status, j.Progress = "downloading", prog // an unchanged job is not rewritten, so `updated` means "last progress"
 			_ = e.St.UpdateJob(j)
 		case time.Since(time.Unix(j.Updated, 0)) > stallAfter:
-			j.Status, j.Message = "failed", fmt.Sprintf("the download has not moved for %d hours (%d%%); your files were not touched", int(stallAfter.Hours()), prog)
+			j.Status, j.Message = "failed", fmt.Sprintf("the download has not moved for %d hours (%d%%) and is still in Sonarr's queue; your files were not touched. Check the download client, then Retry now or Reject pack", int(stallAfter.Hours()), prog)
 			e.St.Event("warn", label+": "+j.Message)
 			_ = e.St.UpdateJob(j)
 		}

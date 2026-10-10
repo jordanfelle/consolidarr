@@ -271,13 +271,17 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 		return job, err
 	}
 	if job.Status == "lost" || job.Status == "failed" { // give it another go
-		if job.Deleted > 0 {
-			job.Status, job.ImportCmd = "importing", 0 // the old files are gone: resume the import, never start over
-		} else {
-			job.Status = "downloading"
+		unlock := e.jobMu.lock(id)
+		if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
+			if cur.Deleted > 0 {
+				cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
+			} else {
+				cur.Status = "downloading"
+			}
+			cur.Message = ""
+			_ = e.St.UpdateJob(cur)
 		}
-		job.Message = ""
-		_ = e.St.UpdateJob(job)
+		unlock()
 	}
 	e.advance(ctx, inst, c, e.St.Settings(), job, queue)
 	return e.St.Job(id)

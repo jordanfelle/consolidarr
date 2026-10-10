@@ -326,7 +326,7 @@ func TestImportCompletionMarksDoneOnlyWithFreshFiles(t *testing.T) {
 	j := v.job(t, time.Time{})
 	j.Status, j.ImportCmd = "importing", 42
 	_ = v.st.UpdateJob(j)
-	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 99, SeasonNumber: 3}, {ID: 98, SeasonNumber: 3}}
+	v.fake.seasonEps = map[int]int{1: 99, 2: 98} // both episodes now point at new files
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "done" {
 		t.Fatalf("want done, got %s %q", got.Status, got.Message)
@@ -343,6 +343,7 @@ func TestImportCompletionMarksDoneOnlyWithFreshFiles(t *testing.T) {
 	}
 	j = v.status(t, j.ID)
 	j.Deleted = time.Now().Add(-time.Hour).Unix() // the old files were deleted an hour ago and nothing has appeared
+	j.ImportAt = j.Deleted
 	_ = v.st.UpdateJob(j)
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "failed" {

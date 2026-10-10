@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,14 +32,16 @@ func (l *locks) lock(id int64) func() {
 
 // verdict is the outcome of verifying a finished download against what the user has today.
 type verdict struct {
-	State      string // "ok": safe to replace; "hold": a check failed; "retry": transient, leave the job alone
-	Message    string
-	Items      []sonarr.QueueItem
-	DownloadID string
-	OutputPath string
-	Probed     int
-	Unreach    string
-	Expected   int
+	State       string // "ok": safe to replace; "hold": a check failed; "retry": transient, leave the job alone
+	Message     string
+	Items       []sonarr.QueueItem
+	DownloadID  string
+	OutputPath  string
+	Probed      int
+	Unreach     string
+	Expected    int
+	ExpectedEps []int // the episode numbers that must have a new file for the season to count as replaced
+	At          time.Time
 }
 
 // ownedItems returns the queue items that belong to this job. A season can have unrelated grabs in Sonarr's
@@ -60,7 +63,13 @@ func ownedItems(queue []sonarr.QueueItem, j *store.Job) []sonarr.QueueItem {
 			}
 		}
 		if id == "" && len(same) > 0 {
-			id = strings.ToLower(same[0].DownloadID)
+			best := same[0]
+			for _, q := range same[1:] { // several downloads for the season: the pack is the biggest one
+				if q.Size > best.Size {
+					best = q
+				}
+			}
+			id = strings.ToLower(best.DownloadID)
 		}
 	}
 	if id == "" {
@@ -94,7 +103,10 @@ func rejectionOK(it sonarr.ManualImportItem) bool {
 
 // verify checks a finished download. It never changes anything.
 func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j *store.Job, mine []sonarr.QueueItem) verdict {
-	v := verdict{Items: mine, DownloadID: mine[0].DownloadID, OutputPath: mine[0].OutputPath}
+	if len(mine) == 0 {
+		return verdict{State: "retry"} // nothing to look at: never guess
+	}
+	v := verdict{Items: mine, DownloadID: mine[0].DownloadID, OutputPath: mine[0].OutputPath, At: time.Now()}
 	folder := mine[0].OutputPath
 	var items []sonarr.ManualImportItem
 	var err error
@@ -166,10 +178,15 @@ func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Clie
 		}
 	}
 	unmapped := len(live) - len(mapped)
-	v.Expected = len(oldEps)
-	if v.Expected == 0 {
-		v.Expected = len(packEps) // nothing of yours is left to replace; the pack just has to import
+	src := oldEps
+	if len(src) == 0 {
+		src = packEps // nothing of yours is left to replace; the pack just has to import
 	}
+	for n := range src {
+		v.ExpectedEps = append(v.ExpectedEps, n)
+	}
+	sort.Ints(v.ExpectedEps)
+	v.Expected = len(v.ExpectedEps)
 	hold := func(msg string) verdict { v.State, v.Message = "hold", msg; return v }
 	switch {
 	case len(bad) > 0:
@@ -181,7 +198,13 @@ func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Clie
 	case len(eps) == 0:
 		return hold("Sonarr returned no episodes for this season, so coverage cannot be checked")
 	case unmapped > 0:
-		return hold(fmt.Sprintf("%d of your current files are not linked to any episode in Sonarr, so coverage cannot be confirmed", unmapped))
+		var orphans []int
+		for _, id := range live {
+			if !mapped[id] {
+				orphans = append(orphans, id)
+			}
+		}
+		return hold(fmt.Sprintf("%d of your current files are not linked to any episode in Sonarr (file ids %v), so coverage cannot be confirmed; remove or relink them in Sonarr", unmapped, orphans[:min(len(orphans), 5)]))
 	case len(missing) > 0:
 		why := fmt.Sprintf("pack is missing episodes %v that you have today", missing)
 		if rejected > 0 {
@@ -206,10 +229,23 @@ func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Clie
 // It runs on a context detached from the caller: a browser disconnect or proxy timeout must not stop it
 // between the delete and the import.
 func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Client, j *store.Job, v verdict, queue []sonarr.QueueItem, how string) {
+	defer e.instMu.lock(inst.ID)() // wait our turn first: time spent waiting must not eat the deadline below
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	defer cancel()
-	defer e.instMu.lock(inst.ID)()
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	if time.Since(v.At) > 30*time.Second { // we may have waited behind another season; what was true then may not be now
+		fresh := e.verify(ctx, inst, c, e.St.Settings(), j, v.Items)
+		if fresh.State != "ok" {
+			j.Status = "holding"
+			j.Message = fresh.Message
+			if fresh.State == "retry" {
+				j.Message = "waiting: could not re-verify just before deleting; will try again"
+			}
+			_ = e.St.UpdateJob(*j)
+			return
+		}
+		v = fresh
+	}
 	if block := e.pipelineBlock(ctx, inst, c, queue, *j); block != "" {
 		j.Status, j.Message = "holding", "waiting: "+block
 		_ = e.St.UpdateJob(*j)
@@ -221,7 +257,8 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		_ = e.St.UpdateJob(*j)
 		return
 	}
-	j.Status, j.Deleted, j.DownloadID, j.Expected, j.ImportCmd = "importing", time.Now().Unix(), v.DownloadID, v.Expected, 0
+	now := time.Now().Unix()
+	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0
 	j.Message = fmt.Sprintf("deleting %d old files, then importing", len(ids))
 	_ = e.St.UpdateJob(*j) // before the delete
 	if len(ids) > 0 {
@@ -251,15 +288,20 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started (%s)", label, len(ids), how))
 }
 
-// finishImport follows a job whose old files are (or may be) gone until the new files exist.
+// finishImport follows a job whose old files are (or may be) gone until every expected episode has a new file.
+// "Done" is judged by episode numbers, not file counts: a multi-episode file covers several episodes, and files
+// Sonarr imported on its own before our delete must not be mistaken for the result of this import.
 func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonarr.Client, j *store.Job, queue []sonarr.QueueItem) {
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
-	since := j.Deleted
+	since := j.ImportAt
+	if since == 0 {
+		since = j.Deleted
+	}
 	if since == 0 {
 		since = j.Updated
 	}
 	age := time.Since(time.Unix(since, 0))
-	files, err := c.EpisodeFiles(ctx, j.SeriesID)
+	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
 	if err != nil {
 		return
 	}
@@ -267,23 +309,33 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	for _, id := range j.OldFileIDs {
 		old[id] = true
 	}
-	fresh := 0
-	for _, f := range files {
-		if f.SeasonNumber == j.Season && !old[f.ID] {
-			fresh++
+	covered := map[int]bool{}
+	for _, ep := range eps {
+		if ep.EpisodeFileID != 0 && !old[ep.EpisodeFileID] {
+			covered[ep.EpisodeNumber] = true
 		}
 	}
-	want := max(j.Expected, 1)
+	want := j.ExpectedEps
+	got := 0
+	if len(want) > 0 {
+		for _, n := range want {
+			if covered[n] {
+				got++
+			}
+		}
+	} else { // a job recorded before episodes were tracked: fall back to counting
+		got, want = len(covered), make([]int, max(j.Expected, 1))
+	}
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg
 		_ = e.St.UpdateJob(*j)
 		e.St.Event("error", label+": "+msg)
 	}
-	if fresh >= want {
-		j.Status, j.Message = "done", fmt.Sprintf("%d files imported", fresh)
+	if got >= len(want) {
+		j.Status, j.Message = "done", fmt.Sprintf("%d episodes imported", got)
 		_ = e.St.UpdateJob(*j)
 		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
-		e.St.Event("info", fmt.Sprintf("done %s: %d files imported", label, fresh))
+		e.St.Event("info", fmt.Sprintf("done %s: %d episodes imported", label, got))
 		e.rescanSeries(ctx, inst, j.SeriesID)
 		return
 	}
@@ -291,7 +343,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		mine := ownedItems(queue, j)
 		if len(mine) == 0 {
 			if age > 15*time.Minute {
-				fail(fmt.Sprintf("the pack is no longer in Sonarr's queue and only %d of %d episodes have files. Use Needs attention to adopt or re-grab it", fresh, want))
+				fail(fmt.Sprintf("the pack is no longer in Sonarr's queue and only %d of %d episodes have files. Use Needs attention to adopt or re-grab it", got, len(want)))
 			}
 			return
 		}
@@ -301,7 +353,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 			_ = e.St.UpdateJob(*j)
 			return
 		}
-		j.ImportCmd, j.Message = id, "import started"
+		j.ImportCmd, j.ImportAt, j.Message = id, time.Now().Unix(), "import started"
 		_ = e.St.UpdateJob(*j)
 		return
 	}
@@ -309,8 +361,8 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	finished := cerr != nil || cmd.Status == "completed" || cmd.Status == "failed" // an unknown command was pruned: judge by the files
 	switch {
 	case finished && age > importSettle:
-		fail(fmt.Sprintf("the import finished but only %d of %d episodes have files. Your old files were already replaced; use Needs attention to retry or adopt the pack", fresh, want))
+		fail(fmt.Sprintf("the import finished but only %d of %d episodes have files. Your old files were already replaced; use Needs attention to retry or adopt the pack", got, len(want)))
 	case !finished && age > importHardStop:
-		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), fresh, want))
+		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))
 	}
 }
