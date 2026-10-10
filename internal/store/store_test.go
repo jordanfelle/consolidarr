@@ -126,7 +126,8 @@ func TestSnapshotsAreRecordedThinnedAndDeduplicated(t *testing.T) {
 	if len(got) != 1 || got[0].FlaggedTV != 3 || got[0].SingleFiles != 24 || got[0].PackFiles != 0 {
 		t.Fatalf("one snapshot of the current state expected, got %+v", got)
 	}
-	_ = st.ReplaceSeasons(1, 0, rows(2)) // a replacement finished: progress
+	_, _ = st.Exec(`update snapshots set ts = ts - 7200`) // distinct seconds, so "latest" is unambiguous on every engine
+	_ = st.ReplaceSeasons(1, 0, rows(2))                  // a replacement finished: progress
 	_ = st.RecordSnapshot(3)
 	if got, _ = st.Snapshots(0, 400); len(got) != 2 || got[1].FlaggedTV != 2 {
 		t.Fatalf("a changed library must add a point: %+v", got)

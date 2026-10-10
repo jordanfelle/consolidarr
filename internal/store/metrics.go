@@ -69,6 +69,8 @@ func (s *Store) RecordSnapshot(minFiles int) error {
 			return nil
 		}
 	}
+	// Two snapshots in the same second would tie on ts and make "latest" ambiguous; the newer one replaces the older.
+	_, _ = s.Exec(`delete from snapshots where ts = ?`, sn.TS)
 	if _, err := s.Exec(`insert into snapshots(ts,flagged_tv,flagged_anime,seasons,files,pack_files,single_files,multi_files,unknown_files,gb) values(?,?,?,?,?,?,?,?,?,?)`,
 		sn.TS, sn.FlaggedTV, sn.FlaggedAnime, sn.Seasons, sn.Files, sn.PackFiles, sn.SingleFiles, sn.MultiFiles, sn.UnknownFiles, sn.GB); err != nil {
 		return err
