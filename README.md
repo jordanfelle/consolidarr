@@ -67,6 +67,7 @@ with the reason. With *Dry run* on (the default), the scheduler only logs what i
 | `CONSOLIDARR_DATA` | `/data` | data directory (SQLite lives here) |
 | `CONSOLIDARR_DATABASE_URL` | | `postgres://…` to use Postgres instead of SQLite |
 | `CONSOLIDARR_AUTH_DISABLED` | `false` | skip the login (only behind an authenticating reverse proxy) |
+| `CONSOLIDARR_COOKIE_SECURE` | `auto` | session cookie `Secure` flag: `auto` sets it when the request is HTTPS (directly or via `X-Forwarded-Proto`), `always`, or `never` |
 
 Everything else (scheduler, size cap, in-flight limit, last-resort indexers, anime) is in the UI under **Settings**.
 
