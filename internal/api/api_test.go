@@ -287,3 +287,77 @@ func TestOneOffRunAPI(t *testing.T) {
 		t.Fatalf("cancel: %d", w.Code)
 	}
 }
+
+func TestPackSizeLimitCanBeTurnedOff(t *testing.T) {
+	_, h := newAPI(t)
+	c := login(t, h)
+	if w := do(h, "PUT", "/api/settings", `{"maxPackGB":0}`, c); w.Code != 200 || !strings.Contains(w.Body.String(), `"maxPackGB":0`) {
+		t.Fatalf("0 (no limit) must be accepted: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/settings", `{"maxPackGB":-1}`, c); w.Code != 422 {
+		t.Fatalf("negative must be rejected: %d", w.Code)
+	}
+}
+
+func fakeSonarrIndexers(names ...string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var out []map[string]any
+		for i, n := range names {
+			out = append(out, map[string]any{"id": i + 1, "name": n, "protocol": "torrent", "enableInteractiveSearch": n != "Disabled (Prowlarr)"})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+}
+
+func TestIndexersAreListedFromSonarrAndDeduplicated(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	s1 := fakeSonarrIndexers("TorrentLeech (Prowlarr)", "BroadcastheNet (Prowlarr)")
+	s2 := fakeSonarrIndexers("BroadcastheNet (Prowlarr)", "Disabled (Prowlarr)")
+	defer s1.Close()
+	defer s2.Close()
+	_, _ = a.St.SaveInstance(store.Instance{Name: "Main", URL: s1.URL, APIKey: "k", Enabled: true})
+	_, _ = a.St.SaveInstance(store.Instance{Name: "4K", URL: s2.URL, APIKey: "k", Enabled: true})
+	_, _ = a.St.SaveInstance(store.Instance{Name: "Off", URL: "http://127.0.0.1:1", APIKey: "k", Enabled: false})
+	w := do(h, "GET", "/api/indexers", "", c)
+	var got struct {
+		Indexers []struct {
+			Name       string
+			Searchable bool
+			Instances  []int
+		}
+		Errors []string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 {
+		t.Fatalf("%d %s %v", w.Code, w.Body, err)
+	}
+	names := []string{}
+	for _, i := range got.Indexers {
+		names = append(names, i.Name)
+		if i.Name == "BroadcastheNet (Prowlarr)" && len(i.Instances) != 2 {
+			t.Errorf("shared indexer must list both instances, got %v", i.Instances)
+		}
+		if i.Name == "Disabled (Prowlarr)" && i.Searchable {
+			t.Error("an indexer with interactive search off must not be marked searchable")
+		}
+	}
+	if strings.Join(names, "|") != "BroadcastheNet (Prowlarr)|Disabled (Prowlarr)|TorrentLeech (Prowlarr)" {
+		t.Fatalf("want 3 unique sorted names, got %v", names)
+	}
+	if len(got.Errors) != 0 {
+		t.Fatalf("a disabled instance must be skipped silently, got %v", got.Errors)
+	}
+}
+
+func TestIndexersToleratesAnUnreachableInstance(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	ok1 := fakeSonarrIndexers("A (Prowlarr)")
+	defer ok1.Close()
+	_, _ = a.St.SaveInstance(store.Instance{Name: "Good", URL: ok1.URL, APIKey: "k", Enabled: true})
+	_, _ = a.St.SaveInstance(store.Instance{Name: "Down", URL: "http://127.0.0.1:1", APIKey: "k", Enabled: true})
+	w := do(h, "GET", "/api/indexers", "", c)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "A (Prowlarr)") || !strings.Contains(w.Body.String(), "Down:") {
+		t.Fatalf("partial results with the failure reported expected: %d %s", w.Code, w.Body)
+	}
+}
