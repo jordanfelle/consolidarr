@@ -19,9 +19,23 @@ func (a *API) userCount() int {
 	return n
 }
 
+// apiKey extracts a key from `X-API-Key` or `Authorization: Bearer`.
+func apiKey(r *http.Request) string {
+	if k := r.Header.Get("X-API-Key"); k != "" {
+		return k
+	}
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return ""
+}
+
 func (a *API) authed(r *http.Request) bool {
 	if a.AuthDisabled {
 		return true
+	}
+	if k := apiKey(r); k != "" {
+		return a.St.KeyValid(k)
 	}
 	c, err := r.Cookie(cookieName)
 	if err != nil {
@@ -95,7 +109,8 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 func (a *API) guard(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
-			fail(w, 401, "unauthorized")
+			w.Header().Set("WWW-Authenticate", `Bearer realm="consolidarr"`)
+			fail(w, 401, "unauthorized: log in or send a valid API key in X-API-Key")
 			return
 		}
 		h(w, r)

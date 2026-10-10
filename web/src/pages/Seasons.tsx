@@ -72,7 +72,7 @@ export default function SeasonsPage() {
           <option value="">All instances</option>{insts.data?.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
         </select>
         <select className="input w-40" value={anime} onChange={(e) => setAnime(e.target.value)}>
-          <option value="hide">TV only</option><option value="">TV + anime</option><option value="only">Anime only</option>
+          <option value="hide">TV only</option><option value="all">TV + anime</option><option value="only">Anime only</option>
         </select>
         <span className="self-center text-sm text-muted">{seasons.data ? `${seasons.data.seasons.length} of ${seasons.data.total}` : ""}</span>
       </div>

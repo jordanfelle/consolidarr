@@ -1,11 +1,14 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/jordanfelle/consolidarr/internal/audit"
 	"github.com/jordanfelle/consolidarr/internal/engine"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
@@ -92,5 +95,155 @@ func TestAuthDisabledMode(t *testing.T) {
 	a.AuthDisabled = true
 	if w := do(h, "GET", "/api/settings", ""); w.Code != 200 {
 		t.Fatalf("auth-disabled mode must let requests through, got %d", w.Code)
+	}
+}
+
+func login(t *testing.T, h http.Handler) *http.Cookie {
+	t.Helper()
+	w := do(h, "POST", "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`)
+	if w.Code != 200 {
+		t.Fatalf("setup: %d %s", w.Code, w.Body)
+	}
+	return w.Result().Cookies()[0]
+}
+
+func req(h http.Handler, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	for k, v := range hdr {
+		r.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestAPIKeysAuthenticateAndCanBeRevoked(t *testing.T) {
+	_, h := newAPI(t)
+	c := login(t, h)
+	w := do(h, "POST", "/api/keys", `{"name":"ci"}`, c)
+	if w.Code != 201 {
+		t.Fatalf("create key: %d %s", w.Code, w.Body)
+	}
+	var k struct {
+		ID  int64  `json:"id"`
+		Key string `json:"key"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &k)
+	if !strings.HasPrefix(k.Key, "csl_") {
+		t.Fatalf("unexpected key %q", k.Key)
+	}
+	for name, hdr := range map[string]map[string]string{
+		"X-API-Key":     {"X-API-Key": k.Key},
+		"Authorization": {"Authorization": "Bearer " + k.Key},
+	} {
+		if got := req(h, "GET", "/api/settings", "", hdr); got.Code != 200 {
+			t.Errorf("%s: want 200 with a valid key, got %d", name, got.Code)
+		}
+	}
+	if got := req(h, "GET", "/api/settings", "", map[string]string{"X-API-Key": "csl_nope"}); got.Code != 401 {
+		t.Errorf("bogus key must be 401, got %d", got.Code)
+	}
+	// the list never reveals the secret or its hash
+	list := do(h, "GET", "/api/keys", "", c).Body.String()
+	if strings.Contains(list, k.Key) || strings.Contains(list, "hash") || !strings.Contains(list, `"name":"ci"`) {
+		t.Fatalf("key list leaks or is wrong: %s", list)
+	}
+	if got := do(h, "DELETE", "/api/keys/"+strconv.FormatInt(k.ID, 10), "", c); got.Code != 200 {
+		t.Fatalf("revoke: %d", got.Code)
+	}
+	if got := req(h, "GET", "/api/settings", "", map[string]string{"X-API-Key": k.Key}); got.Code != 401 {
+		t.Fatalf("revoked key must stop working, got %d", got.Code)
+	}
+	if got := do(h, "DELETE", "/api/keys/9999", "", c); got.Code != 404 {
+		t.Fatalf("revoking a missing key: %d", got.Code)
+	}
+}
+
+func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
+	a, h := newAPI(t)
+	var spec struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(do(h, "GET", "/api/openapi.json", "").Body.Bytes(), &spec); err != nil {
+		t.Fatalf("openapi.json is not valid JSON: %v", err)
+	}
+	have := map[string]bool{}
+	for p, ops := range spec.Paths {
+		for m := range ops {
+			have[strings.ToUpper(m)+" "+p] = true
+		}
+	}
+	for _, rt := range a.Routes() {
+		if !have[rt.Method+" "+rt.Path] {
+			t.Errorf("route %s %s is not documented in openapi.json", rt.Method, rt.Path)
+		}
+		delete(have, rt.Method+" "+rt.Path)
+	}
+	for extra := range have {
+		t.Errorf("openapi.json documents %s, which is not a registered route", extra)
+	}
+}
+
+func TestErrorsAreUniform(t *testing.T) {
+	_, h := newAPI(t)
+	c := login(t, h)
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+		code               string
+	}{
+		{"GET", "/api/instances/999", "", 404, "not_found"},
+		{"POST", "/api/instances", `{"name":"x"}`, 422, "invalid"},
+		{"PUT", "/api/settings", `{"nonsense":1}`, 400, "bad_request"},
+		{"PUT", "/api/settings", `{"maxInflight":0}`, 422, "invalid"},
+		{"GET", "/api/seasons?sort=bogus", "", 422, "invalid"},
+		{"GET", "/api/jobs/12345", "", 404, "not_found"},
+		{"POST", "/api/keys", `{"name":""}`, 422, "invalid"},
+	} {
+		w := do(h, tc.method, tc.path, tc.body, c)
+		var e struct{ Error, Code string }
+		_ = json.Unmarshal(w.Body.Bytes(), &e)
+		if w.Code != tc.want || e.Code != tc.code || e.Error == "" {
+			t.Errorf("%s %s: want %d/%s with a message, got %d %s", tc.method, tc.path, tc.want, tc.code, w.Code, w.Body)
+		}
+	}
+	if w := do(h, "GET", "/api/jobs", ""); w.Code != 401 || w.Header().Get("WWW-Authenticate") == "" {
+		t.Errorf("401 must carry WWW-Authenticate, got %d %q", w.Code, w.Header().Get("WWW-Authenticate"))
+	}
+}
+
+func TestSeasonsPaginationAndSort(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	var rows []audit.Season
+	for i := 1; i <= 5; i++ {
+		rows = append(rows, audit.Season{InstID: 1, SeriesID: i, Season: 1, Title: string(rune('A' + 5 - i)), SeriesType: "standard",
+			Files: 5 + i, Aired: 5 + i, Groups: []string{"a"}, Qualities: []string{"q"}, Sources: []string{"web"}, GB: float64(i)})
+	}
+	if err := a.St.ReplaceSeasons(1, 0, rows); err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Total, Offset, Limit int
+		Seasons              []audit.Season
+	}
+	get := func(q string) {
+		page = struct {
+			Total, Offset, Limit int
+			Seasons              []audit.Season
+		}{}
+		w := do(h, "GET", "/api/seasons?"+q, "", c)
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", q, w.Code, w.Body)
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &page)
+	}
+	get("limit=2&offset=1&sort=title")
+	if page.Total != 5 || page.Offset != 1 || page.Limit != 2 || len(page.Seasons) != 2 || page.Seasons[0].Title != "B" {
+		t.Fatalf("pagination/sort wrong: %+v", page)
+	}
+	get("sort=files")
+	if page.Seasons[0].Files != 10 {
+		t.Fatalf("sort by files should put the biggest first: %+v", page.Seasons[0])
 	}
 }

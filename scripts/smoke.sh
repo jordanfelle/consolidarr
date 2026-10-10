@@ -17,4 +17,9 @@ test "$(curl -s -o /dev/null -w '%{http_code}' "$B/api/settings")" = 401        
 curl -fsS -b "$DATA/cj" "$B/api/settings" | grep -q '"dryRun":true'                 # safe default
 curl -fsS "$B/" | grep -qi '<div id="root">'                                        # UI is embedded
 ffprobe -version >/dev/null 2>&1 || docker exec "$NAME" ffprobe -version >/dev/null  # verification dependency present
+KEY=$(curl -fsS -b "$DATA/cj" -X POST "$B/api/keys" -H 'content-type: application/json' -d '{"name":"smoke"}' | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')
+test -n "$KEY"
+curl -fsS -H "X-API-Key: $KEY" "$B/api/status" | grep -q flaggedTV                   # API-key auth works
+test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-API-Key: csl_wrong' "$B/api/status")" = 401
+curl -fsS "$B/api/openapi.json" | grep -q '"openapi"'                                # spec is served
 echo "smoke ok"
