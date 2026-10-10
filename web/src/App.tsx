@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, Boxes, Layers, ListChecks, LogOut, Settings as
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api } from "./api";
+import { Footer, GitHubMark, REPO, versionLink } from "./components/Links";
 import AttentionPage from "./pages/Attention";
 import Dashboard from "./pages/Dashboard";
 import Events from "./pages/Events";
@@ -10,7 +11,7 @@ import Jobs from "./pages/Jobs";
 import SeasonsPage from "./pages/Seasons";
 import SettingsPage from "./pages/Settings";
 
-function AuthForm({ setup }: { setup: boolean }) {
+function AuthForm({ setup, version }: { setup: boolean; version?: string }) {
   const qc = useQueryClient();
   const [u, setU] = useState("");
   const [p, setP] = useState("");
@@ -25,7 +26,7 @@ function AuthForm({ setup }: { setup: boolean }) {
     }
   };
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-4">
       <form onSubmit={submit} className="card w-full max-w-sm space-y-4 p-6">
         <div className="flex items-center gap-2 text-lg font-semibold"><Boxes className="text-accent" /> consolidarr</div>
         <p className="text-sm text-muted">{setup ? "Create the admin account to get started." : "Sign in to continue."}</p>
@@ -34,6 +35,7 @@ function AuthForm({ setup }: { setup: boolean }) {
         {err && <div className="text-sm text-bad">{err}</div>}
         <button className="btn btn-primary w-full justify-center">{setup ? "Create account" : "Sign in"}</button>
       </form>
+      <Footer version={version} className="justify-center" />
     </div>
   );
 }
@@ -51,8 +53,8 @@ export default function App() {
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   if (me.isLoading) return <div className="p-8 text-muted">Loading…</div>;
-  if (me.data?.setupRequired) return <AuthForm setup />;
-  if (!me.data?.authenticated) return <AuthForm setup={false} />;
+  if (me.data?.setupRequired) return <AuthForm setup version={me.data.version} />;
+  if (!me.data?.authenticated) return <AuthForm setup={false} version={me.data?.version} />;
   return (
     <div className="flex min-h-screen">
       <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel p-3 md:flex">
@@ -69,10 +71,20 @@ export default function App() {
           <button className="flex items-center gap-2 hover:text-white" onClick={async () => { await api.logout(); qc.invalidateQueries({ queryKey: ["me"] }); }}>
             <LogOut size={14} /> Sign out
           </button>
-          <div>v{me.data?.version}</div>
+          <a className="flex items-center gap-2 hover:text-white" href={REPO} target="_blank" rel="noreferrer"><GitHubMark /> GitHub</a>
+          <a className="block truncate hover:text-white" href={versionLink(me.data?.version)} target="_blank" rel="noreferrer"
+            title="The exact build you are running">{me.data?.version}</a>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 p-4 md:p-6">
+      <main className="flex min-w-0 flex-1 flex-col p-4 md:p-6">
+        <nav className="-mx-1 mb-4 flex gap-1 overflow-x-auto md:hidden">
+          {nav.map(({ to, label }) => (
+            <NavLink key={to} to={to} end={to === "/"}
+              className={({ isActive }) => `whitespace-nowrap rounded-md px-3 py-1.5 text-sm ${isActive ? "bg-accent/15 text-white" : "text-muted"}`}>
+              {label}
+            </NavLink>
+          ))}
+        </nav>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/seasons" element={<SeasonsPage />} />
@@ -82,6 +94,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
+        <Footer version={me.data?.version} className="mt-auto border-t border-line pt-4 md:hidden" />
       </main>
     </div>
   );
