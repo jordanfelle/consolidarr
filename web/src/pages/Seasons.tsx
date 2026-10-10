@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Candidate, Season, api } from "../api";
 import { commas } from "../components/charts";
@@ -64,11 +64,21 @@ function Chips({ items, max = 3 }: { items: string[]; max?: number }) {
   );
 }
 
+function SortTh({ id, sort, onSort, children, right = false }: { id: Sort; sort: Sort; onSort: (s: Sort) => void; children: string; right?: boolean }) {
+  return (
+    <th className={right ? "text-right" : ""} aria-sort={sort === id ? (id === "title" ? "ascending" : "descending") : "none"}>
+      <button className={`uppercase tracking-wide hover:text-white ${sort === id ? "text-white" : ""}`} onClick={() => onSort(id)}>
+        {children}{sort === id ? (id === "title" ? " ▴" : " ▾") : ""}
+      </button>
+    </th>
+  );
+}
+
 export default function SeasonsPage() {
   const [sp, setSp] = useSearchParams();
   const q = sp.get("q") ?? "";
   const [inst, setInst] = useState("");
-  const [anime, setAnime] = useState("hide");
+  const [anime, setAnime] = useState(sp.get("anime") === "all" ? "all" : "hide");
   const [sort, setSort] = useState<Sort>("score");
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Season | null>(null);
@@ -81,13 +91,9 @@ export default function SeasonsPage() {
   const total = seasons.data?.total ?? 0;
   const rows = seasons.data?.seasons ?? [];
   const reset = () => setPage(0);
-  const SortTh = ({ id, children, right = false }: { id: Sort; children: string; right?: boolean }) => (
-    <th className={right ? "text-right" : ""} aria-sort={sort === id ? "descending" : "none"}>
-      <button className={`uppercase tracking-wide hover:text-white ${sort === id ? "text-white" : ""}`} onClick={() => { setSort(id); reset(); }}>
-        {children}{sort === id ? " ▾" : ""}
-      </button>
-    </th>
-  );
+  const onSort = (n: Sort) => { setSort(n); reset(); };
+  useEffect(() => { setPage((p) => Math.min(p, Math.max(0, Math.ceil(total / PAGE) - 1))); }, [total]);
+  useEffect(() => { setPage(0); }, [q]);
   return (
     <div className="space-y-4">
       <h1 className="page-title">Seasons</h1>
@@ -110,8 +116,8 @@ export default function SeasonsPage() {
       <div className="card hidden overflow-x-auto md:block">
         <table className="w-full">
           <thead><tr>
-            <SortTh id="title">Show</SortTh><th>Instance</th><th>Season</th><SortTh id="files" right>Files</SortTh>
-            <SortTh id="score">Release groups</SortTh><th>Qualities</th><SortTh id="size" right>Size</SortTh><th />
+            <SortTh id="title" sort={sort} onSort={onSort}>Show</SortTh><th>Instance</th><th>Season</th><SortTh id="files" sort={sort} onSort={onSort} right>Files</SortTh>
+            <SortTh id="score" sort={sort} onSort={onSort}>Release groups</SortTh><th>Qualities</th><SortTh id="size" sort={sort} onSort={onSort} right>Size</SortTh><th />
           </tr></thead>
           <tbody>
             {rows.map((s) => (

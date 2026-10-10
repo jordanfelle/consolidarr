@@ -2,6 +2,7 @@ package store
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
@@ -49,7 +50,11 @@ func (s *Store) Measure(minFiles int) (Snapshot, error) {
 
 // RecordSnapshot stores a snapshot unless nothing changed since the last one (so idle periods do not pile up
 // identical rows), and trims history older than a year.
+var snapMu sync.Mutex
+
 func (s *Store) RecordSnapshot(minFiles int) error {
+	snapMu.Lock()
+	defer snapMu.Unlock()
 	sn, err := s.Measure(minFiles)
 	if err != nil {
 		return err

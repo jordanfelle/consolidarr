@@ -116,7 +116,7 @@ export default function Dashboard() {
           <LineChart series={linePack} percent />
         </ChartCard>
 
-        <ChartCard title="Replacements per day" subtitle="Seasons finished each day (last 30 days with activity)"
+        <ChartCard title="Replacements per day" subtitle="Seasons finished each day (last 30 days)"
           table={{ head: ["Day", "Done", "Failed", "GB"], rows: (d?.perDay ?? []).map((x) => [x.day, x.done, x.failed, x.gb.toFixed(1)]) }}>
           {days.length > 0 ? <Columns data={days} /> : <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-line px-4 text-center text-sm text-muted">No replacements finished in this range yet.</div>}
         </ChartCard>
@@ -143,7 +143,7 @@ export default function Dashboard() {
               <tbody>
                 {d?.top.map((t) => (
                   <tr key={`${t.instId}-${t.seriesId}-${t.season}`}>
-                    <td className="max-w-[14rem] truncate"><Link className="hover:text-accent" to={`/seasons?q=${encodeURIComponent(t.title)}`}>{t.title}</Link></td>
+                    <td className="max-w-[14rem] truncate"><Link className="hover:text-accent" to={`/seasons?anime=all&q=${encodeURIComponent(t.title)}`}>{t.title}</Link></td>
                     <td className="num">S{pad(t.season)}</td><td className="num text-right">{t.files}</td><td className="num text-right">{t.groups}</td>
                     <td className="num whitespace-nowrap text-right text-muted">{t.gb.toFixed(1)} GB</td>
                   </tr>
