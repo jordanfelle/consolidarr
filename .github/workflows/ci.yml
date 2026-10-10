@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: "1.26" }
+        with: { go-version: "1.27" }
       - uses: actions/setup-node@v7
         with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
       - run: npm ci && npm run build
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: "1.26" }
+        with: { go-version: "1.27" }
       - run: mkdir -p web/dist && touch web/dist/.gitkeep
       - run: go test -count=1 ./internal/store
         env:
