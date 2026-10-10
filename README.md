@@ -79,4 +79,4 @@ cd web && npm run dev   # UI dev server, proxies /api to :7480
 
 - Season-pack replacement re-downloads data you already have. A 12-episode season is often 20-30 GB. Set the size cap accordingly.
 - Requires Sonarr v4 (episode files expose `releaseType`). Tested against 4.0.20.
-- Not affiliated with Sonarr. MIT licensed.
+- Not affiliated with Sonarr. Licensed under the [AGPL-3.0](LICENSE).
