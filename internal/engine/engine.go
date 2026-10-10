@@ -445,7 +445,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	case set.DryRun || !set.AutoDelete:
 		j.Status, j.Message = "ready", "verified; waiting for manual approval or dry run is on"
 	default:
-		if err := c.DeleteEpisodeFiles(ctx, j.OldFileIDs); err != nil {
+		if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
 			j.Status, j.Message = "holding", "delete failed: "+err.Error()
 			break
 		}
@@ -464,6 +464,36 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	_ = e.St.UpdateJob(j)
 }
 
+// liveOld returns the recorded old file ids that still exist. Sonarr can replace some of them on its own
+// (it imports a pack's files as upgrades), and its bulk delete rejects the whole request with a 500
+// ("Expected query to return N rows but returned M") if any id is already gone.
+func liveOld(ctx context.Context, c *sonarr.Client, seriesID int, old []int) ([]int, error) {
+	files, err := c.EpisodeFiles(ctx, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	have := map[int]bool{}
+	for _, f := range files {
+		have[f.ID] = true
+	}
+	var out []int
+	for _, id := range old {
+		if have[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// removeOld deletes whichever recorded old files still exist; nothing to delete is not an error.
+func removeOld(ctx context.Context, c *sonarr.Client, seriesID int, old []int) error {
+	ids, err := liveOld(ctx, c, seriesID, old)
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	return c.DeleteEpisodeFiles(ctx, ids)
+}
+
 // Approve lets the user push a verified "ready" job through delete+import regardless of dry-run.
 func (e *Engine) Approve(ctx context.Context, inst store.Instance, j store.Job) error {
 	c := client(inst)
@@ -473,7 +503,7 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j store.Job) 
 	}
 	for _, q := range queue {
 		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season {
-			if err := c.DeleteEpisodeFiles(ctx, j.OldFileIDs); err != nil {
+			if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
 				return err
 			}
 			id, err := c.ImportDownload(ctx, q.OutputPath, q.DownloadID)
