@@ -21,12 +21,14 @@ type fakeSonarr struct {
 	packEps    []int // episodes the finished download contains
 	seasonEps  map[int]int
 	filesAfter []sonarr.EpisodeFile
+	existing   map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
 	cmdStatus  string
 	srv        *httptest.Server
 }
 
 func newFake(packEps []int) *fakeSonarr {
-	f := &fakeSonarr{packEps: packEps, seasonEps: map[int]int{1: 11, 2: 12, 3: 13}, cmdStatus: "completed"}
+	f := &fakeSonarr{packEps: packEps, seasonEps: map[int]int{1: 11, 2: 12, 3: 13}, cmdStatus: "completed",
+		existing: map[int]bool{11: true, 12: true, 13: true}}
 	mux := http.NewServeMux()
 	js := func(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 	mux.HandleFunc("GET /api/v3/manualimport", func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +63,17 @@ func newFake(packEps []int) *fakeSonarr {
 	mux.HandleFunc("GET /api/v3/command/42", func(w http.ResponseWriter, r *http.Request) {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
 	})
-	mux.HandleFunc("GET /api/v3/episodefile", func(w http.ResponseWriter, r *http.Request) { js(w, f.filesAfter) })
+	mux.HandleFunc("GET /api/v3/episodefile", func(w http.ResponseWriter, r *http.Request) {
+		if f.filesAfter != nil { // a test that scripts the post-import state
+			js(w, f.filesAfter)
+			return
+		}
+		fs := []sonarr.EpisodeFile{}
+		for id := range f.existing {
+			fs = append(fs, sonarr.EpisodeFile{ID: id, SeasonNumber: 3})
+		}
+		js(w, fs)
+	})
 	mux.HandleFunc("GET /api/v3/series", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
 	f.srv = httptest.NewServer(mux)
 	return f
@@ -223,9 +235,34 @@ func TestImportCompletionMarksDoneOnlyWithFreshFiles(t *testing.T) {
 	j = v.job(t, time.Time{})
 	j.Status, j.ImportCmd = "importing", 42
 	_ = v.st.UpdateJob(j)
-	v.fake.filesAfter = nil
+	v.fake.filesAfter, v.fake.existing = nil, map[int]bool{}
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "failed" {
 		t.Fatalf("empty season after import must be failed, got %s", got.Status)
+	}
+}
+
+func TestSonarrAlreadyReplacedSomeOldFiles(t *testing.T) {
+	// Sonarr imported part of the pack as upgrades, so two of the three recorded old files are gone.
+	v := setup(t, []int{1, 2, 3})
+	v.fake.existing = map[int]bool{13: true}
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	got := v.status(t, j.ID)
+	if got.Status != "importing" {
+		t.Fatalf("a partially replaced season must still finish, got %s %q", got.Status, got.Message)
+	}
+	if len(v.fake.deleted) != 1 || len(v.fake.deleted[0]) != 1 || v.fake.deleted[0][0] != 13 {
+		t.Fatalf("must delete only the file that still exists, got %v", v.fake.deleted)
+	}
+}
+
+func TestNothingLeftToDeleteStillImports(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.existing = map[int]bool{} // every old file already replaced by Sonarr
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" || len(v.fake.deleted) != 0 || v.fake.imports != 1 {
+		t.Fatalf("got %s deleted=%v imports=%d", got.Status, v.fake.deleted, v.fake.imports)
 	}
 }
