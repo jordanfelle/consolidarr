@@ -1,0 +1,181 @@
+// Package store is consolidarr's SQLite persistence layer.
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
+)
+
+// Store works on SQLite (default) or Postgres (CONSOLIDARR_DATABASE_URL=postgres://...).
+// Queries are written with ? placeholders and rebound for Postgres.
+type Store struct {
+	DB *sql.DB
+	PG bool
+}
+
+func (s *Store) rebind(q string) string {
+	if !s.PG {
+		return q
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range q {
+		if r == '?' {
+			n++
+			fmt.Fprintf(&b, "$%d", n)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (s *Store) Exec(q string, a ...any) (sql.Result, error) { return s.Exec(s.rebind(q), a...) }
+func (s *Store) Query(q string, a ...any) (*sql.Rows, error) { return s.Query(s.rebind(q), a...) }
+func (s *Store) QueryRow(q string, a ...any) *sql.Row        { return s.QueryRow(s.rebind(q), a...) }
+
+const schemaTmpl = `
+create table if not exists users(id {{PK}}, username text unique not null, pw_hash text not null);
+create table if not exists sessions(token text primary key, user_id bigint not null, expires bigint not null);
+create table if not exists instances(
+  id {{PK}}, name text not null, url text not null, api_key text not null,
+  path_from text not null default '', path_to text not null default '', enabled bigint not null default 1);
+create table if not exists seasons(
+  inst_id bigint not null, series_id bigint not null, season bigint not null,
+  title text not null, series_type text not null, monitored bigint not null,
+  files bigint not null, aired bigint not null, pack bigint not null, single bigint not null,
+  multi bigint not null, unknown bigint not null, groups text not null, qualities text not null,
+  sources text not null, gb double precision not null, cur_rank bigint not null, path text not null,
+  primary key(inst_id, series_id, season));
+create table if not exists jobs(
+  id {{PK}}, inst_id bigint not null, series_id bigint not null, season bigint not null,
+  title text not null, old_file_ids text not null, release text not null, indexer text not null,
+  size_gb double precision not null, status text not null, message text not null default '', progress bigint not null default 0,
+  import_cmd bigint not null default 0, created bigint not null, updated bigint not null);
+create table if not exists skips(key text primary key, until bigint not null, reason text not null default '');
+create table if not exists events(id {{PK}}, ts bigint not null, level text not null, msg text not null);
+create table if not exists kv(k text primary key, v text not null);
+`
+
+// Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir.
+func Open(dir, databaseURL string) (*Store, error) {
+	st := &Store{}
+	pk := "integer primary key"
+	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
+		db, err := sql.Open("pgx", databaseURL)
+		if err != nil {
+			return nil, err
+		}
+		st.DB, st.PG, pk = db, true, "bigserial primary key"
+	} else {
+		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "consolidarr.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1) // sqlite: one writer; keeps this simple and race-free
+		st.DB = db
+	}
+	for _, stmt := range strings.Split(strings.ReplaceAll(schemaTmpl, "{{PK}}", pk), ";\n") {
+		if strings.TrimSpace(stmt) == "" {
+			continue
+		}
+		if _, err := st.DB.Exec(stmt); err != nil {
+			return nil, fmt.Errorf("schema: %w", err)
+		}
+	}
+	return st, nil
+}
+
+type Settings struct {
+	SchedulerEnabled bool     `json:"schedulerEnabled"`
+	DryRun           bool     `json:"dryRun"`
+	AutoDelete       bool     `json:"autoDelete"`
+	MaxInflight      int      `json:"maxInflight"`
+	MaxPackGB        float64  `json:"maxPackGB"`
+	MinFiles         int      `json:"minFiles"`
+	IncludeAnime     bool     `json:"includeAnime"`
+	CycleMinutes     int      `json:"cycleMinutes"`
+	ScanHours        int      `json:"scanHours"`
+	LastResort       []string `json:"lastResortIndexers"`
+}
+
+func DefaultSettings() Settings {
+	return Settings{DryRun: true, AutoDelete: true, MaxInflight: 4, MaxPackGB: 60, MinFiles: 3,
+		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}}
+}
+
+func (s *Store) Settings() Settings {
+	st := DefaultSettings()
+	var v string
+	if s.QueryRow(`select v from kv where k='settings'`).Scan(&v) == nil {
+		_ = json.Unmarshal([]byte(v), &st)
+	}
+	return st
+}
+
+func (s *Store) SaveSettings(st Settings) error {
+	b, _ := json.Marshal(st)
+	_, err := s.Exec(`insert into kv(k,v) values('settings',?) on conflict(k) do update set v=excluded.v`, string(b))
+	return err
+}
+
+func (s *Store) KV(k string) string {
+	var v string
+	_ = s.QueryRow(`select v from kv where k=?`, k).Scan(&v)
+	return v
+}
+
+func (s *Store) SetKV(k, v string) {
+	_, _ = s.Exec(`insert into kv(k,v) values(?,?) on conflict(k) do update set v=excluded.v`, k, v)
+}
+
+func (s *Store) Event(level, msg string) {
+	_, _ = s.Exec(`insert into events(ts,level,msg) values(?,?,?)`, time.Now().Unix(), level, msg)
+	_, _ = s.Exec(`delete from events where id < (select max(id) from events) - 5000`)
+}
+
+type Event struct {
+	ID    int64  `json:"id"`
+	TS    int64  `json:"ts"`
+	Level string `json:"level"`
+	Msg   string `json:"msg"`
+}
+
+func (s *Store) Events(limit int) ([]Event, error) {
+	rows, err := s.Query(`select id,ts,level,msg from events order by id desc limit ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ID, &e.TS, &e.Level, &e.Msg); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Skipped reports whether key is still inside a skip window.
+func (s *Store) Skipped(key string) bool {
+	var until int64
+	err := s.QueryRow(`select until from skips where key=?`, key).Scan(&until)
+	return err == nil && until > time.Now().Unix()
+}
+
+func (s *Store) Skip(key string, d time.Duration, reason string) {
+	_, _ = s.Exec(`insert into skips(key,until,reason) values(?,?,?) on conflict(key) do update set until=excluded.until, reason=excluded.reason`,
+		key, time.Now().Add(d).Unix(), reason)
+}
+
+var ErrNotFound = errors.New("not found")
