@@ -15,7 +15,7 @@ COPY --from=web /w/dist ./web/dist
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/consolidarr ./cmd/consolidarr
 
-FROM alpine:3.21
+FROM alpine:3.24
 # ffprobe is used to verify downloaded packs (DRM / undecodable video) before old files are deleted.
 RUN apk add --no-cache ca-certificates ffmpeg tzdata && adduser -D -u 1000 app && mkdir /data && chown app /data
 COPY --from=build /out/consolidarr /usr/local/bin/consolidarr
