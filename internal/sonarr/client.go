@@ -20,7 +20,8 @@ type Client struct {
 }
 
 func New(base, key string) *Client {
-	return &Client{Base: strings.TrimRight(base, "/"), Key: key, HTTP: &http.Client{Timeout: 5 * time.Minute}}
+	return &Client{Base: strings.TrimRight(base, "/"), Key: key,
+		HTTP: &http.Client{Timeout: 5 * time.Minute, Transport: newTransport()}}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any, timeout time.Duration) error {

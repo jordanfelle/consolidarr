@@ -361,3 +361,20 @@ func TestIndexersToleratesAnUnreachableInstance(t *testing.T) {
 		t.Fatalf("partial results with the failure reported expected: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestInstanceURLsAreValidated(t *testing.T) {
+	_, h := newAPI(t)
+	c := login(t, h)
+	for _, u := range []string{"http://169.254.169.254/latest/meta-data", "file:///etc/passwd", "http://u:p@host", "ftp://host"} {
+		body := `{"name":"x","url":"` + u + `","apiKey":"k"}`
+		if w := do(h, "POST", "/api/instances", body, c); w.Code != 422 {
+			t.Errorf("save %s must be 422, got %d %s", u, w.Code, w.Body)
+		}
+		if w := do(h, "POST", "/api/instances/test", body, c); w.Code != 422 {
+			t.Errorf("test %s must be 422, got %d %s", u, w.Code, w.Body)
+		}
+	}
+	if w := do(h, "POST", "/api/instances", `{"name":"ok","url":"http://sonarr:8989/sonarr","apiKey":"k"}`, c); w.Code != 201 {
+		t.Errorf("a normal URL must still be accepted, got %d %s", w.Code, w.Body)
+	}
+}
