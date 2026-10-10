@@ -25,7 +25,12 @@ export default function Dashboard() {
         <Stat label="In flight" value={st.data?.active ?? "–"} hint={s ? `max ${s.maxInflight}` : undefined} />
         <Stat label="Scheduler" value={s ? (s.schedulerEnabled ? (s.dryRun ? "Dry run" : "Live") : "Off") : "–"} />
       </div>
-      {s?.schedulerEnabled && s.dryRun && (
+      {st.data?.once?.active && (
+        <div className="card border-accent/40 p-3 text-sm">
+          One-off run in progress: {st.data.once.started} of {st.data.once.limit} seasons started{s?.dryRun ? " (dry run: only logging)" : ""}.
+        </div>
+      )}
+      {(s?.schedulerEnabled || st.data?.once?.active) && s?.dryRun && (
         <div className="card border-warn/40 p-3 text-sm text-warn">
           Dry run is on: the scheduler only logs what it would grab. Turn it off in Settings when you are happy with the picks.
         </div>

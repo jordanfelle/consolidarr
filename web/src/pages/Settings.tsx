@@ -2,6 +2,44 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Instance, Settings, api } from "../api";
 
+function OneOff({ dryRun, hasInstance }: { dryRun: boolean; hasInstance: boolean }) {
+  const qc = useQueryClient();
+  const [n, setN] = useState(5);
+  const once = useQuery({ queryKey: ["once"], queryFn: api.once, refetchInterval: 5000 });
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["once"] }); qc.invalidateQueries({ queryKey: ["jobs"] }); qc.invalidateQueries({ queryKey: ["events"] }); };
+  const start = useMutation({ mutationFn: () => api.startOnce(n), onSuccess: refresh });
+  const stop = useMutation({ mutationFn: api.cancelOnce, onSuccess: refresh });
+  const o = once.data;
+  return (
+    <div className="space-y-3 border-t border-line pt-4">
+      <div>
+        <div className="text-sm font-medium">One-off run</div>
+        <div className="text-xs text-muted">
+          Replace up to N seasons now, without turning on the scheduler. It searches, grabs, verifies and replaces them, then stops on its own.
+          Uses the dry run and auto-delete settings above (saved ones). {dryRun ? "Dry run is ON, so this only logs what it would grab." : "Dry run is OFF: this will grab and replace for real."}
+        </div>
+      </div>
+      {o?.active ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="pill text-accent">running</span>
+          <span>{o.started} of {o.limit} seasons started</span>
+          <button className="btn" disabled={stop.isPending || o.started >= o.limit} onClick={() => stop.mutate()}>Stop starting new ones</button>
+          <span className="text-xs text-muted">Watch progress on Replacements and Activity.</span>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <input className="input w-24" type="number" min={1} max={500} value={n} onChange={(e) => setN(Number(e.target.value))} />
+          <span className="text-sm text-muted">seasons</span>
+          <button className="btn btn-primary" disabled={!hasInstance || start.isPending || n < 1} onClick={() => start.mutate()}>Run once</button>
+          {!hasInstance && <span className="text-sm text-muted">Add a Sonarr instance first.</span>}
+          {o && o.finished > 0 && <span className="text-xs text-muted">Last run finished {new Date(o.finished * 1000).toLocaleString()}: {o.started} seasons started.</span>}
+        </div>
+      )}
+      {start.error && <div className="text-sm text-bad">{(start.error as Error).message}</div>}
+    </div>
+  );
+}
+
 function Keys() {
   const qc = useQueryClient();
   const keys = useQuery({ queryKey: ["keys"], queryFn: api.keys });
@@ -146,9 +184,10 @@ export default function SettingsPage() {
                 Run a cycle now
               </button>
               {dirty && <span className="text-sm text-warn">Unsaved changes</span>}
-              {!remote.data?.schedulerEnabled && !dirty && <span className="text-sm text-muted">Scheduler is off; enable it above and save to run cycles.</span>}
+              {!remote.data?.schedulerEnabled && !dirty && <span className="text-sm text-muted">Scheduler is off. Use a one-off run below, or enable it above and save.</span>}
               {note && <span className={`text-sm ${note.ok ? "text-good" : "text-bad"}`}>{note.msg}</span>}
             </div>
+            <OneOff dryRun={remote.data?.dryRun ?? true} hasInstance={(insts.data?.length ?? 0) > 0} />
           </div>
         </section>
       )}

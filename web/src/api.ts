@@ -21,6 +21,7 @@ export type Settings = {
   minFiles: number; includeAnime: boolean; cycleMinutes: number; scanHours: number; lastResortIndexers: string[];
 };
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
+export type Once = { active: boolean; limit: number; started: number; began: number; finished: number };
 export type Event = { id: number; ts: number; level: string; msg: string };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -56,8 +57,11 @@ export const api = {
   settings: () => req<Settings>("GET", "/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/settings", s),
   events: () => req<Event[]>("GET", "/events"),
-  status: () => req<{ active: number; flaggedTV: number; flaggedAnime: number; settings: Settings }>("GET", "/status"),
+  status: () => req<{ active: number; flaggedTV: number; flaggedAnime: number; settings: Settings; once: Once }>("GET", "/status"),
   runNow: () => req("POST", "/engine/run"),
+  once: () => req<Once>("GET", "/engine/once"),
+  startOnce: (limit: number) => req<Once>("POST", "/engine/once", { limit }),
+  cancelOnce: () => req<Once>("POST", "/engine/once/cancel"),
   keys: () => req<ApiKey[]>("GET", "/keys"),
   createKey: (name: string) => req<{ id: number; name: string; prefix: string; key: string }>("POST", "/keys", { name }),
   deleteKey: (id: number) => req("DELETE", `/keys/${id}`),

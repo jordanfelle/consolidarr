@@ -3,12 +3,15 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jordanfelle/consolidarr/internal/audit"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
@@ -18,6 +21,7 @@ type fakeSonarr struct {
 	mu         sync.Mutex
 	deleted    [][]int
 	imports    int
+	grabs      int
 	packEps    []int // episodes the finished download contains
 	seasonEps  map[int]int
 	filesAfter []sonarr.EpisodeFile
@@ -75,6 +79,19 @@ func newFake(packEps []int) *fakeSonarr {
 		js(w, fs)
 	})
 	mux.HandleFunc("GET /api/v3/series", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
+	mux.HandleFunc("GET /api/v3/health", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
+	mux.HandleFunc("GET /api/v3/queue", func(w http.ResponseWriter, r *http.Request) { js(w, map[string]any{"records": []any{}}) })
+	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		js(w, []map[string]any{{"guid": "g1", "indexerId": 1, "indexer": "BTN", "title": "Show.S03.1080p.WEB-DL", "size": 20e9,
+			"seeders": 10, "fullSeason": true, "seasonNumber": 3, "rejected": false, "rejections": []string{},
+			"quality": map[string]any{"quality": map[string]any{"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}}})
+	})
+	mux.HandleFunc("POST /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.grabs++
+		f.mu.Unlock()
+		js(w, map[string]bool{"ok": true})
+	})
 	f.srv = httptest.NewServer(mux)
 	return f
 }
@@ -264,5 +281,92 @@ func TestNothingLeftToDeleteStillImports(t *testing.T) {
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
 	if got := v.status(t, j.ID); got.Status != "importing" || len(v.fake.deleted) != 0 || v.fake.imports != 1 {
 		t.Fatalf("got %s deleted=%v imports=%d", got.Status, v.fake.deleted, v.fake.imports)
+	}
+}
+
+// seedSeasons stores n flagged seasons (all series have a season 3 so the fake's release search matches).
+func seedSeasons(t *testing.T, v *env, n int) {
+	t.Helper()
+	var rows []audit.Season
+	for i := 1; i <= n; i++ {
+		rows = append(rows, audit.Season{InstID: 1, SeriesID: i, Season: 3, Title: fmt.Sprintf("Show %d", i), SeriesType: "standard",
+			Files: 8, Aired: 8, Groups: []string{"a", "b"}, Qualities: []string{"WEBDL-1080p"}, Sources: []string{"web"}, CurRank: 10802})
+	}
+	if err := v.st.ReplaceSeasons(1, 0, rows); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	v.st.SetKV("lastScan:1", strconv.FormatInt(time.Now().Unix(), 10)) // otherwise the cycle rescans and wipes the seeds
+}
+
+func TestOneOffRunWorksWithTheSchedulerOffAndHonoursItsLimit(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	seedSeasons(t, v, 5)
+	set := live() // scheduler OFF, dry run off
+	if shouldCycle(set, v.e.Once()) {
+		t.Fatal("with the scheduler off and no one-off run, nothing may run")
+	}
+	if err := v.e.StartOnce(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.e.StartOnce(2); err == nil {
+		t.Fatal("a second concurrent one-off run must be refused")
+	}
+	if !shouldCycle(set, v.e.Once()) {
+		t.Fatal("an active one-off run must be allowed to cycle even with the scheduler off")
+	}
+	done := v.e.cycle(context.Background(), store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}, set)
+	if !done || v.fake.grabs != 2 || v.e.Once().Started != 2 {
+		t.Fatalf("limit 2 of 5 candidates: done=%v grabs=%d started=%d", done, v.fake.grabs, v.e.Once().Started)
+	}
+	jobs, _ := v.st.Jobs(true, 10)
+	if len(jobs) != 2 {
+		t.Fatalf("want 2 tracked jobs, got %d", len(jobs))
+	}
+}
+
+func TestOneOffDryRunGrabsNothing(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	seedSeasons(t, v, 3)
+	set := store.DefaultSettings() // dry run ON
+	_ = v.e.StartOnce(10)
+	done := v.e.cycle(context.Background(), store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}, set)
+	if !done || v.fake.grabs != 0 || v.e.Once().Started != 3 {
+		t.Fatalf("dry run: done=%v grabs=%d started=%d (want 3 picks logged, 0 grabs)", done, v.fake.grabs, v.e.Once().Started)
+	}
+	if j, _ := v.st.Jobs(true, 10); len(j) != 0 {
+		t.Fatal("dry run must not create jobs")
+	}
+}
+
+func TestCancelOnceStopsStartingNewSeasons(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	seedSeasons(t, v, 5)
+	_ = v.e.StartOnce(5)
+	v.e.CancelOnce()
+	v.e.cycle(context.Background(), store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}, live())
+	if v.fake.grabs != 0 {
+		t.Fatalf("cancelled before any grab: want 0 grabs, got %d", v.fake.grabs)
+	}
+}
+
+func TestOneOffFinishesOnlyWhenNothingIsRunning(t *testing.T) {
+	v := setup(t, nil)
+	_ = v.e.StartOnce(1)
+	j := v.job(t, time.Time{}) // downloading
+	if v.e.running() != 1 {
+		t.Fatalf("a downloading job counts as running, got %d", v.e.running())
+	}
+	j.Status = "ready" // needs a human: must not keep the run alive
+	_ = v.st.UpdateJob(j)
+	if v.e.running() != 0 {
+		t.Fatal("ready jobs must not keep a one-off run alive")
+	}
+	v.e.finishOnce()
+	if o := v.e.Once(); o.Active || o.Finished == 0 {
+		t.Fatalf("run should be finished: %+v", o)
 	}
 }

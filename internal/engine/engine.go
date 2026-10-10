@@ -3,6 +3,8 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,6 +40,93 @@ func (e *Engine) RunNow() {
 	default:
 	}
 }
+
+// Once is a bounded, one-off run: it works through up to Limit seasons (grab, verify, replace) using the
+// same safety rules as the scheduler (dry run, auto-delete), then stops by itself. It needs no schedule.
+type Once struct {
+	Active   bool  `json:"active"`
+	Limit    int   `json:"limit"`
+	Started  int   `json:"started"`
+	Began    int64 `json:"began"`
+	Finished int64 `json:"finished"`
+}
+
+func (e *Engine) Once() Once {
+	var o Once
+	_ = json.Unmarshal([]byte(e.St.KV("once")), &o)
+	return o
+}
+
+func (e *Engine) saveOnce(o Once) {
+	b, _ := json.Marshal(o)
+	e.St.SetKV("once", string(b))
+}
+
+// StartOnce begins a one-off run of up to limit seasons.
+func (e *Engine) StartOnce(limit int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Once().Active {
+		return errors.New("a one-off run is already active")
+	}
+	e.saveOnce(Once{Active: true, Limit: limit, Began: time.Now().Unix()})
+	e.St.Event("info", fmt.Sprintf("one-off run started: up to %d seasons (dryRun=%v)", limit, e.St.Settings().DryRun))
+	select {
+	case e.runNow <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// CancelOnce stops starting new seasons; ones already in flight still finish.
+func (e *Engine) CancelOnce() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if o := e.Once(); o.Active {
+		o.Limit = o.Started
+		e.saveOnce(o)
+		e.St.Event("info", "one-off run: no new seasons will be started; waiting for in-flight ones")
+	}
+}
+
+func (e *Engine) bumpOnce() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	o := e.Once()
+	o.Started++
+	e.saveOnce(o)
+}
+
+// running counts jobs still moving on their own (downloading or importing). 'ready' and 'holding' need a
+// human, so they do not keep a one-off run alive.
+func (e *Engine) running() int {
+	js, _ := e.St.Jobs(true, 10000)
+	n := 0
+	for _, j := range js {
+		if j.Status == "downloading" || j.Status == "importing" {
+			n++
+		}
+	}
+	return n
+}
+
+func (e *Engine) finishOnce() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	o := e.Once()
+	if !o.Active {
+		return
+	}
+	o.Active, o.Finished = false, time.Now().Unix()
+	e.saveOnce(o)
+	e.St.Event("info", fmt.Sprintf("one-off run finished: %d seasons started", o.Started))
+}
+
+// shouldCycle: the loop runs cycles while the scheduler is on or a one-off run is active.
+func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled || o.Active }
+
+// grabPause is the breather between grabs so the download client keeps up (tests set it to 0).
+var grabPause = 20 * time.Second
 
 // HealthOf returns "" when the instance last looked healthy, else the reason.
 func (e *Engine) HealthOf(id int64) string { e.mu.Lock(); defer e.mu.Unlock(); return e.Healthy[id] }
@@ -223,7 +312,8 @@ func (e *Engine) Start(ctx context.Context) {
 			last = time.Time{}
 		}
 		set := e.St.Settings()
-		if !set.SchedulerEnabled || time.Since(last) < time.Duration(max(set.CycleMinutes, 1))*time.Minute {
+		once := e.Once()
+		if !shouldCycle(set, once) || time.Since(last) < time.Duration(max(set.CycleMinutes, 1))*time.Minute {
 			continue
 		}
 		last = time.Now()
@@ -231,15 +321,21 @@ func (e *Engine) Start(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		allDone := true
 		for _, inst := range insts {
-			if inst.Enabled {
-				e.cycle(ctx, inst, set)
+			if inst.Enabled && !e.cycle(ctx, inst, set) {
+				allDone = false
 			}
+		}
+		// A one-off run ends once nothing more will be started and nothing is still downloading/importing.
+		if !set.SchedulerEnabled && once.Active && allDone && e.running() == 0 {
+			e.finishOnce()
 		}
 	}
 }
 
-func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Settings) {
+// cycle reports whether this instance has nothing further to start (used to end a one-off run).
+func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Settings) bool {
 	c := client(inst)
 	why := healthy(ctx, c)
 	e.mu.Lock()
@@ -247,7 +343,7 @@ func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Setti
 	e.mu.Unlock()
 	if why != "" {
 		e.St.Event("warn", fmt.Sprintf("%s unhealthy (%s); pausing this cycle", inst.Name, why))
-		return
+		return false
 	}
 	if ls, _ := strconv.ParseInt(e.St.KV(fmt.Sprintf("lastScan:%d", inst.ID)), 10, 64); time.Since(time.Unix(ls, 0)) > time.Duration(set.ScanHours)*time.Hour {
 		if err := e.ScanInstance(ctx, inst); err != nil {
@@ -255,20 +351,27 @@ func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Setti
 		}
 	}
 	e.advanceJobs(ctx, inst, c, set)
-	e.topUp(ctx, inst, c, set)
+	return e.topUp(ctx, inst, c, set)
 }
 
-func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) {
+// topUp starts new replacements up to the in-flight cap (and, in a one-off run, up to its limit). It
+// returns true when there is nothing more to start: the limit was reached or every candidate was tried.
+func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) bool {
+	oneOff := !set.SchedulerEnabled && e.Once().Active
+	limitHit := func() bool { o := e.Once(); return oneOff && o.Started >= o.Limit }
+	if limitHit() {
+		return true
+	}
 	active, err := e.St.Jobs(true, 1000)
 	if err != nil {
-		return
+		return false
 	}
 	busy := map[string]bool{}
 	for _, j := range active {
 		busy[skipKey(j.InstID, j.SeriesID, j.Season)] = true
 	}
 	if len(active) >= set.MaxInflight {
-		return
+		return false
 	}
 	q := store.SeasonQuery{InstID: inst.ID, FlaggedOnly: true, MinFiles: set.MinFiles, Anime: "hide"}
 	if set.IncludeAnime {
@@ -276,7 +379,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 	}
 	rows, err := e.St.Seasons(q)
 	if err != nil {
-		return
+		return false
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		ai, aj := rows[i].SeriesType == "anime", rows[j].SeriesType == "anime"
@@ -287,8 +390,11 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 	})
 	queue, _ := c.Queue(ctx, time.Minute)
 	for _, r := range rows {
+		if limitHit() {
+			return true
+		}
 		if len(active) >= set.MaxInflight {
-			return
+			return false
 		}
 		key := skipKey(inst.ID, r.SeriesID, r.Season)
 		if busy[key] || e.St.Skipped(key) || inQueue(queue, r.SeriesID, r.Season) {
@@ -307,6 +413,9 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		if set.DryRun {
 			e.St.Event("info", fmt.Sprintf("[dry run] would grab %s S%02d <- %s (%.1f GB, %s)", r.Title, r.Season, p.Title, float64(p.Size)/1e9, p.Indexer))
 			e.St.Skip(key, 24*time.Hour, "dry run")
+			if oneOff {
+				e.bumpOnce()
+			}
 			continue
 		}
 		if _, err := e.Grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer); err != nil {
@@ -315,8 +424,12 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			continue
 		}
 		active = append(active, store.Job{})
-		time.Sleep(20 * time.Second) // let the download client breathe between grabs
+		if oneOff {
+			e.bumpOnce()
+		}
+		time.Sleep(grabPause) // let the download client breathe between grabs
 	}
+	return true
 }
 
 // ---- job lifecycle ----

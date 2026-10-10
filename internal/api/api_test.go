@@ -261,3 +261,29 @@ func TestRunNowRefusesWhileSchedulerIsOff(t *testing.T) {
 		t.Fatalf("scheduler on must be accepted, got %d %s", w.Code, w.Body)
 	}
 }
+
+func TestOneOffRunAPI(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	if w := do(h, "POST", "/api/engine/once", `{"limit":3}`, c); w.Code != 422 {
+		t.Fatalf("no instance configured must be 422, got %d %s", w.Code, w.Body)
+	}
+	_, _ = a.St.SaveInstance(store.Instance{Name: "S", URL: "http://s", APIKey: "k", Enabled: true})
+	for _, bad := range []string{`{"limit":0}`, `{"limit":501}`, `{}`, `{"limit":3,"extra":1}`} {
+		if w := do(h, "POST", "/api/engine/once", bad, c); w.Code != 422 && w.Code != 400 {
+			t.Errorf("%s must be rejected, got %d", bad, w.Code)
+		}
+	}
+	if w := do(h, "POST", "/api/engine/once", `{"limit":3}`, c); w.Code != 202 || !strings.Contains(w.Body.String(), `"active":true`) {
+		t.Fatalf("start: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "POST", "/api/engine/once", `{"limit":3}`, c); w.Code != 409 {
+		t.Fatalf("a second run must be 409, got %d", w.Code)
+	}
+	if w := do(h, "GET", "/api/status", "", c); !strings.Contains(w.Body.String(), `"once":{"active":true,"limit":3`) {
+		t.Fatalf("status must report the run: %s", w.Body)
+	}
+	if w := do(h, "POST", "/api/engine/once/cancel", "", c); w.Code != 200 {
+		t.Fatalf("cancel: %d", w.Code)
+	}
+}
