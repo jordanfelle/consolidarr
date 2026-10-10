@@ -19,12 +19,15 @@ import (
 )
 
 type API struct {
-	St           *store.Store
-	Eng          *engine.Engine
-	Web          fs.FS // built SPA (may be nil in dev)
-	AuthDisabled bool
-	Version      string
-	CookieSecure string // "", "auto" (follow the connection), "always" or "never"
+	St             *store.Store
+	Eng            *engine.Engine
+	Web            fs.FS // built SPA (may be nil in dev)
+	AuthDisabled   bool
+	Version        string
+	CookieSecure   string          // "", "auto" (follow the connection), "always" or "never"
+	TrustedOrigins map[string]bool // extra origins accepted for writes (a proxy that rewrites Host)
+	AllowedHosts   map[string]bool // optional Host allowlist (DNS-rebinding defence); nil allows any
+	limiter        loginLimiter
 }
 
 func ok(w http.ResponseWriter, v any) {
@@ -135,7 +138,7 @@ func (a *API) Handler() http.Handler {
 	if a.Web != nil {
 		m.Handle("/", spa(a.Web))
 	}
-	return m
+	return a.browserGuard(m)
 }
 
 // spa serves static files and falls back to index.html for client-side routes.
@@ -204,8 +207,13 @@ func (a *API) saveInstance(w http.ResponseWriter, r *http.Request) {
 	isNew := r.PathValue("id") == ""
 	if !isNew {
 		i.ID, _ = strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if _, err := a.St.Instance(i.ID); err != nil {
+		old, err := a.St.Instance(i.ID)
+		if err != nil {
 			fail(w, 404, "no such instance")
+			return
+		}
+		if i.APIKey == "" && i.URL != old.URL { // a stored key is only ever sent to the URL it was saved for
+			fail(w, 422, "apiKey required when the URL changes")
 			return
 		}
 	} else if i.APIKey == "" {
@@ -247,9 +255,13 @@ func (a *API) deleteInstance(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) testInstance(w http.ResponseWriter, r *http.Request) {
 	var i store.Instance
-	_ = json.NewDecoder(r.Body).Decode(&i)
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&i)
 	if i.APIKey == "" && i.ID != 0 {
 		if old, err := a.St.Instance(i.ID); err == nil {
+			if strings.TrimRight(i.URL, "/") != old.URL {
+				fail(w, 422, "apiKey required when the URL changes")
+				return
+			}
 			i.APIKey = old.APIKey
 		}
 	}
@@ -278,11 +290,11 @@ func (a *API) scan(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "scan already running")
 		return
 	}
-	go func() {
+	safeGo("scan "+inst.Name, func() {
 		if err := a.Eng.ScanInstance(context.Background(), inst); err != nil {
 			a.St.Event("error", "scan "+inst.Name+": "+err.Error())
 		}
-	}()
+	})
 	w.WriteHeader(http.StatusAccepted)
 	ok(w, map[string]bool{"started": true})
 }

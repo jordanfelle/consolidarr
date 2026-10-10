@@ -272,17 +272,18 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 	}
 	var flipErr error
 	if job.Status == "lost" || job.Status == "failed" { // give it another go
-		unlock := e.jobMu.lock(id)
-		if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
-			if cur.Deleted > 0 {
-				cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
-			} else {
-				cur.Status = "downloading"
+		func() {
+			defer e.jobMu.lock(id)() // deferred so a panic cannot leave the job locked forever
+			if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
+				if cur.Deleted > 0 {
+					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
+				} else {
+					cur.Status = "downloading"
+				}
+				cur.Message = ""
+				flipErr = e.St.UpdateJob(cur) // fails if a newer active job already owns the season
 			}
-			cur.Message = ""
-			flipErr = e.St.UpdateJob(cur) // fails if a newer active job already owns the season
-		}
-		unlock()
+		}()
 	}
 	if flipErr != nil {
 		return job, fmt.Errorf("could not restart this job: %w", flipErr)

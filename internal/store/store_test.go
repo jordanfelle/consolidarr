@@ -2,7 +2,11 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -294,5 +298,38 @@ func TestAnOldUniqueIndexIsReplacedSoReservingIsCovered(t *testing.T) {
 	}
 	if _, err := st2.Exec(ins, "downloading"); err == nil {
 		t.Fatal("after the upgrade a reserving job and another active job for the same season must conflict")
+	}
+}
+
+func TestCreateFirstUserIsAtomic(t *testing.T) {
+	st := open(t)
+	var wg sync.WaitGroup
+	var wins, losses atomic.Int32
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := st.CreateFirstUser("u"+strconv.Itoa(i), "h"); err == nil {
+				wins.Add(1)
+			} else if errors.Is(err, ErrSetupDone) {
+				losses.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	var n int
+	_ = st.QueryRow(`select count(*) from users`).Scan(&n)
+	if wins.Load() != 1 || n != 1 || losses.Load() != 7 {
+		t.Fatalf("exactly one setup must win: wins=%d losses=%d users=%d", wins.Load(), losses.Load(), n)
+	}
+}
+
+func TestOnlyOneAccountCanExist(t *testing.T) {
+	st := open(t)
+	if _, err := st.Exec(`insert into users(username,pw_hash) values('a','h')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(`insert into users(username,pw_hash) values('b','h')`); err == nil {
+		t.Fatal("a second account must be rejected by the database itself, not only by application checks")
 	}
 }

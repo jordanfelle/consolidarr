@@ -21,7 +21,7 @@ type Client struct {
 
 func New(base, key string) *Client {
 	return &Client{Base: strings.TrimRight(base, "/"), Key: key,
-		HTTP: &http.Client{Timeout: 5 * time.Minute, Transport: newTransport()}}
+		HTTP: &http.Client{Timeout: 5 * time.Minute, Transport: newTransport(), CheckRedirect: noRedirect}}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any, timeout time.Duration) error {
@@ -46,7 +46,16 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, tim
 		return err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxResponse)+1))
+	if err != nil {
+		return fmt.Errorf("sonarr %s %s: reading response: %w", method, path, err)
+	}
+	if len(data) > maxResponse {
+		return fmt.Errorf("sonarr %s %s: response larger than %d MB", method, path, maxResponse>>20)
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf("sonarr %s %s: redirect refused (%d to %s); use the final URL in the instance settings", method, path, resp.StatusCode, truncate(resp.Header.Get("Location"), 100))
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("sonarr %s %s: %d %s", method, path, resp.StatusCode, truncate(string(data), 200))
 	}
@@ -55,6 +64,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, tim
 	}
 	return nil
 }
+
+// maxResponse bounds how much of a reply is buffered; the largest real payloads (a whole library) are far below it.
+var maxResponse = 256 << 20
 
 func truncate(s string, n int) string {
 	if len(s) > n {

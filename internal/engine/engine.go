@@ -173,6 +173,13 @@ func (e *Engine) ScanInstance(ctx context.Context, inst store.Instance) error {
 		go func(s sonarr.Series) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if p := recover(); p != nil {
+					mu.Lock()
+					ferr = fmt.Errorf("panic scanning %s: %v", s.Title, p)
+					mu.Unlock()
+				}
+			}()
 			files, err := c.EpisodeFiles(ctx, s.ID)
 			if err != nil {
 				mu.Lock()
@@ -279,14 +286,15 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 			return 0, err
 		}
 	}
-	unlock := e.jobMu.lock(id)
-	if j, err := e.St.Job(id); err == nil && j.Status == "reserving" { // not if something else already moved it on
-		j.Status = "downloading"
-		if err := e.St.UpdateJob(j); err != nil {
-			e.St.Event("warn", fmt.Sprintf("%s S%02d: grabbed but could not mark it downloading (%v); it will be picked up by its release title", s.Title, s.Season, err))
+	func() {
+		defer e.jobMu.lock(id)()                                           // deferred so a panic cannot leave the job locked forever
+		if j, err := e.St.Job(id); err == nil && j.Status == "reserving" { // not if something else already moved it on
+			j.Status = "downloading"
+			if err := e.St.UpdateJob(j); err != nil {
+				e.St.Event("warn", fmt.Sprintf("%s S%02d: grabbed but could not mark it downloading (%v); it will be picked up by its release title", s.Title, s.Season, err))
+			}
 		}
-	}
-	unlock()
+	}()
 	e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
 	return id, nil
 }
@@ -355,7 +363,7 @@ func (e *Engine) Start(ctx context.Context) {
 		}
 		allDone := true
 		for _, inst := range insts {
-			if inst.Enabled && !e.cycle(ctx, inst, set) {
+			if inst.Enabled && !e.safeCycle(ctx, inst, set) {
 				allDone = false
 			}
 		}
@@ -364,6 +372,18 @@ func (e *Engine) Start(ctx context.Context) {
 			e.finishOnce()
 		}
 	}
+}
+
+// safeCycle keeps a panic in one instance's cycle from killing the process (and every download in flight with
+// it): it is logged as an event and the instance is retried next cycle.
+func (e *Engine) safeCycle(ctx context.Context, inst store.Instance, set store.Settings) (done bool) {
+	defer func() {
+		if p := recover(); p != nil {
+			e.St.Event("error", fmt.Sprintf("%s: panic in cycle: %v", inst.Name, p))
+			done = false
+		}
+	}()
+	return e.cycle(ctx, inst, set)
 }
 
 // cycle reports whether this instance has nothing further to start (used to end a one-off run).

@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jordanfelle/consolidarr/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -86,19 +88,42 @@ func (a *API) startSession(w http.ResponseWriter, r *http.Request, uid int64) {
 
 type creds struct{ Username, Password string }
 
+// bcrypt silently ignores everything past 72 bytes (and newer versions refuse such input), so longer passwords
+// are rejected up front instead of being quietly truncated.
+const maxPassword = 72
+
+// loginDelay is the pause after a failed login (a variable so tests need not wait).
+var loginDelay = 500 * time.Millisecond
+
+// dummyHash is compared against when the username does not exist, so a miss costs the same bcrypt time as a
+// wrong password and does not reveal which usernames exist.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("consolidarr-dummy-password"), bcrypt.DefaultCost)
+
 func (a *API) setup(w http.ResponseWriter, r *http.Request) {
 	if a.userCount() > 0 {
 		fail(w, 409, "already set up")
 		return
 	}
 	var c creds
-	if json.NewDecoder(r.Body).Decode(&c) != nil || strings.TrimSpace(c.Username) == "" || len(c.Password) < 8 {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&c) != nil || strings.TrimSpace(c.Username) == "" || len(c.Password) < 8 {
 		fail(w, 400, "username required and password must be at least 8 characters")
 		return
 	}
-	h, _ := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
-	var id int64
-	if err := a.St.QueryRow(`insert into users(username,pw_hash) values(?,?) returning id`, c.Username, string(h)).Scan(&id); err != nil {
+	if len(c.Password) > maxPassword {
+		fail(w, 400, "password must be at most 72 bytes")
+		return
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
+	if err != nil {
+		fail(w, 500, "could not hash password")
+		return
+	}
+	id, err := a.St.CreateFirstUser(c.Username, string(h))
+	if errors.Is(err, store.ErrSetupDone) {
+		fail(w, 409, "already set up")
+		return
+	}
+	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
@@ -108,15 +133,22 @@ func (a *API) setup(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	var c creds
-	_ = json.NewDecoder(r.Body).Decode(&c)
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&c)
+	user, addr := strings.ToLower(strings.TrimSpace(c.Username)), remoteAddr(r)
+	if !a.limiter.reserve(user, addr) {
+		w.Header().Set("Retry-After", "600")
+		fail(w, 429, "too many failed logins; try again in a few minutes")
+		return
+	}
 	var id int64
-	var h string
-	if a.St.QueryRow(`select id,pw_hash from users where username=?`, c.Username).Scan(&id, &h) != nil ||
-		bcrypt.CompareHashAndPassword([]byte(h), []byte(c.Password)) != nil {
-		time.Sleep(500 * time.Millisecond)
+	h := string(dummyHash)
+	found := a.St.QueryRow(`select id,pw_hash from users where username=?`, c.Username).Scan(&id, &h) == nil
+	if bcrypt.CompareHashAndPassword([]byte(h), []byte(c.Password)) != nil || !found {
+		time.Sleep(loginDelay)
 		fail(w, 401, "invalid credentials")
 		return
 	}
+	a.limiter.succeed(user, addr)
 	a.startSession(w, r, id)
 	ok(w, map[string]any{"ok": true})
 }
