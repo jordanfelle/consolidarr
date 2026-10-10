@@ -68,6 +68,7 @@ with the reason. With *Dry run* on (the default), the scheduler only logs what i
 | `CONSOLIDARR_DATABASE_URL` | | `postgres://…` to use Postgres instead of SQLite |
 | `CONSOLIDARR_AUTH_DISABLED` | `false` | skip the login (only behind an authenticating reverse proxy) |
 | `CONSOLIDARR_COOKIE_SECURE` | `auto` | session cookie `Secure` flag: `auto` sets it when the request is HTTPS (directly or via `X-Forwarded-Proto`), `always`, or `never` |
+| `CONSOLIDARR_ALLOWED_HOSTS` | any | comma-separated Host names the server answers to (DNS-rebinding defence); others get 421. Cross-origin browser writes are always refused; API-key requests are exempt |
 
 Everything else (scheduler, size cap, in-flight limit, last-resort indexers, anime) is in the UI under **Settings**.
 

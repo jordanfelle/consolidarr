@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"syscall"
 	"time"
@@ -25,6 +26,9 @@ import (
 // multicast addresses. Loopback and private ranges stay allowed because that is where Sonarr lives.
 
 func unsafeIP(ip net.IP) bool {
+	if ip == nil {
+		return true // fail closed: anything we cannot parse is not a destination we vouch for
+	}
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified()
 }
@@ -38,10 +42,20 @@ func refuseUnsafe(network, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return nil
 	}
-	if ip := net.ParseIP(host); ip != nil && unsafeIP(ip) {
+	if ip := parseHostIP(host); unsafeIP(ip) {
 		return fmt.Errorf("%w (%s)", ErrBlockedAddress, host)
 	}
 	return nil
+}
+
+// parseHostIP parses a literal address, tolerating an IPv6 zone ("fe80::1%eth0"), which net.ParseIP rejects and
+// which would otherwise slip past the check. It returns nil if host is not a literal address.
+func parseHostIP(host string) net.IP {
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil
+	}
+	return net.IP(a.WithZone("").Unmap().AsSlice())
 }
 
 func newTransport() *http.Transport {
@@ -55,6 +69,10 @@ func newTransport() *http.Transport {
 		ResponseHeaderTimeout: 5 * time.Minute,
 	}
 }
+
+// noRedirect makes the client report a redirect instead of following it: a configured Sonarr never needs one,
+// and following would let a hostile "Sonarr" bounce the API key to another host.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // ValidateURL checks an instance URL before it is stored or used.
 func ValidateURL(raw string) error {
@@ -71,7 +89,10 @@ func ValidateURL(raw string) error {
 	if u.User != nil {
 		return errors.New("URL must not contain credentials; use the API key field")
 	}
-	if ip := net.ParseIP(u.Hostname()); ip != nil {
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return errors.New("URL must not contain a query string or fragment")
+	}
+	if ip := parseHostIP(u.Hostname()); ip != nil {
 		if unsafeIP(ip) {
 			return fmt.Errorf("%w (%s)", ErrBlockedAddress, u.Hostname())
 		}

@@ -210,3 +210,17 @@ func isUniqueViolation(err error) bool {
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "unique constraint") || strings.Contains(m, "duplicate key") || strings.Contains(m, "sqlstate 23505")
 }
+
+// ErrSetupDone means the first user already exists.
+var ErrSetupDone = errors.New("already set up")
+
+// CreateFirstUser inserts the initial account only if no user exists, in one statement, so two concurrent
+// setup calls cannot both win.
+func (s *Store) CreateFirstUser(username, hash string) (int64, error) {
+	var id int64
+	err := s.QueryRow(`insert into users(username,pw_hash) select ?,? where not exists (select 1 from users) returning id`, username, hash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrSetupDone
+	}
+	return id, err
+}

@@ -42,13 +42,17 @@ func main() {
 	eng := engine.New(st)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go eng.Start(ctx)
+	engDone := make(chan struct{})
+	go func() { defer close(engDone); eng.Start(ctx) }()
 
 	a := &api.API{St: st, Eng: eng, Web: web.FS(), Version: version,
 		AuthDisabled: os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true",
-		CookieSecure: os.Getenv("CONSOLIDARR_COOKIE_SECURE")}
+		CookieSecure: os.Getenv("CONSOLIDARR_COOKIE_SECURE"),
+		AllowedHosts: api.ParseAllowedHosts(os.Getenv("CONSOLIDARR_ALLOWED_HOSTS"))}
 	srv := &http.Server{Addr: *addr, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	shut := make(chan struct{})
 	go func() {
+		defer close(shut)
 		<-ctx.Done()
 		sh, c := context.WithTimeout(context.Background(), 10*time.Second)
 		defer c()
@@ -57,5 +61,13 @@ func main() {
 	log.Printf("consolidarr %s listening on %s", version, *addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+	// ListenAndServe returns as soon as Shutdown starts; wait for in-flight requests and the engine so a
+	// restart does not cut a replacement or a database write in half.
+	<-shut
+	select {
+	case <-engDone:
+	case <-time.After(15 * time.Second):
+		log.Print("engine did not stop in time")
 	}
 }

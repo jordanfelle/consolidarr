@@ -24,9 +24,9 @@ func (a *API) openapi(w http.ResponseWriter, r *http.Request) {
 func (a *API) docs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8"><title>consolidarr API</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css"></head>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css" integrity="sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn" crossorigin="anonymous"></head>
 <body><div id="ui"></div>
-<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" integrity="sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep" crossorigin="anonymous"></script>
 <script>SwaggerUIBundle({url:"/api/openapi.json",dom_id:"#ui",persistAuthorization:true})</script>
 </body></html>`))
 }
@@ -43,11 +43,11 @@ func (a *API) scanAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		started = append(started, inst.ID)
-		go func() {
+		safeGo("scan "+inst.Name, func() {
 			if err := a.Eng.ScanInstance(context.Background(), inst); err != nil {
 				a.St.Event("error", "scan "+inst.Name+": "+err.Error())
 			}
-		}()
+		})
 	}
 	w.WriteHeader(http.StatusAccepted)
 	ok(w, map[string]any{"started": started})
