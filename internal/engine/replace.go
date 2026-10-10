@@ -329,7 +329,12 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
 		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
 		for _, ep := range eps {
-			want = append(want, ep.EpisodeNumber)
+			if aired(ep) {
+				want = append(want, ep.EpisodeNumber)
+			}
+		}
+		if len(want) == 0 {
+			return // nothing aired to wait for; leave the job as it is for a person to look at
 		}
 	}
 	got := 0
@@ -341,6 +346,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg
 		_ = e.St.UpdateJob(*j)
+		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 7*24*time.Hour, "failed after delete") // never auto-regrab over a half-replaced season
 		e.St.Event("error", label+": "+msg)
 	}
 	if got >= len(want) {
@@ -377,4 +383,13 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	case !finished && age > importHardStop:
 		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))
 	}
+}
+
+// aired reports whether an episode has already aired (specials, season 0, are not waited for).
+func aired(ep sonarr.Episode) bool {
+	if ep.SeasonNumber == 0 {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, ep.AirDateUTC)
+	return err != nil || !t.After(time.Now()) // an unknown air date counts as aired: fail towards waiting, not skipping
 }

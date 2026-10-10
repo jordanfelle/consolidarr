@@ -110,11 +110,12 @@ type EpisodeFile struct {
 }
 
 type Episode struct {
-	ID            int  `json:"id"`
-	SeasonNumber  int  `json:"seasonNumber"`
-	EpisodeNumber int  `json:"episodeNumber"`
-	EpisodeFileID int  `json:"episodeFileId"`
-	Monitored     bool `json:"monitored"`
+	ID            int    `json:"id"`
+	SeasonNumber  int    `json:"seasonNumber"`
+	EpisodeNumber int    `json:"episodeNumber"`
+	EpisodeFileID int    `json:"episodeFileId"`
+	Monitored     bool   `json:"monitored"`
+	AirDateUTC    string `json:"airDateUtc"`
 }
 
 type Release struct {

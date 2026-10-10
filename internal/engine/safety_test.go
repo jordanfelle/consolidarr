@@ -430,3 +430,73 @@ func TestVerificationIsNormallyDoneOnceAndTheVerdictIsStampedWhenItFinishes(t *t
 		t.Fatalf("a normal replacement probes each file once, not again under the instance lock: %d probes", probes)
 	}
 }
+
+func TestAReservingJobBindsToItsDownloadByExactTitleAndExpiresOtherwise(t *testing.T) {
+	v := setup(t, nil)
+	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Release: "the.pack", Status: "reserving"})
+	j, _ := v.st.Job(id)
+	q := []sonarr.QueueItem{
+		{SeriesID: 1, SeasonNumber: 3, Title: "an.unrelated.episode", DownloadID: "OTHER", Size: 5, Status: "downloading"},
+		{SeriesID: 1, SeasonNumber: 3, Title: "the.pack", DownloadID: "MINE", Size: 50, Status: "downloading"},
+	}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, q)
+	if got := v.status(t, id); got.Status != "downloading" || got.DownloadID != "MINE" {
+		t.Fatalf("a lost flip must self-heal by binding to the download with exactly our title: %+v", got)
+	}
+	// with no matching download it expires after 15 minutes, never before
+	id2, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 4, Title: "Show", Release: "x", Status: "reserving"})
+	j2, _ := v.st.Job(id2)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j2, nil)
+	if got := v.status(t, id2); got.Status != "reserving" {
+		t.Fatalf("a fresh placeholder must be left alone, got %s", got.Status)
+	}
+	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-time.Hour).Unix(), id2)
+	j2, _ = v.st.Job(id2)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j2, nil)
+	if got := v.status(t, id2); got.Status != "lost" {
+		t.Fatalf("an old placeholder with no download must expire, got %s", got.Status)
+	}
+}
+
+func TestAPlaceholderIsNeverOfferedForRemovalOrRejectedAndCountsAsRunning(t *testing.T) {
+	v := attentionEnv(t, stuckItem(10, 1, 3, "Not an upgrade"))
+	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Status: "reserving"})
+	if got, _ := v.e.Attention(context.Background()); len(got) != 0 {
+		t.Fatalf("the season of a grab in flight is owned: its pack must not appear as stuck, got %+v", got)
+	}
+	if _, err := v.e.RejectJob(context.Background(), id, true); err == nil || len(v.fake.removed) != 0 {
+		t.Fatalf("a placeholder must not be rejectable (it could remove someone else's download): err=%v removed=%v", err, v.fake.removed)
+	}
+	if _, err := v.e.AdvanceJob(context.Background(), id); err == nil {
+		t.Fatal("a placeholder must not be retried")
+	}
+	if v.e.running() != 1 {
+		t.Fatalf("a grab in flight is running work for a one-off run, got %d", v.e.running())
+	}
+}
+
+func TestLegacyJobsWaitOnlyForEpisodesThatHaveAired(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	j.Status, j.ImportCmd, j.Deleted = "importing", 42, time.Now().Unix()
+	j.ImportAt = j.Deleted
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 90, 2: 91, 3: 0}
+	v.fake.unaired = map[int]bool{3: true} // episode 3 has not aired yet: no file is expected for it
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "done" {
+		t.Fatalf("an unaired episode must not hold a legacy job open, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestAFailedAfterDeleteJobBlocksAutomaticRegrabs(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	j.Status, j.ImportCmd, j.Expected, j.ExpectedEps, j.Deleted = "importing", 42, 3, []int{1, 2, 3}, time.Now().Add(-time.Hour).Unix()
+	j.ImportAt = j.Deleted
+	_ = v.st.UpdateJob(j)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil) // nothing imported an hour later: failed
+	if got := v.status(t, j.ID); got.Status != "failed" || !v.st.Skipped(skipKey(1, 1, 3)) {
+		t.Fatalf("a half-replaced season must be skipped by the scheduler, got %s skipped=%v", got.Status, v.st.Skipped(skipKey(1, 1, 3)))
+	}
+}

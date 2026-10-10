@@ -188,3 +188,23 @@ func TestLegacyImportingJobsGetSensibleTimestamps(t *testing.T) {
 		t.Fatalf("an in-flight job from before the columns existed must be aged from its last update, got deleted=%d import_at=%d", del, at)
 	}
 }
+
+func TestAnOldUniqueIndexIsReplacedSoReservingIsCovered(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := Open(dir, "")
+	// a database that already has the first release's narrower index
+	_, _ = st.DB.Exec(`drop index if exists jobs_one_active_v2`)
+	_, _ = st.DB.Exec(`create unique index jobs_one_active on jobs(inst_id, series_id, season) where status in ('downloading','ready','holding','importing')`)
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := `insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated) values(1,1,3,'t','[]','r','i',1,?,'',0,0,1,1)`
+	if _, err := st2.Exec(ins, "reserving"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st2.Exec(ins, "downloading"); err == nil {
+		t.Fatal("after the upgrade a reserving job and another active job for the same season must conflict")
+	}
+}

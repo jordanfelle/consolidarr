@@ -33,6 +33,7 @@ type fakeSonarr struct {
 	onDelete      func()           // called as a delete request arrives, before it is recorded
 	failImport    int              // fail this many import commands with a 500
 	failGrab      bool             // POST /release answers 500
+	unaired       map[int]bool     // episodes whose air date is in the future
 	noEpisodes    bool             // GET /episode returns nothing
 	rejections    map[int][]string // manualimport rejection reasons by episode number
 	removed       []removal        // queue removals
@@ -74,9 +75,9 @@ func newFake(packEps []int) *fakeSonarr {
 			js(w, []any{})
 			return
 		}
-		var eps []map[string]int
+		var eps []map[string]any
 		for n, id := range f.seasonEps {
-			eps = append(eps, map[string]int{"episodeNumber": n, "episodeFileId": id})
+			eps = append(eps, map[string]any{"seasonNumber": 3, "episodeNumber": n, "episodeFileId": id, "airDateUtc": airDate(f.unaired[n])})
 		}
 		js(w, eps)
 	})
@@ -611,4 +612,11 @@ func TestOneOffCannotStartWhileTheSchedulerIsOn(t *testing.T) {
 	if v.e.Once().Active {
 		t.Fatal("a refused run must not be recorded as active")
 	}
+}
+
+func airDate(future bool) string {
+	if future {
+		return time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339)
+	}
+	return time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
 }

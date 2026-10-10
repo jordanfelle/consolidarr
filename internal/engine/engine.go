@@ -109,7 +109,7 @@ func (e *Engine) running() int {
 	js, _ := e.St.Jobs(true, 10000)
 	n := 0
 	for _, j := range js {
-		if j.Status == "downloading" || j.Status == "importing" {
+		if j.Status == "reserving" || j.Status == "downloading" || j.Status == "importing" {
 			n++
 		}
 	}
@@ -277,10 +277,14 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 			return 0, err
 		}
 	}
-	if j, err := e.St.Job(id); err == nil {
+	unlock := e.jobMu.lock(id)
+	if j, err := e.St.Job(id); err == nil && j.Status == "reserving" { // not if something else already moved it on
 		j.Status = "downloading"
-		_ = e.St.UpdateJob(j)
+		if err := e.St.UpdateJob(j); err != nil {
+			e.St.Event("warn", fmt.Sprintf("%s S%02d: grabbed but could not mark it downloading (%v); it will be picked up by its release title", s.Title, s.Season, err))
+		}
 	}
+	unlock()
 	e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
 	return id, nil
 }
@@ -492,6 +496,13 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	case "done", "failed", "lost":
 		return
 	case "reserving": // placeholder while the grab request is in flight; it has no download to bind to yet
+		for _, q := range queue { // the grab did reach Sonarr but the flip to "downloading" was lost: bind by exact title
+			if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && j.Release != "" && q.Title == j.Release {
+				j.Status, j.DownloadID = "downloading", q.DownloadID
+				_ = e.St.UpdateJob(j)
+				return
+			}
+		}
 		if time.Since(time.Unix(j.Created, 0)) > 15*time.Minute {
 			j.Status, j.Message = "lost", "the grab never completed; nothing was downloaded or changed"
 			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), time.Hour, "lost")

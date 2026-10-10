@@ -204,7 +204,7 @@ func (e *Engine) ownedSeasons() map[string]bool {
 	owned := map[string]bool{}
 	if js, err := e.St.Jobs(false, 100000); err == nil {
 		for _, j := range js {
-			if j.Status == "downloading" || j.Status == "ready" || j.Status == "holding" || j.Status == "importing" || (j.Status == "failed" && j.Deleted > 0) {
+			if j.Status == "reserving" || j.Status == "downloading" || j.Status == "ready" || j.Status == "holding" || j.Status == "importing" || (j.Status == "failed" && j.Deleted > 0) {
 				owned[skipKey(j.InstID, j.SeriesID, j.Season)] = true
 			}
 		}
@@ -258,8 +258,8 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 	if err != nil {
 		return store.Job{}, err
 	}
-	if job.Status == "done" {
-		return job, fmt.Errorf("job is done")
+	if job.Status == "done" || job.Status == "reserving" {
+		return job, fmt.Errorf("job is %s", job.Status)
 	}
 	inst, err := e.St.Instance(job.InstID)
 	if err != nil {
@@ -340,7 +340,7 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 	if err != nil {
 		return store.Job{}, err
 	}
-	if j.Status == "importing" || j.Status == "done" {
+	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
 		return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
 	}
 	if j.Deleted > 0 {
