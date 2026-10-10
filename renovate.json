@@ -1,33 +1,73 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommitsDisabled"],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled"
+  ],
   "timezone": "America/New_York",
-  "schedule": ["before 6am on saturday"],
+  "schedule": [
+    "before 6am on saturday"
+  ],
   "prConcurrentLimit": 5,
-  "postUpdateOptions": ["gomodTidy", "npmDedupe"],
+  "postUpdateOptions": [
+    "gomodTidy",
+    "npmDedupe"
+  ],
   "vulnerabilityAlerts": {
-    "schedule": ["at any time"],
-    "labels": ["security"],
+    "schedule": [
+      "at any time"
+    ],
+    "labels": [
+      "security"
+    ],
     "automerge": true
   },
   "packageRules": [
     {
       "description": "Group and automerge minor/patch updates once CI is green",
-      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin"
+      ],
       "groupName": "non-major dependencies",
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "Majors need a human",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["major"]
+      "labels": [
+        "major"
+      ]
+    },
+    {
+      "description": "vite, its React plugin and the Tailwind vite plugin are peer-coupled: separate PRs fail with ERESOLVE, so they must move together",
+      "matchPackageNames": [
+        "vite",
+        "@vitejs/plugin-react",
+        "@tailwindcss/vite",
+        "tailwindcss"
+      ],
+      "groupName": "vite toolchain"
     },
     {
       "description": "Keep the Go toolchain image, setup-go and go.mod's go directive moving together",
-      "matchDatasources": ["docker", "golang-version", "github-actions"],
-      "matchPackageNames": ["golang", "go", "actions/setup-go"],
+      "matchDatasources": [
+        "docker",
+        "golang-version",
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "golang",
+        "go",
+        "actions/setup-go"
+      ],
       "groupName": "go toolchain"
     }
   ]
