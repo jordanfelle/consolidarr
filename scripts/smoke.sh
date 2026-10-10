@@ -29,4 +29,5 @@ has "$(curl -fsS -H "X-API-Key: $KEY" "$B/api/status")" flaggedTV               
 test "$(code -H 'X-API-Key: csl_wrong' "$B/api/status")" = 401
 has "$(curl -fsS "$B/api/openapi.json")" '"openapi"'                                # spec is served
 test "$(code -X POST -H "X-API-Key: $KEY" "$B/api/engine/run")" = 409               # scheduler off is refused, not faked
+test "$(code -X POST -H "X-API-Key: $KEY" -H 'content-type: application/json' -d '{"limit":3}' "$B/api/engine/once")" = 422   # one-off run needs an instance
 echo "smoke ok"

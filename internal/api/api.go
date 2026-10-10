@@ -104,6 +104,9 @@ func (a *API) Routes() []route {
 		{"GET", "/api/events", a.events, false},
 		{"GET", "/api/status", a.status, false},
 		{"POST", "/api/engine/run", a.runNow, false},
+		{"GET", "/api/engine/once", func(w http.ResponseWriter, r *http.Request) { ok(w, a.Eng.Once()) }, false},
+		{"POST", "/api/engine/once", a.startOnce, false},
+		{"POST", "/api/engine/once/cancel", a.cancelOnce, false},
 
 		{"GET", "/api/keys", a.listKeys, false},
 		{"POST", "/api/keys", a.createKey, false},
@@ -414,6 +417,40 @@ func (a *API) runNow(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]bool{"started": true})
 }
 
+// startOnce begins a bounded one-off run; it works whether or not the scheduler is enabled.
+func (a *API) startOnce(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Limit int `json:"limit"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Limit < 1 || in.Limit > 500 {
+		fail(w, 422, "limit must be between 1 and 500")
+		return
+	}
+	insts, _ := a.St.Instances()
+	enabled := false
+	for _, i := range insts {
+		enabled = enabled || i.Enabled
+	}
+	if !enabled {
+		fail(w, 422, "add and enable a Sonarr instance first")
+		return
+	}
+	if err := a.Eng.StartOnce(in.Limit); err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	ok(w, a.Eng.Once())
+}
+
+func (a *API) cancelOnce(w http.ResponseWriter, r *http.Request) {
+	a.Eng.CancelOnce()
+	ok(w, a.Eng.Once())
+}
+
 func (a *API) job(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	js, _ := a.St.Jobs(false, 100000)
@@ -490,7 +527,7 @@ func (a *API) status(w http.ResponseWriter, r *http.Request) {
 	act, _ := a.St.Jobs(true, 1000)
 	all, _ := a.St.Seasons(store.SeasonQuery{FlaggedOnly: true, MinFiles: a.St.Settings().MinFiles, Anime: "hide"})
 	ani, _ := a.St.Seasons(store.SeasonQuery{FlaggedOnly: true, MinFiles: a.St.Settings().MinFiles, Anime: "only"})
-	ok(w, map[string]any{"active": len(act), "flaggedTV": len(all), "flaggedAnime": len(ani), "settings": a.St.Settings()})
+	ok(w, map[string]any{"active": len(act), "flaggedTV": len(all), "flaggedAnime": len(ani), "settings": a.St.Settings(), "once": a.Eng.Once()})
 }
 
 func sortSeasons(rows []audit.Season) {

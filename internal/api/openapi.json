@@ -466,6 +466,9 @@
      },
      "settings": {
       "$ref": "#/components/schemas/Settings"
+     },
+     "once": {
+      "$ref": "#/components/schemas/Once"
      }
     }
    },
@@ -516,6 +519,28 @@
      "key": {
       "type": "string",
       "description": "Shown once"
+     }
+    }
+   },
+   "Once": {
+    "type": "object",
+    "properties": {
+     "active": {
+      "type": "boolean"
+     },
+     "limit": {
+      "type": "integer"
+     },
+     "started": {
+      "type": "integer"
+     },
+     "began": {
+      "type": "integer",
+      "description": "Unix seconds"
+     },
+     "finished": {
+      "type": "integer",
+      "description": "Unix seconds, 0 while active"
      }
     }
    }
@@ -2314,6 +2339,168 @@
       "SessionCookie": []
      }
     ]
+   }
+  },
+  "/api/engine/once": {
+   "get": {
+    "tags": [
+     "engine"
+    ],
+    "summary": "State of the one-off run",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Once"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "engine"
+    ],
+    "summary": "Start a one-off run (no scheduler needed)",
+    "description": "Works through up to `limit` seasons - search, grab, verify, replace - using the same safety settings as the scheduler (dry run, auto-delete), then stops by itself. In dry run it only logs what it would grab.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "limit"
+        ],
+        "properties": {
+         "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Started",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Once"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "A one-off run is already active",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Invalid limit, or no enabled Sonarr instance",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/engine/once/cancel": {
+   "post": {
+    "tags": [
+     "engine"
+    ],
+    "summary": "Stop starting new seasons; in-flight ones still finish",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Once"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
    }
   }
  }
