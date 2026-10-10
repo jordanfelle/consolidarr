@@ -45,7 +45,8 @@ func main() {
 	go eng.Start(ctx)
 
 	a := &api.API{St: st, Eng: eng, Web: web.FS(), Version: version,
-		AuthDisabled: os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true"}
+		AuthDisabled: os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true",
+		CookieSecure: os.Getenv("CONSOLIDARR_COOKIE_SECURE")}
 	srv := &http.Server{Addr: *addr, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

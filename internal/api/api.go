@@ -24,6 +24,7 @@ type API struct {
 	Web          fs.FS // built SPA (may be nil in dev)
 	AuthDisabled bool
 	Version      string
+	CookieSecure string // "", "auto" (follow the connection), "always" or "never"
 }
 
 func ok(w http.ResponseWriter, v any) {

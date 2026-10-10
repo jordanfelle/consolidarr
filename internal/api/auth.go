@@ -48,13 +48,40 @@ func (a *API) authed(r *http.Request) bool {
 	return exp > time.Now().Unix()
 }
 
-func (a *API) startSession(w http.ResponseWriter, uid int64) {
+// secureRequest reports whether the client reached us over HTTPS, directly or through a TLS-terminating
+// proxy (Cloudflare, nginx). The header can be forged by a client, but it only decides the Secure flag of a
+// cookie sent back to that same client, so spoofing it gains nothing.
+func secureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// sessionCookie builds the session cookie. It is always HttpOnly and SameSite=Lax. Secure follows the
+// connection: set whenever the request came over HTTPS, so it works unchanged behind Cloudflare Access, but
+// not forced on plain-HTTP LAN use where browsers would silently drop a Secure cookie and break login.
+// CONSOLIDARR_COOKIE_SECURE=always|never overrides the detection.
+func (a *API) sessionCookie(r *http.Request, value string) *http.Cookie {
+	c := &http.Cookie{Name: cookieName, Value: value, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode}
+	switch strings.ToLower(a.CookieSecure) {
+	case "always", "true":
+		c.Secure = true
+	case "never", "false":
+	default:
+		if secureRequest(r) {
+			c.Secure = true
+		}
+	}
+	return c
+}
+
+func (a *API) startSession(w http.ResponseWriter, r *http.Request, uid int64) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	tok := hex.EncodeToString(b)
 	exp := time.Now().Add(30 * 24 * time.Hour)
 	_, _ = a.St.Exec(`insert into sessions(token,user_id,expires) values(?,?,?)`, tok, uid, exp.Unix())
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: tok, Path: "/", Expires: exp, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	c := a.sessionCookie(r, tok)
+	c.Expires = exp
+	http.SetCookie(w, c)
 }
 
 type creds struct{ Username, Password string }
@@ -75,7 +102,7 @@ func (a *API) setup(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
-	a.startSession(w, id)
+	a.startSession(w, r, id)
 	ok(w, map[string]any{"ok": true})
 }
 
@@ -90,7 +117,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "invalid credentials")
 		return
 	}
-	a.startSession(w, id)
+	a.startSession(w, r, id)
 	ok(w, map[string]any{"ok": true})
 }
 
@@ -98,7 +125,9 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		_, _ = a.St.Exec(`delete from sessions where token=?`, c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	c := a.sessionCookie(r, "")
+	c.MaxAge = -1
+	http.SetCookie(w, c)
 	ok(w, map[string]any{"ok": true})
 }
 
