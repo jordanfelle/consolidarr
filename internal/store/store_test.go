@@ -106,3 +106,87 @@ func TestSeasonsPerInstanceAndJobs(t *testing.T) {
 		t.Fatal("skip window")
 	}
 }
+
+func TestSnapshotsAreRecordedThinnedAndDeduplicated(t *testing.T) {
+	st := open(t)
+	rows := func(flagged int) []audit.Season {
+		var out []audit.Season
+		for i := 0; i < flagged; i++ {
+			out = append(out, audit.Season{InstID: 1, SeriesID: i + 1, Season: 1, Title: "S", SeriesType: "standard", Files: 8, Aired: 8,
+				Single: 8, Groups: []string{"a", "b"}, Qualities: []string{"q"}, Sources: []string{"web"}, GB: 1})
+		}
+		return out
+	}
+	_ = st.ReplaceSeasons(1, 0, rows(3))
+	if err := st.RecordSnapshot(3); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.RecordSnapshot(3) // unchanged and recent: not stored again
+	got, _ := st.Snapshots(0, 400)
+	if len(got) != 1 || got[0].FlaggedTV != 3 || got[0].SingleFiles != 24 || got[0].PackFiles != 0 {
+		t.Fatalf("one snapshot of the current state expected, got %+v", got)
+	}
+	_ = st.ReplaceSeasons(1, 0, rows(2)) // a replacement finished: progress
+	_ = st.RecordSnapshot(3)
+	if got, _ = st.Snapshots(0, 400); len(got) != 2 || got[1].FlaggedTV != 2 {
+		t.Fatalf("a changed library must add a point: %+v", got)
+	}
+	// thinning keeps the newest point and never exceeds the cap
+	for i := 0; i < 50; i++ {
+		_, _ = st.Exec(`insert into snapshots(ts,flagged_tv,flagged_anime,seasons,files,pack_files,single_files,multi_files,unknown_files,gb) values(?,?,?,?,?,?,?,?,?,?)`,
+			time.Now().Unix()-int64(1000+i*60), i, 0, 0, 0, 0, 0, 0, 0, 0)
+	}
+	thin, _ := st.Snapshots(0, 10)
+	if len(thin) > 10 || thin[len(thin)-1].FlaggedTV != 2 {
+		t.Fatalf("thinning must respect the cap and keep the latest point, got %d points ending %+v", len(thin), thin[len(thin)-1])
+	}
+}
+
+func TestPerDayFillsGapsAndCountsOutcomes(t *testing.T) {
+	st := open(t)
+	mk := func(status string, daysAgo int, gb float64) {
+		id, _ := st.AddJob(Job{InstID: 1, SeriesID: daysAgo*10 + len(status), Season: 1, Title: "x", SizeGB: gb})
+		_, _ = st.Exec(`update jobs set status=?, updated=? where id=?`, status, time.Now().AddDate(0, 0, -daysAgo).Unix(), id)
+	}
+	mk("done", 3, 10)
+	mk("done", 3, 5)
+	mk("failed", 3, 0)
+	mk("done", 0, 2)
+	mk("downloading", 1, 99) // unfinished jobs are not throughput
+	days, err := st.PerDay(0)
+	if err != nil || len(days) != 4 {
+		t.Fatalf("want 4 consecutive days (3 days ago .. today), got %d err=%v: %+v", len(days), err, days)
+	}
+	if days[0].Done != 2 || days[0].Failed != 1 || days[0].GB != 15 || days[1].Done != 0 || days[2].Done != 0 || days[3].Done != 1 {
+		t.Fatalf("unexpected per-day stats: %+v", days)
+	}
+}
+
+func TestMessBucketsFlaggedSeasonsByReleaseGroups(t *testing.T) {
+	st := open(t)
+	mk := func(id, groups int, anime bool) audit.Season {
+		g := make([]string, groups)
+		for i := range g {
+			g[i] = string(rune('a' + i))
+		}
+		ty := "standard"
+		if anime {
+			ty = "anime"
+		}
+		return audit.Season{InstID: 1, SeriesID: id, Season: 1, Title: "T", SeriesType: ty, Files: 8, Aired: 8, Single: 8, Groups: g, Qualities: []string{"q"}, Sources: []string{"web"}}
+	}
+	_ = st.ReplaceSeasons(1, 0, []audit.Season{mk(1, 1, false), mk(2, 3, false), mk(3, 4, false), mk(4, 9, false), mk(5, 9, true)})
+	b, top, err := st.Mess(3, false, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b[0].Count != 1 || b[1].Count != 2 || b[2].Count != 0 || b[3].Count != 1 {
+		t.Fatalf("buckets wrong (anime hidden): %+v", b)
+	}
+	if len(top) != 2 || top[0].Groups != 9 {
+		t.Fatalf("the messiest season must lead: %+v", top)
+	}
+	if b2, _, _ := st.Mess(3, true, 2); b2[3].Count != 2 {
+		t.Fatalf("anime counted when included: %+v", b2)
+	}
+}

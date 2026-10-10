@@ -1,7 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Candidate, Season, api } from "../api";
+import { commas } from "../components/charts";
 
 function Drawer({ s, onClose }: { s: Season; onClose: () => void }) {
   const qc = useQueryClient();
@@ -50,49 +52,107 @@ function Drawer({ s, onClose }: { s: Season; onClose: () => void }) {
   );
 }
 
+type Sort = "score" | "title" | "files" | "size";
+const PAGE = 50;
+
+function Chips({ items, max = 3 }: { items: string[]; max?: number }) {
+  return (
+    <span className="flex flex-wrap gap-1" title={items.join(", ")}>
+      {items.slice(0, max).map((i) => <span key={i} className="pill text-slate-300">{i}</span>)}
+      {items.length > max && <span className="pill text-muted">+{items.length - max}</span>}
+    </span>
+  );
+}
+
 export default function SeasonsPage() {
-  const [q, setQ] = useState("");
+  const [sp, setSp] = useSearchParams();
+  const q = sp.get("q") ?? "";
   const [inst, setInst] = useState("");
   const [anime, setAnime] = useState("hide");
+  const [sort, setSort] = useState<Sort>("score");
+  const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Season | null>(null);
   const insts = useQuery({ queryKey: ["instances"], queryFn: api.instances });
-  const params = new URLSearchParams({ anime, limit: "300" });
+  const params = new URLSearchParams({ anime, limit: String(PAGE), offset: String(page * PAGE), sort });
   if (q) params.set("q", q);
   if (inst) params.set("inst", inst);
-  const seasons = useQuery({ queryKey: ["seasons", q, inst, anime], queryFn: () => api.seasons(params) });
+  const seasons = useQuery({ queryKey: ["seasons", q, inst, anime, sort, page], queryFn: () => api.seasons(params), placeholderData: keepPreviousData });
   const name = (id: number) => insts.data?.find((i) => i.id === id)?.name ?? id;
+  const total = seasons.data?.total ?? 0;
+  const rows = seasons.data?.seasons ?? [];
+  const reset = () => setPage(0);
+  const SortTh = ({ id, children, right = false }: { id: Sort; children: string; right?: boolean }) => (
+    <th className={right ? "text-right" : ""} aria-sort={sort === id ? "descending" : "none"}>
+      <button className={`uppercase tracking-wide hover:text-white ${sort === id ? "text-white" : ""}`} onClick={() => { setSort(id); reset(); }}>
+        {children}{sort === id ? " ▾" : ""}
+      </button>
+    </th>
+  );
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Seasons</h1>
-      <p className="text-sm text-muted">Seasons built entirely from single-episode grabs, messiest first (more release groups, qualities and sources rank higher).</p>
-      <div className="flex flex-wrap gap-2">
-        <div className="relative"><Search size={14} className="absolute left-3 top-2.5 text-muted" />
-          <input className="input w-64 pl-8" placeholder="Search shows" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <select className="input w-44" value={inst} onChange={(e) => setInst(e.target.value)}>
+      <h1 className="page-title">Seasons</h1>
+      <p className="subtle">Seasons built entirely from single-episode grabs. The messiest (most release groups, qualities and sources) come first.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-64">
+          <Search size={14} className="pointer-events-none absolute left-3 top-2.5 text-muted" />
+          <input className="input pl-8" placeholder="Search shows" aria-label="Search shows" value={q}
+            onChange={(e) => { const n = new URLSearchParams(sp); if (e.target.value) n.set("q", e.target.value); else n.delete("q"); setSp(n, { replace: true }); reset(); }} />
+        </div>
+        <select className="input w-full sm:w-44" aria-label="Instance" value={inst} onChange={(e) => { setInst(e.target.value); reset(); }}>
           <option value="">All instances</option>{insts.data?.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
         </select>
-        <select className="input w-40" value={anime} onChange={(e) => setAnime(e.target.value)}>
+        <select className="input w-full sm:w-40" aria-label="Show type" value={anime} onChange={(e) => { setAnime(e.target.value); reset(); }}>
           <option value="hide">TV only</option><option value="all">TV + anime</option><option value="only">Anime only</option>
         </select>
-        <span className="self-center text-sm text-muted">{seasons.data ? `${seasons.data.seasons.length} of ${seasons.data.total}` : ""}</span>
+        <span className="num text-sm text-muted">{total > 0 ? `${page * PAGE + 1}–${Math.min(total, page * PAGE + rows.length)} of ${commas(total)}` : seasons.isLoading ? "Loading…" : "0 seasons"}</span>
       </div>
-      <div className="card overflow-x-auto">
+
+      <div className="card hidden overflow-x-auto md:block">
         <table className="w-full">
-          <thead><tr><th>Show</th><th>Instance</th><th>Season</th><th>Files</th><th>Groups</th><th>Qualities</th><th>Size</th><th /></tr></thead>
+          <thead><tr>
+            <SortTh id="title">Show</SortTh><th>Instance</th><th>Season</th><SortTh id="files" right>Files</SortTh>
+            <SortTh id="score">Release groups</SortTh><th>Qualities</th><SortTh id="size" right>Size</SortTh><th />
+          </tr></thead>
           <tbody>
-            {seasons.data?.seasons.map((s) => (
+            {rows.map((s) => (
               <tr key={`${s.instId}-${s.seriesId}-${s.season}`}>
-                <td>{s.title}</td><td className="text-muted">{name(s.instId)}</td><td>S{String(s.season).padStart(2, "0")}</td>
-                <td>{s.files}</td>
-                <td className="max-w-xs truncate text-muted" title={s.groups.join(", ")}>{s.groups.length} · {s.groups.join(", ")}</td>
-                <td className="text-muted">{s.qualities.join(", ")}</td><td>{s.gb.toFixed(1)} GB</td>
-                <td className="text-right"><button className="btn" onClick={() => setSel(s)}>Find pack</button></td>
+                <td className="max-w-[16rem] truncate font-medium" title={s.title}>{s.title}</td>
+                <td className="text-muted">{name(s.instId)}</td>
+                <td className="num">S{String(s.season).padStart(2, "0")}</td>
+                <td className="num text-right">{s.files}</td>
+                <td><span className="num mr-2 font-semibold">{s.groups.length}</span><span className="text-xs text-muted" title={s.groups.join(", ")}>{s.groups.slice(0, 3).join(", ")}{s.groups.length > 3 ? ` +${s.groups.length - 3}` : ""}</span></td>
+                <td><Chips items={s.qualities} /></td>
+                <td className="num whitespace-nowrap text-right">{s.gb.toFixed(1)} GB</td>
+                <td className="text-right"><button className="btn btn-sm" onClick={() => setSel(s)}>Find pack</button></td>
               </tr>
             ))}
-            {seasons.data?.seasons.length === 0 && <tr><td colSpan={8} className="text-muted">Nothing flagged. Add an instance and run a scan in Settings.</td></tr>}
+            {rows.length === 0 && !seasons.isLoading && <tr><td colSpan={8} className="text-muted">Nothing matches. Add an instance and run a scan in Settings, or loosen the filters.</td></tr>}
           </tbody>
         </table>
       </div>
+
+      <ul className="space-y-2 md:hidden">
+        {rows.map((s) => (
+          <li key={`${s.instId}-${s.seriesId}-${s.season}`} className="card space-y-2 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{s.title} <span className="num text-muted">S{String(s.season).padStart(2, "0")}</span></div>
+                <div className="num text-xs text-muted">{s.files} files · {s.groups.length} groups · {s.gb.toFixed(1)} GB · {name(s.instId)}</div>
+              </div>
+              <button className="btn btn-sm shrink-0" onClick={() => setSel(s)}>Find pack</button>
+            </div>
+            <Chips items={s.qualities} />
+          </li>
+        ))}
+      </ul>
+
+      {total > PAGE && (
+        <div className="flex items-center justify-between">
+          <button className="btn" disabled={page === 0} onClick={() => setPage(page - 1)}>← Previous</button>
+          <span className="num text-xs text-muted">Page {page + 1} of {Math.ceil(total / PAGE)}</span>
+          <button className="btn" disabled={(page + 1) * PAGE >= total} onClick={() => setPage(page + 1)}>Next →</button>
+        </div>
+      )}
       {sel && <Drawer s={sel} onClose={() => setSel(null)} />}
     </div>
   );

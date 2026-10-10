@@ -699,6 +699,141 @@
       }
      }
     }
+   },
+   "Snapshot": {
+    "type": "object",
+    "properties": {
+     "ts": {
+      "type": "integer"
+     },
+     "flaggedTV": {
+      "type": "integer"
+     },
+     "flaggedAnime": {
+      "type": "integer"
+     },
+     "seasons": {
+      "type": "integer"
+     },
+     "files": {
+      "type": "integer"
+     },
+     "packFiles": {
+      "type": "integer"
+     },
+     "singleFiles": {
+      "type": "integer"
+     },
+     "multiFiles": {
+      "type": "integer"
+     },
+     "unknownFiles": {
+      "type": "integer"
+     },
+     "gb": {
+      "type": "number"
+     }
+    }
+   },
+   "Metrics": {
+    "type": "object",
+    "properties": {
+     "range": {
+      "type": "string"
+     },
+     "since": {
+      "type": "integer"
+     },
+     "current": {
+      "$ref": "#/components/schemas/Snapshot"
+     },
+     "snapshots": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Snapshot"
+      }
+     },
+     "perDay": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "day": {
+         "type": "string"
+        },
+        "done": {
+         "type": "integer"
+        },
+        "failed": {
+         "type": "integer"
+        },
+        "gb": {
+         "type": "number"
+        }
+       }
+      }
+     },
+     "groupBuckets": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "label": {
+         "type": "string"
+        },
+        "count": {
+         "type": "integer"
+        }
+       }
+      }
+     },
+     "top": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "instId": {
+         "type": "integer"
+        },
+        "seriesId": {
+         "type": "integer"
+        },
+        "title": {
+         "type": "string"
+        },
+        "season": {
+         "type": "integer"
+        },
+        "files": {
+         "type": "integer"
+        },
+        "groups": {
+         "type": "integer"
+        },
+        "gb": {
+         "type": "number"
+        }
+       }
+      }
+     },
+     "totals": {
+      "type": "object",
+      "properties": {
+       "done": {
+        "type": "integer"
+       },
+       "failed": {
+        "type": "integer"
+       },
+       "gb": {
+        "type": "number"
+       },
+       "inflight": {
+        "type": "integer"
+       }
+      }
+     }
+    }
    }
   }
  },
@@ -3198,6 +3333,75 @@
      },
      "409": {
       "description": "The job is importing or done",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/metrics": {
+   "get": {
+    "tags": [
+     "metrics"
+    ],
+    "summary": "Dashboard data: progress over time, throughput, what is left, worst offenders",
+    "description": "Snapshots are recorded after every scan and finished replacement and thinned to at most 400 points. `perDay` counts finished replacements per calendar day (server time zone) with empty days filled in.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "range",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "24h",
+        "7d",
+        "30d",
+        "90d",
+        "all"
+       ],
+       "default": "7d"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Metrics"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Unknown range",
       "content": {
        "application/json": {
         "schema": {

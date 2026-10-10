@@ -189,6 +189,7 @@ func (e *Engine) ScanInstance(ctx context.Context, inst store.Instance) error {
 	}
 	e.St.SetKV(fmt.Sprintf("lastScan:%d", inst.ID), strconv.FormatInt(time.Now().Unix(), 10))
 	e.St.Event("info", fmt.Sprintf("scan %s: %d series, %d seasons", inst.Name, len(series), len(rows)))
+	_ = e.St.RecordSnapshot(set.MinFiles)
 	return nil
 }
 
@@ -205,6 +206,7 @@ func (e *Engine) rescanSeries(ctx context.Context, inst store.Instance, seriesID
 		files, err := c.EpisodeFiles(ctx, s.ID)
 		if err == nil {
 			_ = e.St.ReplaceSeasons(inst.ID, seriesID, audit.Build(int(inst.ID), s, files, e.St.Settings().MinFiles))
+			_ = e.St.RecordSnapshot(e.St.Settings().MinFiles) // a finished replacement moves the progress line
 		}
 	}
 }
@@ -303,6 +305,7 @@ func healthy(ctx context.Context, c *sonarr.Client) string {
 
 // Start runs the scheduler until ctx ends.
 func (e *Engine) Start(ctx context.Context) {
+	_ = e.St.RecordSnapshot(e.St.Settings().MinFiles) // a point on every restart keeps the history line continuous
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	var last time.Time
