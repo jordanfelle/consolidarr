@@ -98,7 +98,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		_, _ = a.St.Exec(`delete from sessions where token=?`, c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	ok(w, map[string]any{"ok": true})
 }
 
