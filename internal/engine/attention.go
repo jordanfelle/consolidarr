@@ -119,6 +119,7 @@ func (e *Engine) attentionFor(ctx context.Context, inst store.Instance, owned ma
 		g.Items++
 		g.QueueIDs = append(g.QueueIDs, q.ID)
 		g.SizeGB = maxf(g.SizeGB, q.Size/1e9)
+		seen := map[string]bool{} // count each file once per reason, however many warnings repeat it
 		for _, sm := range q.StatusMessages {
 			for _, m := range sm.Messages {
 				kd := Classify(m)
@@ -127,7 +128,10 @@ func (e *Engine) attentionFor(ctx context.Context, inst store.Instance, owned ma
 					r = &Reason{Kind: kd, Example: m, Hint: Hint[kd]}
 					counts[k][kd] = r
 				}
-				r.Count++
+				if !seen[kd] {
+					seen[kd] = true
+					r.Count++
+				}
 			}
 		}
 		if q.TrackedState == "importBlocked" {
