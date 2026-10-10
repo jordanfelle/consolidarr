@@ -378,3 +378,36 @@ func TestInstanceURLsAreValidated(t *testing.T) {
 		t.Errorf("a normal URL must still be accepted, got %d %s", w.Code, w.Body)
 	}
 }
+
+func TestMetricsEndpointShapeAndRangeValidation(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	_ = a.St.ReplaceSeasons(1, 0, []audit.Season{{InstID: 1, SeriesID: 1, Season: 1, Title: "Show", SeriesType: "standard", Files: 8, Aired: 8, Single: 8,
+		Groups: []string{"a", "b", "c"}, Qualities: []string{"q"}, Sources: []string{"web"}, GB: 2}})
+	_ = a.St.RecordSnapshot(3)
+	w := do(h, "GET", "/api/metrics?range=30d", "", c)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var m struct {
+		Range     string
+		Current   struct{ FlaggedTV, Files int }
+		Snapshots []struct{ TS int64 }
+		PerDay    []struct{ Day string }
+		Top       []struct {
+			Title  string
+			Groups int
+		}
+		Totals struct{ Done, Inflight int }
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Range != "30d" || m.Current.FlaggedTV != 1 || m.Current.Files != 8 ||
+		len(m.Snapshots) != 1 || len(m.Top) != 1 || m.Top[0].Groups != 3 {
+		t.Fatalf("unexpected metrics %s (err=%v)", w.Body, err)
+	}
+	if !strings.Contains(w.Body.String(), `"perDay":[]`) {
+		t.Fatalf("empty lists must serialise as [] not null: %s", w.Body)
+	}
+	if w := do(h, "GET", "/api/metrics?range=forever", "", c); w.Code != 422 {
+		t.Fatalf("unknown range must be 422, got %d", w.Code)
+	}
+}

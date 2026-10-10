@@ -65,6 +65,8 @@ create table if not exists jobs(
 create table if not exists skips(key text primary key, until bigint not null, reason text not null default '');
 create table if not exists events(id {{PK}}, ts bigint not null, level text not null, msg text not null);
 create table if not exists kv(k text primary key, v text not null);
+create table if not exists snapshots(ts bigint not null, flagged_tv bigint not null, flagged_anime bigint not null, seasons bigint not null, files bigint not null, pack_files bigint not null, single_files bigint not null, multi_files bigint not null, unknown_files bigint not null, gb double precision not null);
+create index if not exists snapshots_ts on snapshots(ts);
 create table if not exists api_keys(id {{PK}}, name text not null, prefix text not null, hash text unique not null, created bigint not null, last_used bigint not null default 0);
 `
 

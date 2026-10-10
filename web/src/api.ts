@@ -28,6 +28,17 @@ export type Attention = {
   sizeGB: number; items: number; state: string; haveFiles: number; aired: number;
   reasons: { kind: string; count: number; example: string; hint: string }[];
 };
+export type Snapshot = {
+  ts: number; flaggedTV: number; flaggedAnime: number; seasons: number; files: number;
+  packFiles: number; singleFiles: number; multiFiles: number; unknownFiles: number; gb: number;
+};
+export type Metrics = {
+  range: string; since: number; current: Snapshot; snapshots: Snapshot[];
+  perDay: { day: string; done: number; failed: number; gb: number }[];
+  groupBuckets: { label: string; count: number }[];
+  top: { instId: number; seriesId: number; title: string; season: number; files: number; groups: number; gb: number }[];
+  totals: { done: number; failed: number; gb: number; inflight: number };
+};
 export type Event = { id: number; ts: number; level: string; msg: string };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -68,6 +79,7 @@ export const api = {
   once: () => req<Once>("GET", "/engine/once"),
   startOnce: (limit: number) => req<Once>("POST", "/engine/once", { limit }),
   cancelOnce: () => req<Once>("POST", "/engine/once/cancel"),
+  metrics: (range: string) => req<Metrics>("GET", `/metrics?range=${range}`),
   indexers: () => req<IndexerList>("GET", "/indexers"),
   attention: () => req<{ items: Attention[]; errors: string[] }>("GET", "/attention"),
   adopt: (a: Attention) => req<Job>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/adopt`),

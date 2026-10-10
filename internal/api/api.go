@@ -105,6 +105,7 @@ func (a *API) Routes() []route {
 		{"GET", "/api/settings", func(w http.ResponseWriter, r *http.Request) { ok(w, a.St.Settings()) }, false},
 		{"PUT", "/api/settings", a.putSettings, false},
 		{"GET", "/api/indexers", a.indexers, false},
+		{"GET", "/api/metrics", a.metrics, false},
 		{"GET", "/api/attention", a.attention, false},
 		{"POST", "/api/attention/{inst}/{series}/{season}/adopt", a.adopt, false},
 		{"POST", "/api/attention/{inst}/{series}/{season}/retry", a.retryImport, false},

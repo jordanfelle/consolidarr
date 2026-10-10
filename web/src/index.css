@@ -11,15 +11,49 @@
   --color-bad: #f87171;
 }
 
+/* Chart tokens (dark surface #12151c). The four series colours are the validated categorical slots 1-4 for a dark
+   surface (validate_palette.js: all checks pass, worst adjacent CVD delta E 8.4); text never wears them. */
+:root {
+  --series-1: #3987e5; /* blue   */
+  --series-2: #d95926; /* orange */
+  --series-3: #199e70; /* aqua   */
+  --series-4: #c98500; /* yellow */
+  --viz-surface: #12151c;
+  --viz-ink: #f0efec;
+  --viz-ink-2: #c3c2b7;
+  --viz-muted: #898781;
+  --viz-grid: #232834;
+  --viz-axis: #383835;
+  --viz-quiet: #5b6070; /* the de-emphasis grey for context marks */
+  --viz-good: #0ca30c;
+  --viz-warn: #fab219;
+  --viz-bad: #d03b3b;
+}
 
-body { @apply bg-bg text-slate-200 antialiased; font-family: ui-sans-serif, system-ui, sans-serif; }
-.card { @apply rounded-lg border border-line bg-panel; }
-.btn { @apply inline-flex items-center gap-2 rounded-md border border-line bg-panel px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50; }
-.btn-primary { @apply border-accent bg-accent/20 text-white hover:bg-accent/30; }
-.btn-danger { @apply border-bad/50 text-bad hover:bg-bad/10; }
-.input { @apply w-full rounded-md border border-line bg-bg px-3 py-1.5 text-sm outline-none focus:border-accent; }
-.label { @apply mb-1 block text-xs uppercase tracking-wide text-muted; }
-th { @apply px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted; }
-td { @apply px-3 py-2 text-sm; }
-tbody tr { @apply border-t border-line; }
-.pill { @apply rounded-full border border-line px-2 py-0.5 text-xs; }
+/*
+ * Component classes live in the components layer so Tailwind utilities (w-64, pl-8, ...) can override them.
+ * Unlayered rules beat every utility, which is why the filters used to stretch to full width.
+ */
+@layer base {
+  body { @apply bg-bg text-slate-200 antialiased; font-family: ui-sans-serif, system-ui, sans-serif; }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+}
+
+@layer components {
+  .card { @apply rounded-lg border border-line bg-panel; }
+  .btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-line bg-panel px-3 py-1.5 text-sm transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply border-accent bg-accent/20 text-white hover:bg-accent/30; }
+  .btn-danger { @apply border-bad/50 text-bad hover:bg-bad/10; }
+  .btn-sm { @apply px-2 py-1 text-xs; }
+  .input { @apply w-full rounded-md border border-line bg-bg px-3 py-1.5 text-sm outline-none focus:border-accent; }
+  .label { @apply mb-1 block text-xs uppercase tracking-wide text-muted; }
+  .pill { @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line px-2 py-0.5 text-xs; }
+  th { @apply whitespace-nowrap px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted; }
+  td { @apply px-3 py-2 text-sm; }
+  tbody tr { @apply border-t border-line; }
+  tbody tr:hover { background: rgb(255 255 255 / 0.02); }
+  .num { font-variant-numeric: tabular-nums; }
+  .page-title { @apply text-xl font-semibold; }
+  .subtle { @apply text-sm text-muted; }
+}
