@@ -83,7 +83,18 @@ export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [edit, setEdit] = useState<Partial<Instance> | null>(null);
   useEffect(() => { if (remote.data) setS(remote.data); }, [remote.data]);
-  const save = useMutation({ mutationFn: (x: Settings) => api.saveSettings(x), onSuccess: () => { qc.invalidateQueries({ queryKey: ["settings"] }); qc.invalidateQueries({ queryKey: ["status"] }); } });
+  const [note, setNote] = useState<{ ok: boolean; msg: string } | null>(null);
+  const save = useMutation({
+    mutationFn: (x: Settings) => api.saveSettings(x),
+    onSuccess: () => { setNote({ ok: true, msg: "Settings saved." }); qc.invalidateQueries({ queryKey: ["settings"] }); qc.invalidateQueries({ queryKey: ["status"] }); },
+    onError: (e) => setNote({ ok: false, msg: (e as Error).message }),
+  });
+  const run = useMutation({
+    mutationFn: api.runNow,
+    onSuccess: () => setNote({ ok: true, msg: "Cycle started. Progress shows on the Activity and Replacements pages." }),
+    onError: (e) => setNote({ ok: false, msg: (e as Error).message }),
+  });
+  const dirty = !!s && !!remote.data && JSON.stringify(s) !== JSON.stringify(remote.data);
   const scan = useMutation({ mutationFn: api.scan, onSuccess: () => qc.invalidateQueries({ queryKey: ["instances"] }) });
   const del = useMutation({ mutationFn: api.deleteInstance, onSuccess: () => qc.invalidateQueries({ queryKey: ["instances"] }) });
   const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => s && setS({ ...s, [k]: Number(e.target.value) });
@@ -125,8 +136,19 @@ export default function SettingsPage() {
                 <input className="input" value={s.lastResortIndexers.join(", ")} onChange={(e) => setS({ ...s, lastResortIndexers: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
                 <span className="text-xs text-muted">Used only when no other indexer has a valid pack.</span></div>
             </div>
-            <div className="flex gap-2"><button className="btn btn-primary" onClick={() => save.mutate(s)}>Save settings</button>
-              <button className="btn" onClick={() => api.runNow()}>Run a cycle now</button></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn btn-primary" disabled={!dirty || save.isPending} onClick={() => { setNote(null); save.mutate(s); }}>
+                {save.isPending ? "Saving…" : "Save settings"}
+              </button>
+              <button className="btn" disabled={!remote.data?.schedulerEnabled || dirty || run.isPending}
+                title={!remote.data?.schedulerEnabled ? "Enable the scheduler and save first" : dirty ? "Save your changes first" : ""}
+                onClick={() => { setNote(null); run.mutate(); }}>
+                Run a cycle now
+              </button>
+              {dirty && <span className="text-sm text-warn">Unsaved changes</span>}
+              {!remote.data?.schedulerEnabled && !dirty && <span className="text-sm text-muted">Scheduler is off; enable it above and save to run cycles.</span>}
+              {note && <span className={`text-sm ${note.ok ? "text-good" : "text-bad"}`}>{note.msg}</span>}
+            </div>
           </div>
         </section>
       )}
