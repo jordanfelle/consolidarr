@@ -333,9 +333,6 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 				want = append(want, ep.EpisodeNumber)
 			}
 		}
-		if len(want) == 0 {
-			return // nothing aired to wait for; leave the job as it is for a person to look at
-		}
 	}
 	got := 0
 	for _, n := range want {
@@ -349,7 +346,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 7*24*time.Hour, "failed after delete") // never auto-regrab over a half-replaced season
 		e.St.Event("error", label+": "+msg)
 	}
-	if got >= len(want) {
+	if len(want) > 0 && got >= len(want) { // with nothing known to wait for, only the age checks below can end the job
 		j.Status, j.Message = "done", fmt.Sprintf("%d episodes imported", got)
 		_ = e.St.UpdateJob(*j)
 		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")

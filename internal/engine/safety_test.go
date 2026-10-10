@@ -436,7 +436,7 @@ func TestAReservingJobBindsToItsDownloadByExactTitleAndExpiresOtherwise(t *testi
 	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Release: "the.pack", Status: "reserving"})
 	j, _ := v.st.Job(id)
 	q := []sonarr.QueueItem{
-		{SeriesID: 1, SeasonNumber: 3, Title: "an.unrelated.episode", DownloadID: "OTHER", Size: 5, Status: "downloading"},
+		{SeriesID: 1, SeasonNumber: 3, Title: "an.unrelated.episode", DownloadID: "OTHER", Size: 500, Status: "downloading"}, // bigger than ours: must not win
 		{SeriesID: 1, SeasonNumber: 3, Title: "the.pack", DownloadID: "MINE", Size: 50, Status: "downloading"},
 	}
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, q)
@@ -498,5 +498,31 @@ func TestAFailedAfterDeleteJobBlocksAutomaticRegrabs(t *testing.T) {
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil) // nothing imported an hour later: failed
 	if got := v.status(t, j.ID); got.Status != "failed" || !v.st.Skipped(skipKey(1, 1, 3)) {
 		t.Fatalf("a half-replaced season must be skipped by the scheduler, got %s skipped=%v", got.Status, v.st.Skipped(skipKey(1, 1, 3)))
+	}
+}
+
+func TestALegacyJobWithNothingToWaitForStillTimesOut(t *testing.T) {
+	v := setup(t, nil)
+	v.fake.noEpisodes = true // Sonarr lists no episodes: there is nothing a legacy job could ever be complete against
+	j := v.job(t, time.Time{})
+	hours := time.Now().Add(-4 * time.Hour).Unix()
+	j.Status, j.ImportCmd, j.Deleted, j.ImportAt = "importing", 42, hours, hours
+	_ = v.st.UpdateJob(j)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "failed" {
+		t.Fatalf("a job with no way to complete must end in failed after the age limit instead of sitting importing forever, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestAPlaceholderDoesNotAdoptADownloadAnotherJobAlreadyOwns(t *testing.T) {
+	v := setup(t, nil)
+	old, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Release: "the.pack", DownloadID: "STALE"})
+	_, _ = v.st.Exec(`update jobs set status='failed' where id=?`, old) // an earlier attempt that left its item in Sonarr's queue
+	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Release: "the.pack", Status: "reserving"})
+	j, _ := v.st.Job(id)
+	q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: "the.pack", DownloadID: "STALE", Size: 50, Status: "downloading"}}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, q)
+	if got := v.status(t, id); got.DownloadID != "" || got.Status != "reserving" {
+		t.Fatalf("a stale download owned by an earlier job must not be adopted by the new placeholder: %+v", got)
 	}
 }

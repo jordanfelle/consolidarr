@@ -496,8 +496,16 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	case "done", "failed", "lost":
 		return
 	case "reserving": // placeholder while the grab request is in flight; it has no download to bind to yet
+		owners := map[string]bool{} // downloads already bound to some job (a stale item from an earlier attempt must not be adopted)
+		if all, err := e.St.Jobs(false, 100000); err == nil {
+			for _, o := range all {
+				if o.ID != j.ID && o.DownloadID != "" {
+					owners[strings.ToLower(o.DownloadID)] = true
+				}
+			}
+		}
 		for _, q := range queue { // the grab did reach Sonarr but the flip to "downloading" was lost: bind by exact title
-			if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && j.Release != "" && q.Title == j.Release {
+			if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && j.Release != "" && q.Title == j.Release && !owners[strings.ToLower(q.DownloadID)] {
 				j.Status, j.DownloadID = "downloading", q.DownloadID
 				_ = e.St.UpdateJob(j)
 				return

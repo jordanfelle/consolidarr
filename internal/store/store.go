@@ -171,9 +171,10 @@ func (s *Store) migrate() error {
 	// One unfinished job per season, enforced by the database so two racing callers cannot both create one.
 	// If old data already violates it the app still starts (relying on the application-level check in Grab/Adopt),
 	// but say so loudly: the airtight guarantee is missing until the duplicate jobs are cleared.
-	_, _ = s.DB.Exec(`drop index if exists jobs_one_active`) // superseded: it did not cover 'reserving'
 	if _, err := s.DB.Exec(`create unique index if not exists jobs_one_active_v2 on jobs(inst_id, series_id, season) where status in ('reserving','downloading','ready','holding','importing')`); err != nil {
 		log.Printf("WARNING: could not enforce one active job per season (%v); existing duplicate jobs must be cleared", err)
+	} else {
+		_, _ = s.DB.Exec(`drop index if exists jobs_one_active`) // superseded (it did not cover 'reserving'); only dropped once its replacement exists
 	}
 	return nil
 }
