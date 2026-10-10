@@ -191,8 +191,12 @@ func (a *API) saveInstance(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(in.Name) == "" || !strings.HasPrefix(in.URL, "http") {
+	if strings.TrimSpace(in.Name) == "" {
 		fail(w, 422, "name and an http(s) url are required")
+		return
+	}
+	if err := sonarr.ValidateURL(in.URL); err != nil {
+		fail(w, 422, err.Error())
 		return
 	}
 	i := store.Instance{Name: in.Name, URL: strings.TrimRight(in.URL, "/"), APIKey: in.APIKey, PathFrom: in.PathFrom, PathTo: in.PathTo, Enabled: in.Enabled == nil || *in.Enabled}
@@ -247,6 +251,10 @@ func (a *API) testInstance(w http.ResponseWriter, r *http.Request) {
 		if old, err := a.St.Instance(i.ID); err == nil {
 			i.APIKey = old.APIKey
 		}
+	}
+	if err := sonarr.ValidateURL(i.URL); err != nil {
+		fail(w, 422, err.Error())
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
