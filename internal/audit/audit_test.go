@@ -82,3 +82,15 @@ func TestBuildCountsGroupsCaseInsensitively(t *testing.T) {
 		t.Fatalf("unexpected row %+v", rows)
 	}
 }
+
+func TestZeroMaxGBMeansNoSizeLimit(t *testing.T) {
+	web := q("WEBDL-1080p", "web", 1080)
+	s := Season{Season: 3, CurRank: web.Rank()}
+	rels := []sonarr.Release{rel("huge", "BTN", 400, 10, web)}
+	if Pick(rels, s, PickOpts{MaxGB: 60}) != nil {
+		t.Fatal("a 400 GB pack must be rejected under a 60 GB cap")
+	}
+	if p := Pick(rels, s, PickOpts{MaxGB: 0}); p == nil || p.GUID != "huge" {
+		t.Fatalf("MaxGB 0 must mean no limit, got %+v", p)
+	}
+}

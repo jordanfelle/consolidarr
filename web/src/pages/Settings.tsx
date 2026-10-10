@@ -2,6 +2,39 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Instance, Settings, api } from "../api";
 
+// Last-resort indexers: pick from the indexers your Sonarrs actually have. A saved value matches an indexer when
+// it is a case-insensitive substring of its name (so an older "torrentleech" still shows TorrentLeech checked).
+function IndexerPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const list = useQuery({ queryKey: ["indexers"], queryFn: api.indexers });
+  const names = list.data?.indexers.map((i) => i.name) ?? [];
+  const matches = (v: string, n: string) => n.toLowerCase().includes(v.toLowerCase());
+  const checked = (n: string) => value.some((v) => matches(v, n));
+  const orphans = value.filter((v) => !names.some((n) => matches(v, n)));
+  const toggle = (n: string) => onChange(checked(n) ? value.filter((v) => !matches(v, n)) : [...value, n]);
+  return (
+    <div>
+      <label className="label">Last-resort indexers</label>
+      <div className="card max-h-44 space-y-1 overflow-y-auto p-2">
+        {list.isLoading && <div className="text-sm text-muted">Loading indexers from Sonarr…</div>}
+        {list.error && <div className="text-sm text-bad">{(list.error as Error).message}</div>}
+        {names.map((n) => (
+          <label key={n} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={checked(n)} onChange={() => toggle(n)} /> {n}
+          </label>
+        ))}
+        {orphans.map((v) => (
+          <label key={v} className="flex items-center gap-2 text-sm text-warn" title="Not an indexer in any enabled Sonarr; uncheck to remove">
+            <input type="checkbox" checked onChange={() => onChange(value.filter((x) => x !== v))} /> {v} (not found in Sonarr)
+          </label>
+        ))}
+        {!list.isLoading && names.length === 0 && orphans.length === 0 && <div className="text-sm text-muted">No indexers found. Add and enable a Sonarr instance.</div>}
+      </div>
+      {list.data?.errors.length ? <div className="mt-1 text-xs text-warn">{list.data.errors.join("; ")}</div> : null}
+      <span className="text-xs text-muted">Used only when no other indexer has a valid pack.</span>
+    </div>
+  );
+}
+
 function OneOff({ dryRun, hasInstance }: { dryRun: boolean; hasInstance: boolean }) {
   const qc = useQueryClient();
   const [n, setN] = useState(5);
@@ -166,13 +199,15 @@ export default function SettingsPage() {
             <Toggle label="Include anime" v={s.includeAnime} on={(b) => setS({ ...s, includeAnime: b })} />
             <div className="grid gap-3 md:grid-cols-3">
               <div><label className="label">Max packs in flight</label><input className="input" type="number" value={s.maxInflight} onChange={num("maxInflight")} /></div>
-              <div><label className="label">Max pack size (GB)</label><input className="input" type="number" value={s.maxPackGB} onChange={num("maxPackGB")} /></div>
+              <div><label className="label">Max pack size (GB)</label>
+                <input className="input" type="number" min={1} disabled={s.maxPackGB === 0} value={s.maxPackGB === 0 ? "" : s.maxPackGB} placeholder="No limit" onChange={num("maxPackGB")} />
+                <label className="mt-1 flex items-center gap-2 text-xs text-muted">
+                  <input type="checkbox" checked={s.maxPackGB === 0} onChange={(e) => setS({ ...s, maxPackGB: e.target.checked ? 0 : 60 })} /> No size limit
+                </label></div>
               <div><label className="label">Min files in a season</label><input className="input" type="number" value={s.minFiles} onChange={num("minFiles")} /></div>
               <div><label className="label">Cycle (minutes)</label><input className="input" type="number" value={s.cycleMinutes} onChange={num("cycleMinutes")} /></div>
               <div><label className="label">Rescan every (hours)</label><input className="input" type="number" value={s.scanHours} onChange={num("scanHours")} /></div>
-              <div><label className="label">Last-resort indexers</label>
-                <input className="input" value={s.lastResortIndexers.join(", ")} onChange={(e) => setS({ ...s, lastResortIndexers: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
-                <span className="text-xs text-muted">Used only when no other indexer has a valid pack.</span></div>
+              <IndexerPicker value={s.lastResortIndexers} onChange={(v) => setS({ ...s, lastResortIndexers: v })} />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button className="btn btn-primary" disabled={!dirty || save.isPending} onClick={() => { setNote(null); save.mutate(s); }}>

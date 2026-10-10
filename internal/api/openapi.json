@@ -405,7 +405,9 @@
       "maximum": 200
      },
      "maxPackGB": {
-      "type": "number"
+      "type": "number",
+      "minimum": 0,
+      "description": "Largest pack to consider, in GB. 0 = no size limit."
      },
      "minFiles": {
       "type": "integer",
@@ -426,7 +428,8 @@
       "type": "array",
       "items": {
        "type": "string"
-      }
+      },
+      "description": "Indexer names (case-insensitive substring match against a release's indexer). Used only when no other indexer has a valid pack. See GET /api/indexers."
      }
     }
    },
@@ -541,6 +544,40 @@
      "finished": {
       "type": "integer",
       "description": "Unix seconds, 0 while active"
+     }
+    }
+   },
+   "IndexerList": {
+    "type": "object",
+    "properties": {
+     "indexers": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "protocol": {
+         "type": "string"
+        },
+        "searchable": {
+         "type": "boolean"
+        },
+        "instances": {
+         "type": "array",
+         "items": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
      }
     }
    }
@@ -2486,6 +2523,48 @@
        "application/json": {
         "schema": {
          "$ref": "#/components/schemas/Once"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/indexers": {
+   "get": {
+    "tags": [
+     "settings"
+    ],
+    "summary": "Indexers configured in your Sonarr instances (for choosing last-resort indexers)",
+    "description": "De-duplicated by name across enabled instances. Names match the `indexer` of releases. An unreachable instance is skipped and listed in `errors`.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/IndexerList"
         }
        }
       }

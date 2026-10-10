@@ -101,6 +101,7 @@ func (a *API) Routes() []route {
 
 		{"GET", "/api/settings", func(w http.ResponseWriter, r *http.Request) { ok(w, a.St.Settings()) }, false},
 		{"PUT", "/api/settings", a.putSettings, false},
+		{"GET", "/api/indexers", a.indexers, false},
 		{"GET", "/api/events", a.events, false},
 		{"GET", "/api/status", a.status, false},
 		{"POST", "/api/engine/run", a.runNow, false},
@@ -503,8 +504,8 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &s) {
 		return
 	}
-	if s.MaxInflight < 1 || s.MaxInflight > 200 || s.CycleMinutes < 1 || s.ScanHours < 1 || s.MinFiles < 2 || s.MaxPackGB <= 0 {
-		fail(w, 422, "maxInflight 1-200, cycleMinutes >= 1, scanHours >= 1, minFiles >= 2 and maxPackGB > 0 are required")
+	if s.MaxInflight < 1 || s.MaxInflight > 200 || s.CycleMinutes < 1 || s.ScanHours < 1 || s.MinFiles < 2 || s.MaxPackGB < 0 {
+		fail(w, 422, "maxInflight 1-200, cycleMinutes >= 1, scanHours >= 1, minFiles >= 2 and maxPackGB >= 0 (0 = no size limit) are required")
 		return
 	}
 	if err := a.St.SaveSettings(s); err != nil {

@@ -100,7 +100,7 @@ type Settings struct {
 	DryRun           bool     `json:"dryRun"`
 	AutoDelete       bool     `json:"autoDelete"`
 	MaxInflight      int      `json:"maxInflight"`
-	MaxPackGB        float64  `json:"maxPackGB"`
+	MaxPackGB        float64  `json:"maxPackGB"` // 0 = no size limit
 	MinFiles         int      `json:"minFiles"`
 	IncludeAnime     bool     `json:"includeAnime"`
 	CycleMinutes     int      `json:"cycleMinutes"`

@@ -101,7 +101,7 @@ func IsFlagged(r Season, minFiles int) bool {
 }
 
 type PickOpts struct {
-	MaxGB      float64
+	MaxGB      float64  // 0 = no size limit
 	LastResort []string // indexer name substrings used only when nothing else qualifies
 }
 
@@ -110,7 +110,7 @@ type PickOpts struct {
 func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 	var c []sonarr.Release
 	for _, x := range rels {
-		if !x.FullSeason || x.SeasonNum != s.Season || float64(x.Size)/1e9 > o.MaxGB || x.Quality.Rank() < s.CurRank {
+		if !x.FullSeason || x.SeasonNum != s.Season || (o.MaxGB > 0 && float64(x.Size)/1e9 > o.MaxGB) || x.Quality.Rank() < s.CurRank {
 			continue
 		}
 		if len(Blocking(x)) > 0 {

@@ -22,6 +22,7 @@ export type Settings = {
 };
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
 export type Once = { active: boolean; limit: number; started: number; began: number; finished: number };
+export type IndexerList = { indexers: { name: string; protocol: string; searchable: boolean; instances: number[] }[]; errors: string[] };
 export type Event = { id: number; ts: number; level: string; msg: string };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -62,6 +63,7 @@ export const api = {
   once: () => req<Once>("GET", "/engine/once"),
   startOnce: (limit: number) => req<Once>("POST", "/engine/once", { limit }),
   cancelOnce: () => req<Once>("POST", "/engine/once/cancel"),
+  indexers: () => req<IndexerList>("GET", "/indexers"),
   keys: () => req<ApiKey[]>("GET", "/keys"),
   createKey: (name: string) => req<{ id: number; name: string; prefix: string; key: string }>("POST", "/keys", { name }),
   deleteKey: (id: number) => req("DELETE", `/keys/${id}`),

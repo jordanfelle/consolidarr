@@ -165,6 +165,19 @@ type Health struct {
 	Message string `json:"message"`
 }
 
+type Indexer struct {
+	ID                      int    `json:"id"`
+	Name                    string `json:"name"`
+	Protocol                string `json:"protocol"`
+	EnableInteractiveSearch bool   `json:"enableInteractiveSearch"`
+}
+
+// Indexers lists the indexers configured in Sonarr (names match Release.Indexer).
+func (c *Client) Indexers(ctx context.Context) (out []Indexer, err error) {
+	err = c.do(ctx, "GET", "/indexer", nil, &out, 30*time.Second)
+	return
+}
+
 func (c *Client) Status(ctx context.Context) (version string, err error) {
 	var s struct {
 		Version string `json:"version"`
