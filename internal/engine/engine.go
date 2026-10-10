@@ -134,6 +134,9 @@ func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled 
 // grabPause is the breather between grabs so the download client keeps up (tests set it to 0).
 var grabPause = 20 * time.Second
 
+// grabRetryWait is how long Grab waits after a failed request before checking whether it reached the client anyway.
+var grabRetryWait = 30 * time.Second
+
 // HealthOf returns "" when the instance last looked healthy, else the reason.
 func (e *Engine) HealthOf(id int64) string { e.mu.Lock(); defer e.mu.Unlock(); return e.Healthy[id] }
 
@@ -255,20 +258,28 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 			old = append(old, f.ID)
 		}
 	}
+	if e.St.ActiveJob(inst.ID, s.SeriesID, s.Season) { // cheap early exit; the unique index is what makes it airtight
+		return 0, store.ErrDuplicate
+	}
 	// Reserve the season first. The database allows one unfinished job per season, so of two racing callers (a
-	// double click, the scheduler and a user) only one gets here, and only that one tells Sonarr to download.
+	// double click, the scheduler and a user) only one gets here, and only that one tells Sonarr to download. The
+	// placeholder is "reserving" so the scheduler does not try to bind it to a download that does not exist yet.
 	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: s.SeriesID, Season: s.Season, Title: s.Title,
-		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB})
+		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB, Status: "reserving"})
 	if err != nil {
 		return 0, err
 	}
 	if err := c.Grab(ctx, guid, indexerID); err != nil {
 		// a grab that timed out may still have reached the download client
-		time.Sleep(30 * time.Second)
+		time.Sleep(grabRetryWait)
 		if q, qerr := c.Queue(ctx, 2*time.Minute); qerr != nil || !inQueue(q, s.SeriesID, s.Season) {
 			_ = e.St.DeleteJob(id) // release the reservation
 			return 0, err
 		}
+	}
+	if j, err := e.St.Job(id); err == nil {
+		j.Status = "downloading"
+		_ = e.St.UpdateJob(j)
 	}
 	e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
 	return id, nil
@@ -479,6 +490,13 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
 	switch j.Status {
 	case "done", "failed", "lost":
+		return
+	case "reserving": // placeholder while the grab request is in flight; it has no download to bind to yet
+		if time.Since(time.Unix(j.Created, 0)) > 15*time.Minute {
+			j.Status, j.Message = "lost", "the grab never completed; nothing was downloaded or changed"
+			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), time.Hour, "lost")
+			_ = e.St.UpdateJob(j)
+		}
 		return
 	case "importing":
 		e.finishImport(ctx, inst, c, &j, queue)

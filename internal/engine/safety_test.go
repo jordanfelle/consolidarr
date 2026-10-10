@@ -342,3 +342,91 @@ func TestWithSeveralDownloadsForASeasonTheJobBindsToTheBiggest(t *testing.T) {
 		t.Fatalf("with no title match the job must bind to the pack (the biggest download), got %d items id=%q", len(mine), j.DownloadID)
 	}
 }
+
+func TestLegacyJobsAreNeverCompletedByCountingFiles(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	j.Status, j.ImportCmd, j.Deleted = "importing", 42, time.Now().Unix() // no ExpectedEps: recorded before episodes were tracked
+	j.ImportAt = j.Deleted
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 90, 2: 91, 3: 0} // episodes 1,2 imported earlier by Sonarr; 3 (the one we replaced) has nothing
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("two unrelated new files must not complete a legacy job while episode 3 is missing: %s", got.Status)
+	}
+	v.fake.seasonEps[3] = 99
+	v.e.advance(context.Background(), v.inst, v.c, live(), v.status(t, j.ID), nil)
+	if got := v.status(t, j.ID); got.Status != "done" {
+		t.Fatalf("every episode has a new file now: %s", got.Status)
+	}
+}
+
+func TestAPackWhoseFilesAllFailToImportHoldsInsteadOfProceeding(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.existing = map[int]bool{}                                                  // nothing of ours left to replace...
+	v.fake.rejections = map[int][]string{1: {"Sample"}, 2: {"Sample"}, 3: {"Sample"}} // ...and nothing in the pack will import
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, completed())
+	if got := v.status(t, j.ID); got.Status != "holding" || v.fake.imports != 0 {
+		t.Fatalf("a pack with nothing importable must hold, not 'succeed' with no expectations: %s %q imports=%d", got.Status, got.Message, v.fake.imports)
+	}
+}
+
+func TestAFailedGrabReleasesItsReservation(t *testing.T) {
+	grabRetryWait = 0
+	defer func() { grabRetryWait = 30 * time.Second }()
+	v := setup(t, nil)
+	v.fake.failGrab = true
+	inst := store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}
+	if _, err := v.e.Grab(context.Background(), inst, audit.Season{SeriesID: 1, Season: 3, Title: "Show"}, "g", 1, "r", 1, "BTN"); err == nil {
+		t.Fatal("the grab was refused, so Grab must report it")
+	}
+	if v.st.ActiveJob(1, 1, 3) {
+		t.Fatal("a grab that never happened must not leave a placeholder job blocking the season")
+	}
+}
+
+func TestAReservingPlaceholderIsNotBoundToAnUnrelatedDownload(t *testing.T) {
+	v := setup(t, nil)
+	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", Status: "reserving"})
+	j, _ := v.st.Job(id)
+	q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: "some.single.episode", DownloadID: "WRONG", Size: 5, SizeLeft: 5, Status: "downloading"}}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, q)
+	if got := v.status(t, id); got.DownloadID != "" || got.Status != "reserving" {
+		t.Fatalf("a placeholder with no download yet must not adopt whatever else is queued for the season: %+v", got)
+	}
+}
+
+func TestRetryReportsAConflictInsteadOfSilentlyDoingNothing(t *testing.T) {
+	v := attentionEnv(t)
+	j := v.job(t, time.Time{})
+	j.Status, j.Deleted = "failed", time.Now().Unix()
+	_ = v.st.UpdateJob(j)
+	if _, err := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "newer"}); err != nil {
+		t.Fatal(err) // a newer active job now owns the season
+	}
+	if _, err := v.e.AdvanceJob(context.Background(), j.ID); err == nil {
+		t.Fatal("restarting a job whose season is owned by a newer job must say so")
+	}
+}
+
+func TestVerificationIsNormallyDoneOnceAndTheVerdictIsStampedWhenItFinishes(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	probes := 0
+	probeFn = func(store.Instance, string) (bool, string) {
+		probes++
+		time.Sleep(60 * time.Millisecond)
+		return true, "ok"
+	}
+	j := v.job(t, time.Time{})
+	start := time.Now()
+	vd := v.e.verify(context.Background(), v.inst, v.c, live(), &j, completed())
+	if vd.State != "ok" || vd.At.Sub(start) < 150*time.Millisecond {
+		t.Fatalf("the verdict time must be when verification finished (3 probes of 60ms), got %v after start, state %s", vd.At.Sub(start), vd.State)
+	}
+	probes = 0
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, completed())
+	if probes != 3 {
+		t.Fatalf("a normal replacement probes each file once, not again under the instance lock: %d probes", probes)
+	}
+}

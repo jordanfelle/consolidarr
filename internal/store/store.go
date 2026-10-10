@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -149,7 +150,11 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
 		if !has {
-			if _, err := s.DB.Exec(m.ddl); err != nil {
+			ddl := m.ddl
+			if s.PG {
+				ddl = strings.Replace(ddl, "add column", "add column if not exists", 1) // two instances starting at once
+			}
+			if _, err := s.DB.Exec(ddl); err != nil {
 				return fmt.Errorf("migration %d: %w", i+1, err)
 			}
 		}
@@ -157,13 +162,18 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migration %d: recording version: %w", i+1, err)
 		}
 	}
-	// Jobs that were already importing when these columns appeared have no recorded delete time: treat the last
-	// update as it, so they are judged by sensible ages instead of "deleted in 1970".
-	_, _ = s.Exec(`update jobs set deleted = updated where status = 'importing' and deleted = 0`)
-	_, _ = s.Exec(`update jobs set import_at = updated where status = 'importing' and import_at = 0`)
+	if v < len(migrations) {
+		// Jobs that were already importing when these columns appeared have no recorded delete time: treat the last
+		// update as it, so they are judged by sensible ages instead of "deleted in 1970".
+		_, _ = s.Exec(`update jobs set deleted = updated where status = 'importing' and deleted = 0`)
+		_, _ = s.Exec(`update jobs set import_at = updated where status = 'importing' and import_at = 0`)
+	}
 	// One unfinished job per season, enforced by the database so two racing callers cannot both create one.
-	// Best effort: if old data already violates it the app still starts, relying on the application-level check.
-	_, _ = s.DB.Exec(`create unique index if not exists jobs_one_active on jobs(inst_id, series_id, season) where status in ('downloading','ready','holding','importing')`)
+	// If old data already violates it the app still starts (relying on the application-level check in Grab/Adopt),
+	// but say so loudly: the airtight guarantee is missing until the duplicate jobs are cleared.
+	if _, err := s.DB.Exec(`create unique index if not exists jobs_one_active on jobs(inst_id, series_id, season) where status in ('reserving','downloading','ready','holding','importing')`); err != nil {
+		log.Printf("WARNING: could not enforce one active job per season (%v); existing duplicate jobs must be cleared", err)
+	}
 	return nil
 }
 

@@ -103,6 +103,12 @@ func rejectionOK(it sonarr.ManualImportItem) bool {
 
 // verify checks a finished download. It never changes anything.
 func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j *store.Job, mine []sonarr.QueueItem) verdict {
+	v := e.verifyNow(ctx, inst, c, set, j, mine)
+	v.At = time.Now() // fresh as of when the checks finished, so only a real wait behind another season makes it stale
+	return v
+}
+
+func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j *store.Job, mine []sonarr.QueueItem) verdict {
 	if len(mine) == 0 {
 		return verdict{State: "retry"} // nothing to look at: never guess
 	}
@@ -211,6 +217,8 @@ func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Clie
 			why += fmt.Sprintf(" (%d pack files would not import: sample, unknown or unparseable)", rejected)
 		}
 		return hold(why)
+	case len(v.ExpectedEps) == 0:
+		return hold("could not work out which episodes this pack must supply (none of its files will import); nothing was changed")
 	case v.Unreach != "" && !set.AllowUnverified:
 		return hold(fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", v.Unreach))
 	}
@@ -316,15 +324,19 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		}
 	}
 	want := j.ExpectedEps
-	got := 0
-	if len(want) > 0 {
-		for _, n := range want {
-			if covered[n] {
-				got++
-			}
+	if len(want) == 0 {
+		// A job recorded before episodes were tracked. Counting files would let episodes Sonarr imported earlier
+		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
+		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
+		for _, ep := range eps {
+			want = append(want, ep.EpisodeNumber)
 		}
-	} else { // a job recorded before episodes were tracked: fall back to counting
-		got, want = len(covered), make([]int, max(j.Expected, 1))
+	}
+	got := 0
+	for _, n := range want {
+		if covered[n] {
+			got++
+		}
 	}
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg

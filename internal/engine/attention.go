@@ -270,6 +270,7 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 	if err != nil {
 		return job, err
 	}
+	var flipErr error
 	if job.Status == "lost" || job.Status == "failed" { // give it another go
 		unlock := e.jobMu.lock(id)
 		if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
@@ -279,9 +280,12 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 				cur.Status = "downloading"
 			}
 			cur.Message = ""
-			_ = e.St.UpdateJob(cur)
+			flipErr = e.St.UpdateJob(cur) // fails if a newer active job already owns the season
 		}
 		unlock()
+	}
+	if flipErr != nil {
+		return job, fmt.Errorf("could not restart this job: %w", flipErr)
 	}
 	e.advance(ctx, inst, c, e.St.Settings(), job, queue)
 	return e.St.Job(id)

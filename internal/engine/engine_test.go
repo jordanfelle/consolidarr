@@ -32,6 +32,7 @@ type fakeSonarr struct {
 	searches      [][2]int         // SeasonSearch commands (series, season)
 	onDelete      func()           // called as a delete request arrives, before it is recorded
 	failImport    int              // fail this many import commands with a 500
+	failGrab      bool             // POST /release answers 500
 	noEpisodes    bool             // GET /episode returns nothing
 	rejections    map[int][]string // manualimport rejection reasons by episode number
 	removed       []removal        // queue removals
@@ -164,6 +165,10 @@ func newFake(packEps []int) *fakeSonarr {
 			"quality": map[string]any{"quality": map[string]any{"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}}})
 	})
 	mux.HandleFunc("POST /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		if f.failGrab {
+			http.Error(w, "grab refused", 500)
+			return
+		}
 		f.mu.Lock()
 		f.grabs++
 		f.mu.Unlock()

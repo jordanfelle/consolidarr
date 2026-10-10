@@ -124,7 +124,7 @@ func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 func (s *Store) Jobs(active bool, limit int) ([]Job, error) {
 	q := `select ` + jobCols + ` from jobs`
 	if active {
-		q += ` where status in ('downloading','ready','holding','importing')`
+		q += ` where status in ('reserving','downloading','ready','holding','importing')`
 	}
 	rows, err := s.Query(q+` order by id desc limit ?`, limit)
 	if err != nil {
@@ -146,7 +146,7 @@ func (s *Store) Jobs(active bool, limit int) ([]Job, error) {
 var ErrDuplicate = errors.New("this season already has an active replacement")
 
 // activeStatuses are the job states that still own their season.
-const activeStatuses = `('downloading','ready','holding','importing')`
+const activeStatuses = `('reserving','downloading','ready','holding','importing')`
 
 // Job returns one job by id.
 func (s *Store) Job(id int64) (Job, error) {
@@ -177,9 +177,13 @@ func (s *Store) AddJob(j Job) (int64, error) {
 	}
 	old, _ := json.Marshal(j.OldFileIDs)
 	now := time.Now().Unix()
+	status := j.Status
+	if status == "" {
+		status = "downloading"
+	}
 	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,download_id)
 		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
-		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, "downloading", "", 0, 0, now, now, j.DownloadID).Scan(&j.ID)
+		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, status, "", 0, 0, now, now, j.DownloadID).Scan(&j.ID)
 	if err != nil && isUniqueViolation(err) {
 		return 0, ErrDuplicate // lost a race to another caller that created the season's job first
 	}
