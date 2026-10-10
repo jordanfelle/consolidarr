@@ -361,6 +361,7 @@
      "status": {
       "type": "string",
       "enum": [
+       "reserving",
        "downloading",
        "ready",
        "holding",

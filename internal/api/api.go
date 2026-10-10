@@ -406,6 +406,10 @@ func (a *API) grab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := a.Eng.Grab(r.Context(), inst, s, b.GUID, b.IndexerID, b.Title, b.SizeGB, b.Indexer)
+	if err == store.ErrDuplicate {
+		fail(w, 409, err.Error())
+		return
+	}
 	if err != nil {
 		fail(w, 502, err.Error())
 		return

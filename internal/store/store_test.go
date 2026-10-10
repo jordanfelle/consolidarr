@@ -190,3 +190,108 @@ func TestMessBucketsFlaggedSeasonsByReleaseGroups(t *testing.T) {
 		t.Fatalf("anime counted when included: %+v", b2)
 	}
 }
+
+func TestAnExistingDatabaseIsMigratedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	// A database created by the first release: a jobs table without the later columns, and no schema version.
+	raw, err := sql.Open("sqlite", "file:"+dir+"/consolidarr.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`create table jobs(id integer primary key, inst_id bigint not null, series_id bigint not null, season bigint not null,
+		title text not null, old_file_ids text not null, release text not null, indexer text not null, size_gb double precision not null,
+		status text not null, message text not null default '', progress bigint not null default 0, import_cmd bigint not null default 0,
+		created bigint not null, updated bigint not null)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = raw.Exec(`insert into jobs values(1,1,1,3,'Old','[1,2]','r','i',1.5,'importing','m',0,7,100,100)`)
+	raw.Close()
+
+	st, err := Open(dir, "")
+	if err != nil {
+		t.Fatalf("opening a v1 database must migrate it, not fail: %v", err)
+	}
+	j, err := st.Job(1)
+	if err != nil || j.Title != "Old" || j.ImportCmd != 7 || j.Deleted != 100 || j.ImportAt != 100 || j.Expected != 0 {
+		t.Fatalf("existing rows must survive; an in-flight one is aged from its last update: %+v err=%v", j, err)
+	}
+	if _, err := st.AddJob(Job{InstID: 1, SeriesID: 2, Season: 1, Title: "new", DownloadID: "abc"}); err != nil {
+		t.Fatalf("the new columns must be writable: %v", err)
+	}
+	st.DB.Close()
+	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "5" {
+		t.Fatalf("reopening must be a no-op at version 5, got version %q err=%v", st2.KV("schema_version"), err)
+	}
+}
+
+func TestMigrationsSurviveACrashBetweenTheAlterAndTheVersionBump(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetKV("schema_version", "0") // the columns exist but the process died before recording that
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatalf("re-running migrations over existing columns must not fail: %v", err)
+	}
+	if v := st2.KV("schema_version"); v != "5" {
+		t.Fatalf("version must catch up to 5, got %q", v)
+	}
+}
+
+func TestTheDatabaseItselfRefusesASecondActiveJobForASeason(t *testing.T) {
+	st := open(t)
+	ins := `insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated) values(1,1,3,'t','[]','r','i',1,?,'',0,0,1,1)`
+	if _, err := st.Exec(ins, "downloading"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ins, "ready"); err == nil {
+		t.Fatal("a second unfinished job for the same season must violate the unique index, bypassing any application check")
+	}
+	if _, err := st.Exec(ins, "done"); err != nil {
+		t.Fatalf("finished jobs are not constrained: %v", err)
+	}
+}
+
+func TestLegacyImportingJobsGetSensibleTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := Open(dir, "")
+	_, _ = st.Exec(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,import_at) values(1,1,3,'t','[]','r','i',1,'importing','',0,7,100,555,0,0)`)
+	st.SetKV("schema_version", "3")
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var del, at int64
+	_ = st2.QueryRow(`select deleted, import_at from jobs where title='t'`).Scan(&del, &at)
+	if del != 555 || at != 555 {
+		t.Fatalf("an in-flight job from before the columns existed must be aged from its last update, got deleted=%d import_at=%d", del, at)
+	}
+}
+
+func TestAnOldUniqueIndexIsReplacedSoReservingIsCovered(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := Open(dir, "")
+	// a database that already has the first release's narrower index
+	_, _ = st.DB.Exec(`drop index if exists jobs_one_active_v2`)
+	_, _ = st.DB.Exec(`drop index if exists jobs_one_active`)
+	if _, err := st.DB.Exec(`create unique index jobs_one_active on jobs(inst_id, series_id, season) where status in ('downloading','ready','holding','importing')`); err != nil {
+		t.Fatal(err)
+	}
+	st.DB.Close()
+	st2, err := Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := `insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated) values(1,1,3,'t','[]','r','i',1,?,'',0,0,1,1)`
+	if _, err := st2.Exec(ins, "reserving"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st2.Exec(ins, "downloading"); err == nil {
+		t.Fatal("after the upgrade a reserving job and another active job for the same season must conflict")
+	}
+}
