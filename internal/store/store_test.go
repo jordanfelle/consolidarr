@@ -194,7 +194,10 @@ func TestAnOldUniqueIndexIsReplacedSoReservingIsCovered(t *testing.T) {
 	st, _ := Open(dir, "")
 	// a database that already has the first release's narrower index
 	_, _ = st.DB.Exec(`drop index if exists jobs_one_active_v2`)
-	_, _ = st.DB.Exec(`create unique index jobs_one_active on jobs(inst_id, series_id, season) where status in ('downloading','ready','holding','importing')`)
+	_, _ = st.DB.Exec(`drop index if exists jobs_one_active`)
+	if _, err := st.DB.Exec(`create unique index jobs_one_active on jobs(inst_id, series_id, season) where status in ('downloading','ready','holding','importing')`); err != nil {
+		t.Fatal(err)
+	}
 	st.DB.Close()
 	st2, err := Open(dir, "")
 	if err != nil {
