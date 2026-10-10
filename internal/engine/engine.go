@@ -69,6 +69,9 @@ func (e *Engine) StartOnce(limit int) error {
 	if e.Once().Active {
 		return errors.New("a one-off run is already active")
 	}
+	if e.St.Settings().SchedulerEnabled {
+		return errors.New("the scheduler is on and already runs continuously; turn it off to do a bounded one-off run")
+	}
 	e.saveOnce(Once{Active: true, Limit: limit, Began: time.Now().Unix()})
 	e.St.Event("info", fmt.Sprintf("one-off run started: up to %d seasons (dryRun=%v)", limit, e.St.Settings().DryRun))
 	select {
@@ -313,6 +316,10 @@ func (e *Engine) Start(ctx context.Context) {
 		}
 		set := e.St.Settings()
 		once := e.Once()
+		if set.SchedulerEnabled && once.Active {
+			e.finishOnce() // the scheduler subsumes a one-off run; do not leave it dangling at "0 of N"
+			once = e.Once()
+		}
 		if !shouldCycle(set, once) || time.Since(last) < time.Duration(max(set.CycleMinutes, 1))*time.Minute {
 			continue
 		}

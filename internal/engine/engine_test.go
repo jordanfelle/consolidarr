@@ -564,3 +564,16 @@ func TestItemsOfOtherSeriesInTheFolderAreIgnored(t *testing.T) {
 		t.Fatalf("files of another series must not count: probed=%d deleted=%v", probed, v.fake.deleted)
 	}
 }
+
+func TestOneOffCannotStartWhileTheSchedulerIsOn(t *testing.T) {
+	v := setup(t, nil)
+	set := v.st.Settings()
+	set.SchedulerEnabled = true
+	_ = v.st.SaveSettings(set)
+	if err := v.e.StartOnce(3); err == nil || !strings.Contains(err.Error(), "scheduler is on") {
+		t.Fatalf("a one-off run alongside the scheduler is meaningless and must be refused, got %v", err)
+	}
+	if v.e.Once().Active {
+		t.Fatal("a refused run must not be recorded as active")
+	}
+}
