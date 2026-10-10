@@ -17,7 +17,7 @@ export type Job = {
   created: number; updated: number;
 };
 export type Settings = {
-  schedulerEnabled: boolean; dryRun: boolean; autoDelete: boolean; maxInflight: number; maxPackGB: number;
+  schedulerEnabled: boolean; dryRun: boolean; autoDelete: boolean; allowUnverified: boolean; maxInflight: number; maxPackGB: number;
   minFiles: number; includeAnime: boolean; cycleMinutes: number; scanHours: number; lastResortIndexers: string[];
 };
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };

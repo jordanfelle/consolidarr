@@ -430,6 +430,11 @@
        "type": "string"
       },
       "description": "Indexer names (case-insensitive substring match against a release's indexer). Used only when no other indexer has a valid pack. See GET /api/indexers."
+     },
+     "allowUnverified": {
+      "type": "boolean",
+      "default": false,
+      "description": "Delete old files even when ffprobe cannot read the downloaded files (not mounted). Off by default: such jobs are held with an explanation."
      }
     }
    },

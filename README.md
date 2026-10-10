@@ -49,10 +49,14 @@ consolidarr still checks episode coverage but cannot probe the files, and says s
    unwanted quality…) are skipped, *except* "existing file meets cutoff", because the files are being replaced. Packs must not
    be a quality downgrade or exceed the size cap. Best quality then most seeders wins; last-resort indexers only if nothing else qualifies.
 3. **Grab** records the season's current file IDs and tracks the download.
-4. **Verify** once complete: probe each file, then check the pack covers every episode you currently have.
-5. **Replace:** delete only the recorded old files, trigger Sonarr's import, confirm new files landed.
+4. **Verify** once complete: list the files in the download's own folder, probe each with ffprobe (DRM, undecodable video),
+   and check the pack covers every episode you currently have. If ffprobe can't reach the files the job is **held**, not
+   deleted (unless you opt in to *Allow unverified*).
+5. **Wait for a safe moment:** deletion is deferred while another season is still importing, while Sonarr has a monitor/import
+   command running for 10+ minutes, more than 5 imports queued, or more than 100 completed downloads waiting to import.
+6. **Replace:** delete only the recorded old files that still exist, trigger Sonarr's import, confirm new files landed.
 
-Nothing is deleted before step 5, and step 5 only runs when every check passes. Jobs that fail a check show as **holding**
+Nothing is deleted before step 6, and step 6 only runs when every check passes. Jobs that fail a check show as **holding**
 with the reason. With *Dry run* on (the default), the scheduler only logs what it would grab.
 
 ## Configuration

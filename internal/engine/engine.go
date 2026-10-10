@@ -513,25 +513,44 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	}
 	// finished downloading: verify before touching anything
-	items, err := c.ManualImport(ctx, mine[0].DownloadID, j.SeriesID)
+	folder := mine[0].OutputPath
+	var items []sonarr.ManualImportItem
+	var err error
+	if folder != "" {
+		items, err = c.ManualImportFolder(ctx, folder)
+	} else {
+		items, err = c.ManualImport(ctx, mine[0].DownloadID)
+	}
 	if err != nil {
 		return
 	}
 	packEps := map[int]bool{}
 	var bad []string
-	unverified := false
+	var outside, used, probed int
+	unreachable := ""
 	for _, it := range items {
-		if it.SeasonNumber != j.Season {
+		if it.SeasonNumber != j.Season || (it.Series.ID != 0 && it.Series.ID != j.SeriesID) {
 			continue
 		}
+		// every file must live inside the download folder; library paths mean we are looking at the wrong thing
+		if folder != "" && it.Path != folder && !strings.HasPrefix(it.Path, strings.TrimRight(folder, "/")+"/") {
+			outside++
+			continue
+		}
+		used++
 		for _, ep := range it.Episodes {
 			packEps[ep.EpisodeNumber] = true
 		}
 		ok, why := probeFn(inst, it.Path)
-		if why == "unverified" {
-			unverified = true
-		} else if !ok {
+		switch {
+		case why == "unverified":
+			if unreachable == "" {
+				unreachable = it.Path
+			}
+		case !ok:
 			bad = append(bad, why)
+		default:
+			probed++
 		}
 	}
 	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
@@ -548,16 +567,25 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			missing = append(missing, ep.EpisodeNumber)
 		}
 	}
+	var block string // only computed when we are otherwise ready to delete
 	switch {
 	case len(bad) > 0:
 		j.Status, j.Message = "holding", "failed probe: "+strings.Join(bad[:min(len(bad), 2)], "; ")
-	case len(items) == 0:
-		j.Status, j.Message = "holding", "download client reports no importable files"
+	case outside > 0:
+		j.Status, j.Message = "holding", fmt.Sprintf("%d files are outside the download folder %s; not touching your files", outside, folder)
+	case used == 0:
+		j.Status, j.Message = "holding", "no importable files found in the download folder"
 	case len(missing) > 0:
 		j.Status, j.Message = "holding", fmt.Sprintf("pack is missing episodes %v that you have today", missing)
+	case unreachable != "" && !set.AllowUnverified:
+		j.Status, j.Message = "holding", fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", unreachable)
 	case set.DryRun || !set.AutoDelete:
-		j.Status, j.Message = "ready", "verified; waiting for manual approval or dry run is on"
+		j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", probed)
 	default:
+		if block = e.pipelineBlock(ctx, inst, c, queue, j); block != "" {
+			j.Status, j.Message = "holding", "waiting: "+block
+			break
+		}
 		if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
 			j.Status, j.Message = "holding", "delete failed: "+err.Error()
 			break
@@ -568,13 +596,66 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			e.St.Event("error", label+": "+j.Message)
 			break
 		}
-		j.Status, j.ImportCmd, j.Message = "importing", id, "old files deleted, import running"
-		if unverified {
-			j.Message += " (probe unavailable: files not mounted)"
+		j.Status, j.ImportCmd, j.Message = "importing", id, fmt.Sprintf("old files deleted, import running (%d files probed)", probed)
+		if unreachable != "" {
+			j.Message += "; some files could not be probed (allowed in Settings)"
 		}
 		e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started", label, len(j.OldFileIDs)))
 	}
 	_ = e.St.UpdateJob(j)
+}
+
+// Thresholds for "is Sonarr able to import right now". Deleting old files is only safe when the replacement
+// can actually be imported promptly; a backed-up import pipeline leaves seasons empty in your media server.
+const (
+	maxQueuedImports = 5                // DownloadedEpisodesScan commands already waiting
+	maxImportBacklog = 100              // completed downloads (other than this one) still awaiting import
+	maxCommandAge    = 10 * time.Minute // a monitor/import command running longer than this looks stuck
+)
+
+// pipelineBlock returns why deleting this job's old files must wait, or "" when it is safe to go ahead:
+// another season is mid-import, Sonarr has a command that looks stuck, or its import queue is backed up.
+func (e *Engine) pipelineBlock(ctx context.Context, inst store.Instance, c *sonarr.Client, queue []sonarr.QueueItem, j store.Job) string {
+	if js, err := e.St.Jobs(true, 10000); err == nil {
+		for _, o := range js {
+			if o.InstID == inst.ID && o.ID != j.ID && o.Status == "importing" {
+				return fmt.Sprintf("%s S%02d is still importing (one season at a time)", o.Title, o.Season)
+			}
+		}
+	}
+	cmds, err := c.Commands(ctx)
+	if err != nil {
+		return "cannot read Sonarr's command queue: " + err.Error()
+	}
+	queued := 0
+	for _, cmd := range cmds {
+		switch cmd.Status {
+		case "queued":
+			if cmd.Name == "DownloadedEpisodesScan" {
+				queued++
+			}
+		case "started":
+			switch cmd.Name {
+			case "ProcessMonitoredDownloads", "DownloadedEpisodesScan", "RefreshMonitoredDownloads":
+				if t, err := time.Parse(time.RFC3339, cmd.Started); err == nil && time.Since(t) > maxCommandAge {
+					return fmt.Sprintf("Sonarr's %s has been running for %d minutes", cmd.Name, int(time.Since(t).Minutes()))
+				}
+			}
+		}
+	}
+	if queued > maxQueuedImports {
+		return fmt.Sprintf("Sonarr already has %d imports queued", queued)
+	}
+	backlog := 0
+	for _, q := range queue {
+		if q.TrackedState == "importPending" && !(q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season) {
+			backlog++
+		}
+	}
+	if backlog > maxImportBacklog {
+		return fmt.Sprintf("Sonarr has %d completed downloads waiting to import", backlog)
+	}
+	return ""
 }
 
 // liveOld returns the recorded old file ids that still exist. Sonarr can replace some of them on its own
@@ -616,6 +697,9 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j store.Job) 
 	}
 	for _, q := range queue {
 		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season {
+			if why := e.pipelineBlock(ctx, inst, c, queue, j); why != "" {
+				return fmt.Errorf("not now: %s", why)
+			}
 			if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
 				return err
 			}

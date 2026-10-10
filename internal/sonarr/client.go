@@ -140,11 +140,15 @@ type QueueItem struct {
 	SizeLeft     float64 `json:"sizeleft"`
 	DownloadID   string  `json:"downloadId"`
 	OutputPath   string  `json:"outputPath"`
+	TrackedState string  `json:"trackedDownloadState"`
 }
 
 type ManualImportItem struct {
-	Path         string `json:"path"`
-	SeasonNumber int    `json:"seasonNumber"`
+	Path   string `json:"path"`
+	Series struct {
+		ID int `json:"id"`
+	} `json:"series"`
+	SeasonNumber int `json:"seasonNumber"`
 	Episodes     []struct {
 		EpisodeNumber int `json:"episodeNumber"`
 	} `json:"episodes"`
@@ -155,9 +159,12 @@ type ManualImportItem struct {
 
 type Command struct {
 	ID      int    `json:"id"`
+	Name    string `json:"name"`
 	Status  string `json:"status"`
 	Result  string `json:"result"`
 	Message string `json:"message"`
+	Queued  string `json:"queued"`
+	Started string `json:"started"`
 }
 
 type Health struct {
@@ -223,9 +230,25 @@ func (c *Client) Health(ctx context.Context) (out []Health, err error) {
 	return
 }
 
-func (c *Client) ManualImport(ctx context.Context, downloadID string, seriesID int) (out []ManualImportItem, err error) {
-	p := "/manualimport?downloadId=" + url.QueryEscape(downloadID) + fmt.Sprintf("&seriesId=%d&filterExistingFiles=false", seriesID)
+func (c *Client) ManualImport(ctx context.Context, downloadID string) (out []ManualImportItem, err error) {
+	p := "/manualimport?downloadId=" + url.QueryEscape(downloadID) + "&filterExistingFiles=false"
 	err = c.do(ctx, "GET", p, nil, &out, 3*time.Minute)
+	return
+}
+
+// ManualImportFolder lists the importable files inside a download folder (the queue item's outputPath).
+//
+// Never pass seriesId here: with it Sonarr ignores the folder and lists that series' existing LIBRARY files,
+// so "verifying" would probe files you already have instead of the download.
+func (c *Client) ManualImportFolder(ctx context.Context, folder string) (out []ManualImportItem, err error) {
+	p := "/manualimport?folder=" + url.QueryEscape(folder) + "&filterExistingFiles=false"
+	err = c.do(ctx, "GET", p, nil, &out, 3*time.Minute)
+	return
+}
+
+// Commands lists Sonarr's recent commands, including queued and running ones.
+func (c *Client) Commands(ctx context.Context) (out []Command, err error) {
+	err = c.do(ctx, "GET", "/command", nil, &out, 30*time.Second)
 	return
 }
 
