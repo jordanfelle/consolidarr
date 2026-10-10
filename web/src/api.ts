@@ -20,6 +20,7 @@ export type Settings = {
   schedulerEnabled: boolean; dryRun: boolean; autoDelete: boolean; maxInflight: number; maxPackGB: number;
   minFiles: number; includeAnime: boolean; cycleMinutes: number; scanHours: number; lastResortIndexers: string[];
 };
+export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
 export type Event = { id: number; ts: number; level: string; msg: string };
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -57,4 +58,7 @@ export const api = {
   events: () => req<Event[]>("GET", "/events"),
   status: () => req<{ active: number; flaggedTV: number; flaggedAnime: number; settings: Settings }>("GET", "/status"),
   runNow: () => req("POST", "/engine/run"),
+  keys: () => req<ApiKey[]>("GET", "/keys"),
+  createKey: (name: string) => req<{ id: number; name: string; prefix: string; key: string }>("POST", "/keys", { name }),
+  deleteKey: (id: number) => req("DELETE", `/keys/${id}`),
 };

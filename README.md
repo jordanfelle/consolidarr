@@ -66,6 +66,23 @@ with the reason. With *Dry run* on (the default), the scheduler only logs what i
 
 Everything else (scheduler, size cap, in-flight limit, last-resort indexers, anime) is in the UI under **Settings**.
 
+## API
+
+Everything the UI does is available over a JSON API. The interactive reference is served at `/api/docs` and the OpenAPI 3
+spec at `/api/openapi.json` (a test fails if a route is added without documenting it).
+
+Create a key under **Settings → API keys** (shown once; only a hash is stored), then:
+
+```sh
+curl -H "X-API-Key: csl_..." http://localhost:7480/api/status
+curl -H "X-API-Key: csl_..." "http://localhost:7480/api/seasons?sort=score&limit=20"
+curl -H "X-API-Key: csl_..." -X POST http://localhost:7480/api/scan
+curl -H "Authorization: Bearer csl_..." http://localhost:7480/api/jobs?active=1
+```
+
+Errors always look like `{"error": "...", "code": "not_found"}`; request bodies reject unknown fields; list endpoints
+paginate with `limit`/`offset`; creating things returns `201`; long operations (scans) return `202` and run in the background.
+
 ## Development
 
 ```

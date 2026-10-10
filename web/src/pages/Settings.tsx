@@ -2,6 +2,45 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Instance, Settings, api } from "../api";
 
+function Keys() {
+  const qc = useQueryClient();
+  const keys = useQuery({ queryKey: ["keys"], queryFn: api.keys });
+  const [name, setName] = useState("");
+  const [fresh, setFresh] = useState("");
+  const create = useMutation({ mutationFn: () => api.createKey(name), onSuccess: (r) => { setFresh(r.key); setName(""); qc.invalidateQueries({ queryKey: ["keys"] }); } });
+  const del = useMutation({ mutationFn: api.deleteKey, onSuccess: () => qc.invalidateQueries({ queryKey: ["keys"] }) });
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between"><h2 className="text-lg font-semibold">API keys</h2>
+        <a className="text-sm text-accent hover:underline" href="/api/docs" target="_blank" rel="noreferrer">API reference</a></div>
+      <p className="text-sm text-muted">Send a key as <code>X-API-Key</code> or <code>Authorization: Bearer</code>. Keys are shown once when created.</p>
+      {fresh && (
+        <div className="card border-good/40 p-3 text-sm">
+          <div className="mb-1 text-good">Copy this key now, it will not be shown again:</div>
+          <code className="break-all">{fresh}</code>
+          <div className="mt-2"><button className="btn" onClick={() => setFresh("")}>Done</button></div>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input className="input max-w-xs" placeholder="Key name (e.g. home-assistant)" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="btn btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>Create key</button>
+      </div>
+      {create.error && <div className="text-sm text-bad">{(create.error as Error).message}</div>}
+      <div className="card">
+        <table className="w-full"><thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th /></tr></thead><tbody>
+          {keys.data?.map((k) => (
+            <tr key={k.id}><td>{k.name}</td><td className="font-mono text-muted">{k.prefix}…</td>
+              <td className="text-muted">{new Date(k.created * 1000).toLocaleDateString()}</td>
+              <td className="text-muted">{k.lastUsed ? new Date(k.lastUsed * 1000).toLocaleString() : "never"}</td>
+              <td className="text-right"><button className="btn btn-danger" onClick={() => confirm(`Revoke ${k.name}?`) && del.mutate(k.id)}>Revoke</button></td></tr>
+          ))}
+          {keys.data?.length === 0 && <tr><td colSpan={5} className="text-muted">No API keys.</td></tr>}
+        </tbody></table>
+      </div>
+    </section>
+  );
+}
+
 const blank: Partial<Instance> = { name: "", url: "", apiKey: "", pathFrom: "", pathTo: "", enabled: true };
 
 function InstanceForm({ initial, onDone }: { initial: Partial<Instance>; onDone: () => void }) {
@@ -67,6 +106,7 @@ export default function SettingsPage() {
           </tbody></table>
         </div>
       </section>
+      <Keys />
       {s && (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold">Scheduler</h2>

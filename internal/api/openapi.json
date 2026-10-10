@@ -1,0 +1,2309 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "consolidarr API",
+  "version": "1.0.0",
+  "description": "Consolidate Sonarr seasons built from single-episode grabs into season packs.\n\nAuthenticate with an API key (`X-API-Key: csl_...` or `Authorization: Bearer csl_...`) created under Settings, or with the session cookie from `/api/auth/login`. Errors always look like `{\"error\": \"...\", \"code\": \"...\"}`.",
+  "license": {
+   "name": "AGPL-3.0",
+   "url": "https://www.gnu.org/licenses/agpl-3.0.html"
+  }
+ },
+ "servers": [
+  {
+   "url": "/"
+  }
+ ],
+ "components": {
+  "securitySchemes": {
+   "ApiKeyAuth": {
+    "type": "apiKey",
+    "in": "header",
+    "name": "X-API-Key"
+   },
+   "BearerAuth": {
+    "type": "http",
+    "scheme": "bearer"
+   },
+   "SessionCookie": {
+    "type": "apiKey",
+    "in": "cookie",
+    "name": "consolidarr_session"
+   }
+  },
+  "schemas": {
+   "Error": {
+    "type": "object",
+    "required": [
+     "error",
+     "code"
+    ],
+    "properties": {
+     "error": {
+      "type": "string"
+     },
+     "code": {
+      "type": "string",
+      "enum": [
+       "bad_request",
+       "unauthorized",
+       "not_found",
+       "conflict",
+       "invalid",
+       "upstream_error",
+       "internal",
+       "error"
+      ]
+     }
+    }
+   },
+   "Me": {
+    "type": "object",
+    "properties": {
+     "setupRequired": {
+      "type": "boolean"
+     },
+     "authenticated": {
+      "type": "boolean"
+     },
+     "version": {
+      "type": "string"
+     }
+    }
+   },
+   "Credentials": {
+    "type": "object",
+    "required": [
+     "username",
+     "password"
+    ],
+    "properties": {
+     "username": {
+      "type": "string"
+     },
+     "password": {
+      "type": "string",
+      "minLength": 8
+     }
+    }
+   },
+   "InstanceInput": {
+    "type": "object",
+    "required": [
+     "name",
+     "url"
+    ],
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string",
+      "example": "http://sonarr:8989/sonarr"
+     },
+     "apiKey": {
+      "type": "string",
+      "description": "Required on create; omit on update to keep the stored key"
+     },
+     "pathFrom": {
+      "type": "string",
+      "description": "Download path as Sonarr sees it"
+     },
+     "pathTo": {
+      "type": "string",
+      "description": "The same path inside consolidarr (for ffprobe)"
+     },
+     "enabled": {
+      "type": "boolean",
+      "default": true
+     }
+    }
+   },
+   "InstanceView": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     },
+     "pathFrom": {
+      "type": "string"
+     },
+     "pathTo": {
+      "type": "string"
+     },
+     "enabled": {
+      "type": "boolean"
+     },
+     "scanning": {
+      "type": "boolean"
+     },
+     "lastScan": {
+      "type": "integer",
+      "description": "Unix seconds, 0 = never"
+     },
+     "health": {
+      "type": "string",
+      "description": "Empty when healthy"
+     }
+    }
+   },
+   "Season": {
+    "type": "object",
+    "properties": {
+     "instId": {
+      "type": "integer"
+     },
+     "seriesId": {
+      "type": "integer"
+     },
+     "season": {
+      "type": "integer"
+     },
+     "title": {
+      "type": "string"
+     },
+     "seriesType": {
+      "type": "string",
+      "enum": [
+       "standard",
+       "daily",
+       "anime"
+      ]
+     },
+     "monitored": {
+      "type": "boolean"
+     },
+     "files": {
+      "type": "integer"
+     },
+     "aired": {
+      "type": "integer"
+     },
+     "pack": {
+      "type": "integer",
+      "description": "Files that came from a season pack"
+     },
+     "single": {
+      "type": "integer"
+     },
+     "multi": {
+      "type": "integer"
+     },
+     "unknown": {
+      "type": "integer"
+     },
+     "groups": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "qualities": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sources": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "gb": {
+      "type": "number"
+     },
+     "curRank": {
+      "type": "integer"
+     },
+     "path": {
+      "type": "string"
+     },
+     "score": {
+      "type": "number"
+     },
+     "flagged": {
+      "type": "boolean"
+     }
+    }
+   },
+   "SeasonPage": {
+    "type": "object",
+    "properties": {
+     "total": {
+      "type": "integer"
+     },
+     "offset": {
+      "type": "integer"
+     },
+     "limit": {
+      "type": "integer"
+     },
+     "seasons": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Season"
+      }
+     }
+    }
+   },
+   "Candidate": {
+    "type": "object",
+    "properties": {
+     "guid": {
+      "type": "string"
+     },
+     "indexerId": {
+      "type": "integer"
+     },
+     "indexer": {
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "size": {
+      "type": "integer"
+     },
+     "seeders": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "quality": {
+      "type": "object",
+      "properties": {
+       "quality": {
+        "type": "object",
+        "properties": {
+         "name": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     },
+     "blocking": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Rejections that matter (the expected cutoff rejection is excluded)"
+     },
+     "picked": {
+      "type": "boolean"
+     }
+    }
+   },
+   "GrabRequest": {
+    "type": "object",
+    "required": [
+     "guid"
+    ],
+    "properties": {
+     "guid": {
+      "type": "string"
+     },
+     "indexerId": {
+      "type": "integer"
+     },
+     "title": {
+      "type": "string"
+     },
+     "sizeGB": {
+      "type": "number"
+     },
+     "indexer": {
+      "type": "string"
+     }
+    }
+   },
+   "Job": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "instId": {
+      "type": "integer"
+     },
+     "seriesId": {
+      "type": "integer"
+     },
+     "season": {
+      "type": "integer"
+     },
+     "title": {
+      "type": "string"
+     },
+     "oldFileIds": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "release": {
+      "type": "string"
+     },
+     "indexer": {
+      "type": "string"
+     },
+     "sizeGB": {
+      "type": "number"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "downloading",
+       "ready",
+       "holding",
+       "importing",
+       "done",
+       "lost",
+       "failed"
+      ]
+     },
+     "message": {
+      "type": "string"
+     },
+     "progress": {
+      "type": "integer"
+     },
+     "importCmd": {
+      "type": "integer"
+     },
+     "created": {
+      "type": "integer"
+     },
+     "updated": {
+      "type": "integer"
+     }
+    }
+   },
+   "Settings": {
+    "type": "object",
+    "properties": {
+     "schedulerEnabled": {
+      "type": "boolean"
+     },
+     "dryRun": {
+      "type": "boolean"
+     },
+     "autoDelete": {
+      "type": "boolean"
+     },
+     "maxInflight": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+     },
+     "maxPackGB": {
+      "type": "number"
+     },
+     "minFiles": {
+      "type": "integer",
+      "minimum": 2
+     },
+     "includeAnime": {
+      "type": "boolean"
+     },
+     "cycleMinutes": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "scanHours": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "lastResortIndexers": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   "Event": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "ts": {
+      "type": "integer"
+     },
+     "level": {
+      "type": "string",
+      "enum": [
+       "info",
+       "warn",
+       "error"
+      ]
+     },
+     "msg": {
+      "type": "string"
+     }
+    }
+   },
+   "Status": {
+    "type": "object",
+    "properties": {
+     "active": {
+      "type": "integer"
+     },
+     "flaggedTV": {
+      "type": "integer"
+     },
+     "flaggedAnime": {
+      "type": "integer"
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Settings"
+     }
+    }
+   },
+   "KeyRequest": {
+    "type": "object",
+    "required": [
+     "name"
+    ],
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 80
+     }
+    }
+   },
+   "ApiKey": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "prefix": {
+      "type": "string"
+     },
+     "created": {
+      "type": "integer"
+     },
+     "lastUsed": {
+      "type": "integer"
+     }
+    }
+   },
+   "ApiKeyCreated": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "prefix": {
+      "type": "string"
+     },
+     "key": {
+      "type": "string",
+      "description": "Shown once"
+     }
+    }
+   }
+  }
+ },
+ "paths": {
+  "/api/auth/me": {
+   "get": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Session and setup state",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Me"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/auth/setup": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Create the first admin account (only works once)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Username missing or password shorter than 8 characters",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Already set up",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Credentials"
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/auth/login": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Sign in (sets a session cookie)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Credentials"
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/auth/logout": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Sign out",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/healthz": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Liveness probe",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/openapi.json": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "This specification",
+    "responses": {
+     "200": {
+      "description": "OK"
+     }
+    }
+   }
+  },
+  "/api/docs": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Interactive API reference (Swagger UI)",
+    "responses": {
+     "200": {
+      "description": "OK"
+     }
+    }
+   }
+  },
+  "/api/instances": {
+   "get": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "List Sonarr instances (API keys are never returned)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/InstanceView"
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "post": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "Add a Sonarr instance",
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "id": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "name, http(s) url or apiKey missing",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InstanceInput"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/instances/test": {
+   "post": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "Test connectivity and read the Sonarr version without saving",
+    "responses": {
+     "200": {
+      "description": "Connected",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "version": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Could not reach Sonarr",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InstanceInput"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/instances/{id}": {
+   "get": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "Get one instance",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InstanceView"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such instance",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "Update an instance (omit apiKey to keep the stored one)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "id": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such instance",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Invalid input",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/InstanceInput"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "delete": {
+    "tags": [
+     "instances"
+    ],
+    "summary": "Remove an instance and its stored seasons and jobs",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/instances/{id}/scan": {
+   "post": {
+    "tags": [
+     "scan"
+    ],
+    "summary": "Start a read-only scan of one instance (async)",
+    "responses": {
+     "202": {
+      "description": "Started",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "started": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such instance",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "A scan is already running",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/scan": {
+   "post": {
+    "tags": [
+     "scan"
+    ],
+    "summary": "Start scans of every enabled instance (async)",
+    "responses": {
+     "202": {
+      "description": "Started",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "started": {
+           "type": "array",
+           "items": {
+            "type": "integer"
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/seasons": {
+   "get": {
+    "tags": [
+     "seasons"
+    ],
+    "summary": "List seasons assembled without a season pack, messiest first",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SeasonPage"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Invalid anime or sort value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Only this instance"
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Case-insensitive title search"
+     },
+     {
+      "name": "flagged",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "0",
+        "1"
+       ],
+       "default": "1"
+      },
+      "description": "0 = every season with 2+ files, not just flagged ones"
+     },
+     {
+      "name": "anime",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "all",
+        "only",
+        "hide"
+       ]
+      },
+      "description": "Default follows the includeAnime setting"
+     },
+     {
+      "name": "minFiles",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "sort",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "score",
+        "title",
+        "files",
+        "size"
+       ],
+       "default": "score"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "default": 0
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "default": 100,
+       "maximum": 1000
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/seasons/{inst}/{series}/{season}": {
+   "get": {
+    "tags": [
+     "seasons"
+    ],
+    "summary": "Get one season",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Season"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "Season not found",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/seasons/{inst}/{series}/{season}/candidates": {
+   "get": {
+    "tags": [
+     "seasons"
+    ],
+    "summary": "Search indexers for full-season releases; the deterministic pick is marked",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/Candidate"
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "Season not found",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr search failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "description": "Runs Sonarr's interactive search, so it can take up to a minute.",
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/seasons/{inst}/{series}/{season}/grab": {
+   "post": {
+    "tags": [
+     "seasons"
+    ],
+    "summary": "Grab a release and track it as a replacement job",
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "jobId": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "Season not found",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "guid missing",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr refused the grab",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "description": "Records the season's current file ids; they are only deleted after the pack downloads, probes clean and covers every episode.",
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GrabRequest"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/jobs": {
+   "get": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "List replacement jobs, newest first",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/Job"
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "active",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "1"
+       ]
+      },
+      "description": "1 = only unfinished jobs"
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/jobs/{id}": {
+   "get": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Get one job",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Job"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "delete": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Stop tracking a job (does not cancel the download or restore files)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/jobs/{id}/approve": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Approve a verified 'ready' job: delete the old files and import the pack",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Job is not in the ready state",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/settings": {
+   "get": {
+    "tags": [
+     "settings"
+    ],
+    "summary": "Scheduler and selection settings",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Settings"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "settings"
+    ],
+    "summary": "Replace settings (unknown fields are rejected)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Settings"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed JSON or unknown field",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Value out of range",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Settings"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/events": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Recent activity log (newest first, 300)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/Event"
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/status": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Counts and current settings",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Status"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/engine/run": {
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Run a scheduler cycle now (no effect while the scheduler is off)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/keys": {
+   "get": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "List API keys (hashes and plaintext are never returned)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ApiKey"
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   },
+   "post": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "Create an API key; the plaintext is in this response only",
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApiKeyCreated"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "name missing",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/KeyRequest"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/keys/{id}": {
+   "delete": {
+    "tags": [
+     "keys"
+    ],
+    "summary": "Revoke an API key",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such key",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  }
+ }
+}
