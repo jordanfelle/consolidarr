@@ -181,12 +181,7 @@ func (e *Engine) attentionFor(ctx context.Context, inst store.Instance, owned ma
 // Attention lists stuck packs across every enabled instance. An unreachable instance is reported, not fatal.
 func (e *Engine) Attention(ctx context.Context) ([]Attention, []string) {
 	insts, _ := e.St.Instances()
-	owned := map[string]bool{}
-	if js, err := e.St.Jobs(true, 10000); err == nil {
-		for _, j := range js {
-			owned[skipKey(j.InstID, j.SeriesID, j.Season)] = true
-		}
-	}
+	owned := e.ownedSeasons()
 	var out []Attention
 	errs := []string{}
 	for _, inst := range insts {
@@ -203,14 +198,22 @@ func (e *Engine) Attention(ctx context.Context) ([]Attention, []string) {
 	return out, errs
 }
 
-func (e *Engine) findAttention(ctx context.Context, inst store.Instance, seriesID, season int) (*Attention, error) {
+// ownedSeasons are seasons a job is responsible for: unfinished ones, and failed ones whose old files were already
+// deleted (their pack is then the only copy, so it must never be offered for removal).
+func (e *Engine) ownedSeasons() map[string]bool {
 	owned := map[string]bool{}
-	if js, err := e.St.Jobs(true, 10000); err == nil {
+	if js, err := e.St.Jobs(false, 100000); err == nil {
 		for _, j := range js {
-			owned[skipKey(j.InstID, j.SeriesID, j.Season)] = true
+			if j.Status == "reserving" || j.Status == "downloading" || j.Status == "ready" || j.Status == "holding" || j.Status == "importing" || (j.Status == "failed" && j.Deleted > 0) {
+				owned[skipKey(j.InstID, j.SeriesID, j.Season)] = true
+			}
 		}
 	}
-	gs, err := e.attentionFor(ctx, inst, owned)
+	return owned
+}
+
+func (e *Engine) findAttention(ctx context.Context, inst store.Instance, seriesID, season int) (*Attention, error) {
+	gs, err := e.attentionFor(ctx, inst, e.ownedSeasons())
 	if err != nil {
 		return nil, err
 	}
@@ -241,53 +244,51 @@ func (e *Engine) Adopt(ctx context.Context, inst store.Instance, seriesID, seaso
 		}
 	}
 	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: seriesID, Season: season, Title: g.Series, OldFileIDs: old,
-		Release: g.Pack, Indexer: g.Indexer, SizeGB: g.SizeGB})
+		Release: g.Pack, Indexer: g.Indexer, SizeGB: g.SizeGB, DownloadID: g.DownloadID})
 	if err != nil {
-		return store.Job{}, err
+		return store.Job{}, err // store.ErrDuplicate when the season already has an active job
 	}
 	e.St.Event("info", fmt.Sprintf("adopted the stuck download for %s S%02d (%d current files to replace)", g.Series, season, len(old)))
 	return e.AdvanceJob(ctx, id)
 }
 
-// AdvanceJob re-evaluates one job immediately (used by Adopt and Retry) and returns its new state.
+// AdvanceJob re-evaluates one job immediately (Adopt, Retry now) and returns its new state.
 func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
-	js, err := e.St.Jobs(false, 100000)
+	job, err := e.St.Job(id)
 	if err != nil {
 		return store.Job{}, err
 	}
-	var job *store.Job
-	for i := range js {
-		if js[i].ID == id {
-			job = &js[i]
-		}
-	}
-	if job == nil {
-		return store.Job{}, store.ErrNotFound
-	}
-	if job.Status == "done" || job.Status == "importing" {
-		return *job, fmt.Errorf("job is %s", job.Status)
+	if job.Status == "done" || job.Status == "reserving" {
+		return job, fmt.Errorf("job is %s", job.Status)
 	}
 	inst, err := e.St.Instance(job.InstID)
 	if err != nil {
-		return *job, err
+		return job, err
 	}
 	c := client(inst)
 	queue, err := c.Queue(ctx, time.Minute)
 	if err != nil {
-		return *job, err
+		return job, err
 	}
+	var flipErr error
 	if job.Status == "lost" || job.Status == "failed" { // give it another go
-		job.Status, job.Message = "downloading", ""
-		_ = e.St.UpdateJob(*job)
-	}
-	e.advance(ctx, inst, c, e.St.Settings(), *job, queue)
-	js, _ = e.St.Jobs(false, 100000)
-	for _, j := range js {
-		if j.ID == id {
-			return j, nil
+		unlock := e.jobMu.lock(id)
+		if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
+			if cur.Deleted > 0 {
+				cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
+			} else {
+				cur.Status = "downloading"
+			}
+			cur.Message = ""
+			flipErr = e.St.UpdateJob(cur) // fails if a newer active job already owns the season
 		}
+		unlock()
 	}
-	return *job, nil
+	if flipErr != nil {
+		return job, fmt.Errorf("could not restart this job: %w", flipErr)
+	}
+	e.advance(ctx, inst, c, e.St.Settings(), job, queue)
+	return e.St.Job(id)
 }
 
 // RetryImport asks Sonarr to import a stuck download again.
@@ -331,52 +332,49 @@ func (e *Engine) RemovePack(ctx context.Context, inst store.Instance, seriesID, 
 }
 
 // RejectJob throws away a job's bad pack: remove it from Sonarr's queue and the client, blocklist the
-// release, optionally search again, and mark the job failed. Old files are never touched here.
+// release, optionally search again, and mark the job failed. It refuses once the old files have been deleted,
+// because then the pack is the only copy of the season.
 func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (store.Job, error) {
-	js, err := e.St.Jobs(false, 100000)
+	defer e.jobMu.lock(jobID)()
+	j, err := e.St.Job(jobID)
 	if err != nil {
 		return store.Job{}, err
 	}
-	for _, j := range js {
-		if j.ID != jobID {
-			continue
-		}
-		if j.Status == "importing" || j.Status == "done" {
-			return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
-		}
-		inst, err := e.St.Instance(j.InstID)
-		if err != nil {
-			return j, err
-		}
-		c := client(inst)
-		queue, err := c.Queue(ctx, time.Minute)
-		if err != nil {
-			return j, err
-		}
-		var ids []int
-		for _, q := range queue {
-			if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season {
-				ids = append(ids, q.ID)
-			}
-		}
-		if len(ids) > 0 {
-			if err := c.RemoveQueue(ctx, ids, true, true); err != nil {
-				return j, err
-			}
-		}
-		if research {
-			if _, err := c.SeasonSearch(ctx, j.SeriesID, j.Season); err != nil {
-				return j, err
-			}
-		}
-		j.Status, j.Message = "failed", "pack rejected and blocklisted; your files were not touched"
-		if research {
-			j.Message += "; searching for another"
-		}
-		_ = e.St.UpdateJob(j)
-		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), time.Hour, "rejected") // let the search settle
-		e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v)", j.Title, j.Season, research))
-		return j, nil
+	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
+		return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
 	}
-	return store.Job{}, store.ErrNotFound
+	if j.Deleted > 0 {
+		return j, fmt.Errorf("your old files were already deleted, so this pack is the only copy of the season; use Retry or Adopt instead of rejecting it")
+	}
+	inst, err := e.St.Instance(j.InstID)
+	if err != nil {
+		return j, err
+	}
+	c := client(inst)
+	queue, err := c.Queue(ctx, time.Minute)
+	if err != nil {
+		return j, err
+	}
+	var ids []int
+	for _, q := range ownedItems(queue, &j) { // this job's own download, not every grab for the season
+		ids = append(ids, q.ID)
+	}
+	if len(ids) > 0 {
+		if err := c.RemoveQueue(ctx, ids, true, true); err != nil {
+			return j, err
+		}
+	}
+	if research {
+		if _, err := c.SeasonSearch(ctx, j.SeriesID, j.Season); err != nil {
+			return j, err
+		}
+	}
+	j.Status, j.Message = "failed", "pack rejected and blocklisted; your files were not touched"
+	if research {
+		j.Message += "; searching for another"
+	}
+	_ = e.St.UpdateJob(j)
+	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), time.Hour, "rejected") // let the search settle
+	e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v)", j.Title, j.Season, research))
+	return j, nil
 }

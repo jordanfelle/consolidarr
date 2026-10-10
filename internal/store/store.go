@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,7 +94,89 @@ func Open(dir, databaseURL string) (*Store, error) {
 			return nil, fmt.Errorf("schema: %w", err)
 		}
 	}
+	if err := st.migrate(); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	_, _ = st.Exec(`delete from sessions where expires < ?`, time.Now().Unix()) // expired sessions are dead weight
 	return st, nil
+}
+
+// A migration adds one column. Each is skipped when the column already exists, so a crash between the ALTER and
+// the version bump (or two instances starting at once against Postgres) cannot make a later start fail with
+// "duplicate column". Append only; never edit an entry.
+type migration struct{ table, column, ddl string }
+
+var migrations = []migration{
+	{"jobs", "deleted", `alter table jobs add column deleted bigint not null default 0`},            // unix time the old files began to be deleted
+	{"jobs", "download_id", `alter table jobs add column download_id text not null default ''`},     // the download client hash this job owns
+	{"jobs", "expected", `alter table jobs add column expected bigint not null default 0`},          // how many episodes the pack must supply
+	{"jobs", "expected_eps", `alter table jobs add column expected_eps text not null default '[]'`}, // exactly which episode numbers
+	{"jobs", "import_at", `alter table jobs add column import_at bigint not null default 0`},        // when the current import attempt started
+}
+
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	if s.PG {
+		var n int
+		err := s.QueryRow(`select count(*) from information_schema.columns where table_schema = current_schema() and table_name = ? and column_name = ?`, table, column).Scan(&n)
+		return n > 0, err
+	}
+	rows, err := s.DB.Query(`select name from pragma_table_info('` + table + `')`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func (s *Store) migrate() error {
+	var raw sql.NullString
+	if err := s.QueryRow(`select v from kv where k='schema_version'`).Scan(&raw); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	v, _ := strconv.Atoi(raw.String)
+	for i := v; i < len(migrations); i++ {
+		m := migrations[i]
+		has, err := s.hasColumn(m.table, m.column)
+		if err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+		if !has {
+			ddl := m.ddl
+			if s.PG {
+				ddl = strings.Replace(ddl, "add column", "add column if not exists", 1) // two instances starting at once
+			}
+			if _, err := s.DB.Exec(ddl); err != nil {
+				return fmt.Errorf("migration %d: %w", i+1, err)
+			}
+		}
+		if _, err := s.Exec(`insert into kv(k,v) values('schema_version',?) on conflict(k) do update set v=excluded.v`, strconv.Itoa(i+1)); err != nil {
+			return fmt.Errorf("migration %d: recording version: %w", i+1, err)
+		}
+	}
+	if v < len(migrations) {
+		// Jobs that were already importing when these columns appeared have no recorded delete time: treat the last
+		// update as it, so they are judged by sensible ages instead of "deleted in 1970".
+		_, _ = s.Exec(`update jobs set deleted = updated where status = 'importing' and deleted = 0`)
+		_, _ = s.Exec(`update jobs set import_at = updated where status = 'importing' and import_at = 0`)
+	}
+	// One unfinished job per season, enforced by the database so two racing callers cannot both create one.
+	// If old data already violates it the app still starts (relying on the application-level check in Grab/Adopt),
+	// but say so loudly: the airtight guarantee is missing until the duplicate jobs are cleared.
+	if _, err := s.DB.Exec(`create unique index if not exists jobs_one_active_v2 on jobs(inst_id, series_id, season) where status in ('reserving','downloading','ready','holding','importing')`); err != nil {
+		log.Printf("WARNING: could not enforce one active job per season (%v); existing duplicate jobs must be cleared", err)
+	} else {
+		_, _ = s.DB.Exec(`drop index if exists jobs_one_active`) // superseded (it did not cover 'reserving'); only dropped once its replacement exists
+	}
+	return nil
 }
 
 type Settings struct {

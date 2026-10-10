@@ -2,9 +2,11 @@ package sonarr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -71,5 +73,28 @@ func TestClientStillReachesLoopbackAndPrivateAddresses(t *testing.T) {
 	v, err := New(srv.URL+"/sonarr", "k").Status(context.Background())
 	if err != nil || v != "4.0.20" {
 		t.Fatalf("loopback Sonarr must work: v=%q err=%v", v, err)
+	}
+}
+
+func TestQueueFollowsEveryPage(t *testing.T) {
+	const total = 1234
+	pages := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		var recs []map[string]int
+		for i := (page - 1) * size; i < page*size && i < total; i++ {
+			recs = append(recs, map[string]int{"id": i + 1})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"totalRecords": total, "records": recs})
+	}))
+	defer srv.Close()
+	q, err := New(srv.URL, "k").Queue(context.Background(), time.Minute)
+	if err != nil || len(q) != total {
+		t.Fatalf("want all %d queue items across pages, got %d (err=%v)", total, len(q), err)
+	}
+	if pages != 3 {
+		t.Fatalf("1234 items at 500 per page is 3 requests, got %d", pages)
 	}
 }
