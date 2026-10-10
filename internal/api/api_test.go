@@ -247,3 +247,17 @@ func TestSeasonsPaginationAndSort(t *testing.T) {
 		t.Fatalf("sort by files should put the biggest first: %+v", page.Seasons[0])
 	}
 }
+
+func TestRunNowRefusesWhileSchedulerIsOff(t *testing.T) {
+	a, h := newAPI(t)
+	c := login(t, h)
+	if w := do(h, "POST", "/api/engine/run", "", c); w.Code != 409 || !strings.Contains(w.Body.String(), "conflict") {
+		t.Fatalf("scheduler off must be a 409, got %d %s", w.Code, w.Body)
+	}
+	set := a.St.Settings()
+	set.SchedulerEnabled = true
+	_ = a.St.SaveSettings(set)
+	if w := do(h, "POST", "/api/engine/run", "", c); w.Code != 202 {
+		t.Fatalf("scheduler on must be accepted, got %d %s", w.Code, w.Body)
+	}
+}

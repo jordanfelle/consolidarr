@@ -103,7 +103,7 @@ func (a *API) Routes() []route {
 		{"PUT", "/api/settings", a.putSettings, false},
 		{"GET", "/api/events", a.events, false},
 		{"GET", "/api/status", a.status, false},
-		{"POST", "/api/engine/run", func(w http.ResponseWriter, r *http.Request) { a.Eng.RunNow(); ok(w, map[string]bool{"ok": true}) }, false},
+		{"POST", "/api/engine/run", a.runNow, false},
 
 		{"GET", "/api/keys", a.listKeys, false},
 		{"POST", "/api/keys", a.createKey, false},
@@ -400,6 +400,18 @@ func (a *API) jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok(w, js)
+}
+
+// runNow triggers a scheduler cycle immediately. It refuses (409) while the scheduler is off instead of
+// reporting success for something that would do nothing.
+func (a *API) runNow(w http.ResponseWriter, r *http.Request) {
+	if !a.St.Settings().SchedulerEnabled {
+		fail(w, 409, "the scheduler is off: enable it in Settings and save first")
+		return
+	}
+	a.Eng.RunNow()
+	w.WriteHeader(http.StatusAccepted)
+	ok(w, map[string]bool{"started": true})
 }
 
 func (a *API) job(w http.ResponseWriter, r *http.Request) {
