@@ -99,6 +99,7 @@ type Settings struct {
 	SchedulerEnabled bool     `json:"schedulerEnabled"`
 	DryRun           bool     `json:"dryRun"`
 	AutoDelete       bool     `json:"autoDelete"`
+	AllowUnverified  bool     `json:"allowUnverified"` // delete even when ffprobe can't reach the files (default off)
 	MaxInflight      int      `json:"maxInflight"`
 	MaxPackGB        float64  `json:"maxPackGB"` // 0 = no size limit
 	MinFiles         int      `json:"minFiles"`

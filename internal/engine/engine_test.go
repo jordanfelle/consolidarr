@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,16 +19,20 @@ import (
 
 // fakeSonarr serves just enough of Sonarr's API for the job lifecycle and records destructive calls.
 type fakeSonarr struct {
-	mu         sync.Mutex
-	deleted    [][]int
-	imports    int
-	grabs      int
-	packEps    []int // episodes the finished download contains
-	seasonEps  map[int]int
-	filesAfter []sonarr.EpisodeFile
-	existing   map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
-	cmdStatus  string
-	srv        *httptest.Server
+	mu            sync.Mutex
+	deleted       [][]int
+	imports       int
+	grabs         int
+	cmds          []map[string]any // what GET /command reports
+	itemPath      string           // path manualimport reports for every file (default inside the download folder)
+	queueItems    []map[string]any // what GET /queue reports (default: empty)
+	manualQueries []string         // raw query of every manualimport request
+	packEps       []int            // episodes the finished download contains
+	seasonEps     map[int]int
+	filesAfter    []sonarr.EpisodeFile
+	existing      map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
+	cmdStatus     string
+	srv           *httptest.Server
 }
 
 func newFake(packEps []int) *fakeSonarr {
@@ -36,9 +41,12 @@ func newFake(packEps []int) *fakeSonarr {
 	mux := http.NewServeMux()
 	js := func(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 	mux.HandleFunc("GET /api/v3/manualimport", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.manualQueries = append(f.manualQueries, r.URL.RawQuery)
+		f.mu.Unlock()
 		var items []map[string]any
 		for _, e := range f.packEps {
-			items = append(items, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 3, "episodes": []map[string]int{{"episodeNumber": e}}})
+			items = append(items, map[string]any{"path": f.itemPathOrDefault(), "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]int{{"episodeNumber": e}}})
 		}
 		js(w, items)
 	})
@@ -78,9 +86,22 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		js(w, fs)
 	})
+	mux.HandleFunc("GET /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
+		if f.cmds == nil {
+			js(w, []any{})
+			return
+		}
+		js(w, f.cmds)
+	})
 	mux.HandleFunc("GET /api/v3/series", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
 	mux.HandleFunc("GET /api/v3/health", func(w http.ResponseWriter, r *http.Request) { js(w, []any{}) })
-	mux.HandleFunc("GET /api/v3/queue", func(w http.ResponseWriter, r *http.Request) { js(w, map[string]any{"records": []any{}}) })
+	mux.HandleFunc("GET /api/v3/queue", func(w http.ResponseWriter, r *http.Request) {
+		if f.queueItems != nil {
+			js(w, map[string]any{"records": f.queueItems})
+			return
+		}
+		js(w, map[string]any{"records": []any{}})
+	})
 	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
 		js(w, []map[string]any{{"guid": "g1", "indexerId": 1, "indexer": "BTN", "title": "Show.S03.1080p.WEB-DL", "size": 20e9,
 			"seeders": 10, "fullSeason": true, "seasonNumber": 3, "rejected": false, "rejections": []string{},
@@ -94,6 +115,13 @@ func newFake(packEps []int) *fakeSonarr {
 	})
 	f.srv = httptest.NewServer(mux)
 	return f
+}
+
+func (f *fakeSonarr) itemPathOrDefault() string {
+	if f.itemPath != "" {
+		return f.itemPath
+	}
+	return "/dl/pack/e.mkv"
 }
 
 type env struct {
@@ -368,5 +396,137 @@ func TestOneOffFinishesOnlyWhenNothingIsRunning(t *testing.T) {
 	v.e.finishOnce()
 	if o := v.e.Once(); o.Active || o.Finished == 0 {
 		t.Fatalf("run should be finished: %+v", o)
+	}
+}
+
+func TestUnverifiableFilesAreHeldUnlessAllowed(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	probeFn = func(store.Instance, string) (bool, string) { return true, "unverified" }
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	got := v.status(t, j.ID)
+	if got.Status != "holding" || !strings.Contains(got.Message, "cannot verify") || len(v.fake.deleted) != 0 {
+		t.Fatalf("unverifiable files must be held, got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+	set := live()
+	set.AllowUnverified = true
+	v.e.advance(context.Background(), v.inst, v.c, set, got, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" || len(v.fake.deleted) != 1 {
+		t.Fatalf("with AllowUnverified the job may proceed, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestFilesOutsideTheDownloadFolderAreHeld(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.itemPath = "/mnt/Media2/TV Shows/Show/Season 03/e.mkv" // a library path, not the download
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	got := v.status(t, j.ID)
+	if got.Status != "holding" || !strings.Contains(got.Message, "outside the download folder") || len(v.fake.deleted) != 0 {
+		t.Fatalf("got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}
+
+func TestBackedUpSonarrDefersDeletionThenProceeds(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	old := time.Now().Add(-20 * time.Minute).UTC().Format(time.RFC3339)
+	v.fake.cmds = []map[string]any{{"id": 1, "name": "ProcessMonitoredDownloads", "status": "started", "started": old}}
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "holding" || !strings.Contains(got.Message, "waiting") || len(v.fake.deleted) != 0 {
+		t.Fatalf("a stuck command must defer deletion, got %s %q", got.Status, got.Message)
+	}
+	// too many imports already queued
+	var q []map[string]any
+	for i := 0; i < 8; i++ {
+		q = append(q, map[string]any{"id": 10 + i, "name": "DownloadedEpisodesScan", "status": "queued"})
+	}
+	v.fake.cmds = q
+	j = v.status(t, j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.deleted) != 0 {
+		t.Fatalf("a deep import queue must defer deletion, got %s %q", got.Status, got.Message)
+	}
+	// a big backlog of completed downloads
+	v.fake.cmds = nil
+	backlog := done(100, 0, "completed")
+	for i := 0; i < 150; i++ {
+		backlog = append(backlog, sonarr.QueueItem{SeriesID: 99, SeasonNumber: 1, Status: "completed", TrackedState: "importPending"})
+	}
+	j = v.status(t, j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, backlog)
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.deleted) != 0 {
+		t.Fatalf("an import backlog must defer deletion, got %s %q", got.Status, got.Message)
+	}
+	// healthy again: proceeds
+	j = v.status(t, j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" || len(v.fake.deleted) != 1 {
+		t.Fatalf("once Sonarr is healthy the job proceeds, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestOnlyOneSeasonImportsAtATime(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	oid, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 2, Season: 1, Title: "Other Show", OldFileIDs: []int{1}})
+	other := store.Job{ID: oid, Status: "importing", ImportCmd: 42}
+	_ = v.st.UpdateJob(other)
+	id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11, 12, 13}})
+	js, _ := v.st.Jobs(true, 10)
+	var j store.Job
+	for _, x := range js {
+		if x.ID == id {
+			j = x
+		}
+	}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, id); got.Status != "holding" || !strings.Contains(got.Message, "Other Show") || len(v.fake.deleted) != 0 {
+		t.Fatalf("must wait for the other season, got %s %q", got.Status, got.Message)
+	}
+}
+
+func TestApproveRespectsTheSameGate(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Time{})
+	j.Status = "ready"
+	_ = v.st.UpdateJob(j)
+	v.fake.cmds = []map[string]any{{"id": 1, "name": "ProcessMonitoredDownloads", "status": "started",
+		"started": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)}}
+	v.fake.queueItems = []map[string]any{{"seriesId": 1, "seasonNumber": 3, "status": "completed", "downloadId": "d", "outputPath": "/dl/pack"}}
+	inst := store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k"}
+	err := v.e.Approve(context.Background(), inst, j)
+	if err == nil || !strings.Contains(err.Error(), "not now") || len(v.fake.deleted) != 0 {
+		t.Fatalf("approve must refuse while Sonarr looks stuck, err=%v deleted=%v", err, v.fake.deleted)
+	}
+}
+
+func TestVerificationListsTheDownloadFolderNeverTheLibrary(t *testing.T) {
+	// Passing seriesId makes real Sonarr list the series' existing library files and ignore the folder,
+	// which silently turned "verify the pack" into "probe files you already have".
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if len(v.fake.manualQueries) == 0 {
+		t.Fatal("no manualimport request was made")
+	}
+	for _, q := range v.fake.manualQueries {
+		if strings.Contains(q, "seriesId") || strings.Contains(q, "seasonNumber") {
+			t.Errorf("manualimport must not be filtered by series: %s", q)
+		}
+		if !strings.Contains(q, "folder=") {
+			t.Errorf("manualimport must list the download's folder: %s", q)
+		}
+	}
+}
+
+func TestItemsOfOtherSeriesInTheFolderAreIgnored(t *testing.T) {
+	v := setup(t, []int{1, 2, 3, 4, 5}) // fake attributes every item to series 1
+	probed := 0
+	probeFn = func(store.Instance, string) (bool, string) { probed++; return true, "ok" }
+	j := v.job(t, time.Time{})
+	j.SeriesID = 2 // a different series: none of the folder's items belong to this job
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{{SeriesID: 2, SeasonNumber: 3, Size: 100, Status: "completed", DownloadID: "d", OutputPath: "/dl/pack"}})
+	if probed != 0 || len(v.fake.deleted) != 0 {
+		t.Fatalf("files of another series must not count: probed=%d deleted=%v", probed, v.fake.deleted)
 	}
 }

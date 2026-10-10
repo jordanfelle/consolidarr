@@ -196,6 +196,7 @@ export default function SettingsPage() {
             <Toggle label="Run the scheduler" hint="Scans on a timer, finds season packs and replaces seasons across every enabled instance." v={s.schedulerEnabled} on={(b) => setS({ ...s, schedulerEnabled: b })} />
             <Toggle label="Dry run" hint="Log what would be grabbed instead of grabbing it. Start here." v={s.dryRun} on={(b) => setS({ ...s, dryRun: b })} />
             <Toggle label="Delete old files automatically once verified" hint="Off = verified jobs wait on the Replacements page for you to approve." v={s.autoDelete} on={(b) => setS({ ...s, autoDelete: b })} />
+            <Toggle label="Allow deleting when files can't be verified" hint="Off (recommended): if ffprobe can't read the downloaded files, the job is held and nothing is deleted. Turn on only if you can't mount the download directory." v={s.allowUnverified} on={(b) => setS({ ...s, allowUnverified: b })} />
             <Toggle label="Include anime" v={s.includeAnime} on={(b) => setS({ ...s, includeAnime: b })} />
             <div className="grid gap-3 md:grid-cols-3">
               <div><label className="label">Max packs in flight</label><input className="input" type="number" value={s.maxInflight} onChange={num("maxInflight")} /></div>
