@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Boxes, Layers, ListChecks, LogOut, Settings as Cog } from "lucide-react";
+import { Activity, AlertTriangle, Boxes, Layers, ListChecks, LogOut, Settings as Cog } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api } from "./api";
+import AttentionPage from "./pages/Attention";
 import Dashboard from "./pages/Dashboard";
 import Events from "./pages/Events";
 import Jobs from "./pages/Jobs";
@@ -41,6 +42,7 @@ const nav = [
   { to: "/", label: "Dashboard", icon: Activity },
   { to: "/seasons", label: "Seasons", icon: Layers },
   { to: "/jobs", label: "Replacements", icon: ListChecks },
+  { to: "/attention", label: "Needs attention", icon: AlertTriangle },
   { to: "/events", label: "Activity", icon: Activity },
   { to: "/settings", label: "Settings", icon: Cog },
 ];
@@ -75,6 +77,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/seasons" element={<SeasonsPage />} />
           <Route path="/jobs" element={<Jobs />} />
+          <Route path="/attention" element={<AttentionPage />} />
           <Route path="/events" element={<Events />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" />} />

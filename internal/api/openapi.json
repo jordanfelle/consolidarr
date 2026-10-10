@@ -585,6 +585,120 @@
       }
      }
     }
+   },
+   "RemoveOptions": {
+    "type": "object",
+    "properties": {
+     "blocklist": {
+      "type": "boolean"
+     },
+     "deleteFiles": {
+      "type": "boolean"
+     },
+     "research": {
+      "type": "boolean"
+     }
+    }
+   },
+   "AttentionList": {
+    "type": "object",
+    "properties": {
+     "items": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Attention"
+      }
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   "Attention": {
+    "type": "object",
+    "properties": {
+     "instId": {
+      "type": "integer"
+     },
+     "instance": {
+      "type": "string"
+     },
+     "seriesId": {
+      "type": "integer"
+     },
+     "series": {
+      "type": "string"
+     },
+     "season": {
+      "type": "integer"
+     },
+     "pack": {
+      "type": "string"
+     },
+     "indexer": {
+      "type": "string"
+     },
+     "sizeGB": {
+      "type": "number"
+     },
+     "items": {
+      "type": "integer"
+     },
+     "queueIds": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "downloadId": {
+      "type": "string"
+     },
+     "outputPath": {
+      "type": "string"
+     },
+     "state": {
+      "type": "string"
+     },
+     "haveFiles": {
+      "type": "integer"
+     },
+     "aired": {
+      "type": "integer"
+     },
+     "reasons": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "kind": {
+         "type": "string",
+         "enum": [
+          "not_upgrade",
+          "already_imported",
+          "id_match",
+          "not_in_release",
+          "destination_exists",
+          "sample",
+          "unknown_series",
+          "other"
+         ]
+        },
+        "count": {
+         "type": "integer"
+        },
+        "example": {
+         "type": "string"
+        },
+        "hint": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
    }
   }
  },
@@ -2576,6 +2690,514 @@
      },
      "401": {
       "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/attention": {
+   "get": {
+    "tags": [
+     "recovery"
+    ],
+    "summary": "Downloaded packs stuck in Sonarr's queue that no active job owns",
+    "description": "Seasons whose download Sonarr will not import by itself (not an upgrade, already imported, matched by id, ...). Each has plain-language reasons and hints. Use adopt, retry or remove to resolve them.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AttentionList"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/attention/{inst}/{series}/{season}/adopt": {
+   "post": {
+    "tags": [
+     "recovery"
+    ],
+    "summary": "Adopt a stuck download as a replacement job",
+    "description": "Records the season's current files as the ones to replace and runs one verification pass immediately. It then follows every rule a grabbed job does (ffprobe, episode coverage, dry run / manual approval, import-health gate), so nothing is deleted unchecked.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "201": {
+      "description": "Created",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Job"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No stuck download for that season",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/attention/{inst}/{series}/{season}/retry": {
+   "post": {
+    "tags": [
+     "recovery"
+    ],
+    "summary": "Ask Sonarr to import the stuck download again",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "202": {
+      "description": "Started",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "commandId": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No stuck download for that season",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/attention/{inst}/{series}/{season}/remove": {
+   "post": {
+    "tags": [
+     "recovery"
+    ],
+    "summary": "Remove a stuck pack from Sonarr's queue",
+    "description": "Library files are never touched. `deleteFiles` also deletes the download from the download client; `blocklist` stops this release being grabbed again; `research` then searches the season again.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "inst",
+      "in": "path",
+      "required": true,
+      "description": "Instance id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "series",
+      "in": "path",
+      "required": true,
+      "description": "Sonarr series id",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "season",
+      "in": "path",
+      "required": true,
+      "description": "Season number",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RemoveOptions"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "removed": {
+           "type": "integer"
+          },
+          "searched": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed body or unknown field",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No stuck download for that season",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/jobs/{id}/retry": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Re-evaluate a held, failed or lost job now",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Job"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "The job is importing or done",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/jobs/{id}/reject": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Reject a job's bad pack: remove it, blocklist the release, optionally search again",
+    "description": "Your existing library files are never touched. The job ends as failed.",
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": false,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "research": {
+          "type": "boolean",
+          "default": true
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Job"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "The job is importing or done",
       "content": {
        "application/json": {
         "schema": {
