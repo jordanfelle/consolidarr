@@ -1,6 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0d12;
+  --color-panel: #12151c;
+  --color-line: #232834;
+  --color-muted: #8b93a5;
+  --color-accent: #6d8bff;
+  --color-good: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+}
+
 
 body { @apply bg-bg text-slate-200 antialiased; font-family: ui-sans-serif, system-ui, sans-serif; }
 .card { @apply rounded-lg border border-line bg-panel; }
