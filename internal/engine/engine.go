@@ -22,6 +22,9 @@ import (
 type Engine struct {
 	St *store.Store
 
+	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
+	instMu locks // one season per instance is deleted-and-imported at a time
+
 	mu       sync.Mutex
 	scanning map[int64]bool
 	runNow   chan struct{}
@@ -241,6 +244,9 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 
 // Grab records the season's current files, grabs the release and starts tracking a job.
 func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer string) (int64, error) {
+	if e.St.ActiveJob(inst.ID, s.SeriesID, s.Season) {
+		return 0, store.ErrDuplicate
+	}
 	c := client(inst)
 	files, err := c.EpisodeFiles(ctx, s.SeriesID)
 	if err != nil {
@@ -395,7 +401,10 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		return rows[i].Score > rows[j].Score
 	})
-	queue, _ := c.Queue(ctx, time.Minute)
+	queue, qerr := c.Queue(ctx, time.Minute)
+	if qerr != nil {
+		return false // an unreadable queue is not an empty one; regrabbing seasons already downloading would waste data
+	}
 	for _, r := range rows {
 		if limitHit() {
 			return true
@@ -458,48 +467,27 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 	}
 }
 
-func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j store.Job, queue []sonarr.QueueItem) {
-	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
-	if j.Status == "importing" {
-		cmd, err := c.Command(ctx, j.ImportCmd)
-		if err != nil || (cmd.Status != "completed" && cmd.Status != "failed") {
-			return
-		}
-		files, _ := c.EpisodeFiles(ctx, j.SeriesID)
-		n, fresh := 0, true
-		old := map[int]bool{}
-		for _, id := range j.OldFileIDs {
-			old[id] = true
-		}
-		for _, f := range files {
-			if f.SeasonNumber == j.Season {
-				n++
-				if old[f.ID] {
-					fresh = false
-				}
-			}
-		}
-		if n > 0 && fresh {
-			j.Status, j.Message = "done", fmt.Sprintf("%d files imported", n)
-			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
-			e.St.Event("info", fmt.Sprintf("done %s: %d files imported", label, n))
-			e.rescanSeries(ctx, inst, j.SeriesID)
-		} else {
-			j.Status, j.Message = "failed", fmt.Sprintf("import finished with %d files (%s %s)", n, cmd.Status, cmd.Message)
-			e.St.Event("error", fmt.Sprintf("%s: %s", label, j.Message))
-		}
-		_ = e.St.UpdateJob(j)
+func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j0 store.Job, queue []sonarr.QueueItem) {
+	defer e.jobMu.lock(j0.ID)()
+	// Re-read under the lock: the snapshot the caller holds may be minutes old (a cycle works through many jobs)
+	// and a concurrent approve/retry may have moved the job on.
+	j, err := e.St.Job(j0.ID)
+	if err != nil {
 		return
 	}
-	var mine []sonarr.QueueItem
-	for _, q := range queue {
-		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season {
-			mine = append(mine, q)
-		}
+	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	switch j.Status {
+	case "done", "failed", "lost":
+		return
+	case "importing":
+		e.finishImport(ctx, inst, c, &j, queue)
+		return
 	}
+	mine := ownedItems(queue, &j)
 	if len(mine) == 0 {
 		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
-			j.Status, j.Message = "lost", "no longer in Sonarr's queue; old files untouched"
+			j.Status = "lost"
+			j.Message = "no longer in Sonarr's queue; old files untouched"
 			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 24*time.Hour, "lost")
 			e.St.Event("warn", label+": "+j.Message)
 			_ = e.St.UpdateJob(j)
@@ -515,99 +503,33 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 	}
 	if left > 0 || !done {
-		j.Status, j.Progress = "downloading", int(100-100*left/maxf(size, 1))
-		_ = e.St.UpdateJob(j)
+		prog := int(100 - 100*left/maxf(size, 1))
+		switch {
+		case j.Status != "downloading" || j.Progress != prog || j.DownloadID == "":
+			j.Status, j.Progress = "downloading", prog // an unchanged job is not rewritten, so `updated` means "last progress"
+			_ = e.St.UpdateJob(j)
+		case time.Since(time.Unix(j.Updated, 0)) > stallAfter:
+			j.Status, j.Message = "failed", fmt.Sprintf("the download has not moved for %d hours (%d%%); your files were not touched", int(stallAfter.Hours()), prog)
+			e.St.Event("warn", label+": "+j.Message)
+			_ = e.St.UpdateJob(j)
+		}
 		return
 	}
 	// finished downloading: verify before touching anything
-	folder := mine[0].OutputPath
-	var items []sonarr.ManualImportItem
-	var err error
-	if folder != "" {
-		items, err = c.ManualImportFolder(ctx, folder)
-	} else {
-		items, err = c.ManualImport(ctx, mine[0].DownloadID)
-	}
-	if err != nil {
+	v := e.verify(ctx, inst, c, set, &j, mine)
+	switch v.State {
+	case "retry":
 		return
-	}
-	packEps := map[int]bool{}
-	var bad []string
-	var outside, used, probed int
-	unreachable := ""
-	for _, it := range items {
-		if it.SeasonNumber != j.Season || (it.Series.ID != 0 && it.Series.ID != j.SeriesID) {
-			continue
-		}
-		// every file must live inside the download folder; library paths mean we are looking at the wrong thing
-		if folder != "" && it.Path != folder && !strings.HasPrefix(it.Path, strings.TrimRight(folder, "/")+"/") {
-			outside++
-			continue
-		}
-		used++
-		for _, ep := range it.Episodes {
-			packEps[ep.EpisodeNumber] = true
-		}
-		ok, why := probeFn(inst, it.Path)
-		switch {
-		case why == "unverified":
-			if unreachable == "" {
-				unreachable = it.Path
-			}
-		case !ok:
-			bad = append(bad, why)
-		default:
-			probed++
-		}
-	}
-	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
-	if err != nil {
-		return
-	}
-	old := map[int]bool{}
-	for _, id := range j.OldFileIDs {
-		old[id] = true
-	}
-	var missing []int
-	for _, ep := range eps {
-		if old[ep.EpisodeFileID] && !packEps[ep.EpisodeNumber] {
-			missing = append(missing, ep.EpisodeNumber)
-		}
-	}
-	var block string // only computed when we are otherwise ready to delete
-	switch {
-	case len(bad) > 0:
-		j.Status, j.Message = "holding", "failed probe: "+strings.Join(bad[:min(len(bad), 2)], "; ")
-	case outside > 0:
-		j.Status, j.Message = "holding", fmt.Sprintf("%d files are outside the download folder %s; not touching your files", outside, folder)
-	case used == 0:
-		j.Status, j.Message = "holding", "no importable files found in the download folder"
-	case len(missing) > 0:
-		j.Status, j.Message = "holding", fmt.Sprintf("pack is missing episodes %v that you have today", missing)
-	case unreachable != "" && !set.AllowUnverified:
-		j.Status, j.Message = "holding", fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", unreachable)
-	case set.DryRun || !set.AutoDelete:
-		j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", probed)
+	case "hold":
+		j.Status, j.Message = "holding", v.Message
 	default:
-		if block = e.pipelineBlock(ctx, inst, c, queue, j); block != "" {
-			j.Status, j.Message = "holding", "waiting: "+block
-			break
+		switch {
+		case set.DryRun || !set.AutoDelete:
+			j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", v.Probed)
+		default:
+			e.replace(ctx, inst, c, &j, v, queue, "automatic")
+			return
 		}
-		if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
-			j.Status, j.Message = "holding", "delete failed: "+err.Error()
-			break
-		}
-		id, err := c.ImportDownload(ctx, mine[0].OutputPath, mine[0].DownloadID)
-		if err != nil {
-			j.Status, j.Message = "failed", fmt.Sprintf("old files deleted but import command failed: %v", err)
-			e.St.Event("error", label+": "+j.Message)
-			break
-		}
-		j.Status, j.ImportCmd, j.Message = "importing", id, fmt.Sprintf("old files deleted, import running (%d files probed)", probed)
-		if unreachable != "" {
-			j.Message += "; some files could not be probed (allowed in Settings)"
-		}
-		e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started", label, len(j.OldFileIDs)))
 	}
 	_ = e.St.UpdateJob(j)
 }
@@ -695,31 +617,46 @@ func removeOld(ctx context.Context, c *sonarr.Client, seriesID int, old []int) e
 	return c.DeleteEpisodeFiles(ctx, ids)
 }
 
-// Approve lets the user push a verified "ready" job through delete+import regardless of dry-run.
-func (e *Engine) Approve(ctx context.Context, inst store.Instance, j store.Job) error {
+// Approve lets the user push a verified "ready" job through delete+import regardless of dry-run. The job is
+// verified again from scratch first: it may have been "ready" for hours, and the download, the files or Sonarr's
+// state can have changed since.
+func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job) error {
+	defer e.jobMu.lock(j0.ID)()
+	j, err := e.St.Job(j0.ID)
+	if err != nil {
+		return err
+	}
+	if j.Status != "ready" {
+		return fmt.Errorf("job is %s; only verified 'ready' jobs can be approved", j.Status)
+	}
 	c := client(inst)
 	queue, err := c.Queue(ctx, time.Minute)
 	if err != nil {
 		return err
 	}
-	for _, q := range queue {
-		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season {
-			if why := e.pipelineBlock(ctx, inst, c, queue, j); why != "" {
-				return fmt.Errorf("not now: %s", why)
-			}
-			if err := removeOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
-				return err
-			}
-			id, err := c.ImportDownload(ctx, q.OutputPath, q.DownloadID)
-			if err != nil {
-				return err
-			}
-			j.Status, j.ImportCmd, j.Message = "importing", id, "approved: old files deleted, import running"
-			e.St.Event("info", fmt.Sprintf("%s S%02d: approved manually, import started", j.Title, j.Season))
-			return e.St.UpdateJob(j)
+	mine := ownedItems(queue, &j)
+	if len(mine) == 0 {
+		return fmt.Errorf("download is no longer in Sonarr's queue")
+	}
+	for _, q := range mine {
+		if q.SizeLeft > 0 || q.Status != "completed" {
+			return fmt.Errorf("the download is not complete")
 		}
 	}
-	return fmt.Errorf("download is no longer in Sonarr's queue")
+	v := e.verify(ctx, inst, c, e.St.Settings(), &j, mine)
+	switch v.State {
+	case "retry":
+		return fmt.Errorf("could not re-verify the download just now; try again")
+	case "hold":
+		j.Status, j.Message = "holding", v.Message
+		_ = e.St.UpdateJob(j)
+		return fmt.Errorf("not safe to replace: %s", v.Message)
+	}
+	e.replace(ctx, inst, c, &j, v, queue, "approved manually")
+	if j.Status != "importing" {
+		return fmt.Errorf("not now: %s", strings.TrimPrefix(j.Message, "waiting: "))
+	}
+	return nil
 }
 
 func maxf(a, b float64) float64 {
@@ -735,10 +672,7 @@ var probeFn = probe
 // probe checks a file with ffprobe through the instance's path mapping.
 // why == "unverified" means ffprobe or the file isn't reachable (not an error).
 func probe(inst store.Instance, path string) (ok bool, why string) {
-	local := path
-	if inst.PathFrom != "" && strings.HasPrefix(path, inst.PathFrom) {
-		local = inst.PathTo + strings.TrimPrefix(path, inst.PathFrom)
-	}
+	local := mapPath(inst, path)
 	if _, err := os.Stat(local); err != nil {
 		return true, "unverified"
 	}
@@ -746,7 +680,9 @@ func probe(inst store.Instance, path string) (ok bool, why string) {
 		return true, "unverified"
 	}
 	var stdout, stderr strings.Builder
-	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", local)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second) // a hung NFS read must not stall every job
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", local)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil || strings.Contains(stderr.String(), "encv") {
 		return false, fmt.Sprintf("%s: unreadable or DRM-encrypted", baseName(local))
@@ -761,6 +697,16 @@ func probe(inst store.Instance, path string) (ok bool, why string) {
 		return false, baseName(local) + ": no decodable video stream"
 	}
 	return true, "ok"
+}
+
+// mapPath translates a path as Sonarr sees it into the path consolidarr sees, respecting directory boundaries
+// (/data/tvx is not under /data/tv).
+func mapPath(inst store.Instance, path string) string {
+	from := strings.TrimRight(inst.PathFrom, "/")
+	if from != "" && (path == from || strings.HasPrefix(path, from+"/")) {
+		return strings.TrimRight(inst.PathTo, "/") + strings.TrimPrefix(path, from)
+	}
+	return path
 }
 
 func baseName(p string) string {

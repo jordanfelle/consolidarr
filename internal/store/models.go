@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -98,15 +100,18 @@ type Job struct {
 	ImportCmd  int     `json:"importCmd"`
 	Created    int64   `json:"created"`
 	Updated    int64   `json:"updated"`
+	Deleted    int64   `json:"deleted"`    // unix time the old files began to be deleted; 0 = never (nothing was touched)
+	DownloadID string  `json:"downloadId"` // the download client hash this job owns
+	Expected   int     `json:"expected"`   // episodes the pack must supply for the season to count as replaced
 }
 
-const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated`
+const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected`
 
 func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var old string
 	err := sc.Scan(&j.ID, &j.InstID, &j.SeriesID, &j.Season, &j.Title, &old, &j.Release, &j.Indexer, &j.SizeGB,
-		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated)
+		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected)
 	_ = json.Unmarshal([]byte(old), &j.OldFileIDs)
 	return j, err
 }
@@ -133,18 +138,51 @@ func (s *Store) Jobs(active bool, limit int) ([]Job, error) {
 	return out, rows.Err()
 }
 
+// ErrDuplicate means the season already has an unfinished job.
+var ErrDuplicate = errors.New("this season already has an active replacement")
+
+// activeStatuses are the job states that still own their season.
+const activeStatuses = `('downloading','ready','holding','importing')`
+
+// Job returns one job by id.
+func (s *Store) Job(id int64) (Job, error) {
+	j, err := scanJob(s.QueryRow(`select `+jobCols+` from jobs where id=?`, id))
+	if err == sql.ErrNoRows {
+		return Job{}, ErrNotFound
+	}
+	return j, err
+}
+
+// ActiveJob reports whether the season already has an unfinished job.
+func (s *Store) ActiveJob(instID int64, seriesID, season int) bool {
+	var n int
+	_ = s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and status in `+activeStatuses, instID, seriesID, season).Scan(&n)
+	return n > 0
+}
+
+// AddJob records a new job. A season can have only one unfinished job, so a double click, a second grab or an
+// adopt racing the scheduler cannot create two jobs that would both delete the same files.
 func (s *Store) AddJob(j Job) (int64, error) {
+	var n int
+	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and status in `+activeStatuses,
+		j.InstID, j.SeriesID, j.Season).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		return 0, ErrDuplicate
+	}
 	old, _ := json.Marshal(j.OldFileIDs)
 	now := time.Now().Unix()
-	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated)
-		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
-		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, "downloading", "", 0, 0, now, now).Scan(&j.ID)
+	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,download_id)
+		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
+		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, "downloading", "", 0, 0, now, now, j.DownloadID).Scan(&j.ID)
 	return j.ID, err
 }
 
+// UpdateJob saves a job's mutable state.
 func (s *Store) UpdateJob(j Job) error {
-	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,updated=? where id=?`,
-		j.Status, j.Message, j.Progress, j.ImportCmd, time.Now().Unix(), j.ID)
+	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,deleted=?,download_id=?,expected=?,updated=? where id=?`,
+		j.Status, j.Message, j.Progress, j.ImportCmd, j.Deleted, j.DownloadID, j.Expected, time.Now().Unix(), j.ID)
 	return err
 }
 

@@ -39,6 +39,10 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no stuck download for that season (it may already be handled)")
 		return
 	}
+	if err == store.ErrDuplicate {
+		fail(w, 409, err.Error())
+		return
+	}
 	if err != nil {
 		fail(w, 502, err.Error())
 		return

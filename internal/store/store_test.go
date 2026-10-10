@@ -106,3 +106,37 @@ func TestSeasonsPerInstanceAndJobs(t *testing.T) {
 		t.Fatal("skip window")
 	}
 }
+
+func TestAnExistingDatabaseIsMigratedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	// A database created by the first release: a jobs table without the later columns, and no schema version.
+	raw, err := sql.Open("sqlite", "file:"+dir+"/consolidarr.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`create table jobs(id integer primary key, inst_id bigint not null, series_id bigint not null, season bigint not null,
+		title text not null, old_file_ids text not null, release text not null, indexer text not null, size_gb double precision not null,
+		status text not null, message text not null default '', progress bigint not null default 0, import_cmd bigint not null default 0,
+		created bigint not null, updated bigint not null)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = raw.Exec(`insert into jobs values(1,1,1,3,'Old','[1,2]','r','i',1.5,'importing','m',0,7,100,100)`)
+	raw.Close()
+
+	st, err := Open(dir, "")
+	if err != nil {
+		t.Fatalf("opening a v1 database must migrate it, not fail: %v", err)
+	}
+	j, err := st.Job(1)
+	if err != nil || j.Title != "Old" || j.ImportCmd != 7 || j.Deleted != 0 || j.Expected != 0 {
+		t.Fatalf("existing rows must survive with the new columns defaulted: %+v err=%v", j, err)
+	}
+	if _, err := st.AddJob(Job{InstID: 1, SeriesID: 2, Season: 1, Title: "new", DownloadID: "abc"}); err != nil {
+		t.Fatalf("the new columns must be writable: %v", err)
+	}
+	st.DB.Close()
+	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "3" {
+		t.Fatalf("reopening must be a no-op at version 3, got version %q err=%v", st2.KV("schema_version"), err)
+	}
+}

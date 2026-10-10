@@ -224,12 +224,25 @@ func (c *Client) Grab(ctx context.Context, guid string, indexerID int) error {
 	return c.do(ctx, "POST", "/release", map[string]any{"guid": guid, "indexerId": indexerID}, nil, 3*time.Minute)
 }
 
-func (c *Client) Queue(ctx context.Context, timeout time.Duration) (out []QueueItem, err error) {
-	var q struct {
-		Records []QueueItem `json:"records"`
+// Queue returns every item in Sonarr's download queue, following pagination. Reading only the first page would
+// make jobs beyond it look "lost" and let the scheduler regrab seasons that are already downloading.
+func (c *Client) Queue(ctx context.Context, timeout time.Duration) ([]QueueItem, error) {
+	const pageSize = 500
+	var all []QueueItem
+	for page := 1; page <= 200; page++ {
+		var q struct {
+			TotalRecords int         `json:"totalRecords"`
+			Records      []QueueItem `json:"records"`
+		}
+		if err := c.do(ctx, "GET", fmt.Sprintf("/queue?page=%d&pageSize=%d", page, pageSize), nil, &q, timeout); err != nil {
+			return nil, err
+		}
+		all = append(all, q.Records...)
+		if len(q.Records) < pageSize || (q.TotalRecords > 0 && len(all) >= q.TotalRecords) {
+			break
+		}
 	}
-	err = c.do(ctx, "GET", "/queue?pageSize=1000", nil, &q, timeout)
-	return q.Records, err
+	return all, nil
 }
 
 func (c *Client) Health(ctx context.Context) (out []Health, err error) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,7 +93,30 @@ func Open(dir, databaseURL string) (*Store, error) {
 			return nil, fmt.Errorf("schema: %w", err)
 		}
 	}
+	if err := st.migrate(); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	_, _ = st.Exec(`delete from sessions where expires < ?`, time.Now().Unix()) // expired sessions are dead weight
 	return st, nil
+}
+
+// migrations run once each, in order, after the base schema. The schema_version key records how many have been
+// applied, so an existing database picks up new columns instead of breaking. Append only; never edit an entry.
+var migrations = []string{
+	`alter table jobs add column deleted bigint not null default 0`,    // unix time the old files started being deleted
+	`alter table jobs add column download_id text not null default ''`, // the download client hash this job owns
+	`alter table jobs add column expected bigint not null default 0`,   // episodes the pack must supply
+}
+
+func (s *Store) migrate() error {
+	v, _ := strconv.Atoi(s.KV("schema_version"))
+	for i := v; i < len(migrations); i++ {
+		if _, err := s.DB.Exec(migrations[i]); err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+		s.SetKV("schema_version", strconv.Itoa(i+1))
+	}
+	return nil
 }
 
 type Settings struct {

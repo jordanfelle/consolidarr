@@ -30,6 +30,10 @@ type fakeSonarr struct {
 	imports       int
 	grabs         int
 	searches      [][2]int         // SeasonSearch commands (series, season)
+	onDelete      func()           // called as a delete request arrives, before it is recorded
+	failImport    int              // fail this many import commands with a 500
+	noEpisodes    bool             // GET /episode returns nothing
+	rejections    map[int][]string // manualimport rejection reasons by episode number
 	removed       []removal        // queue removals
 	series        []map[string]any // what GET /series reports (default: empty)
 	cmds          []map[string]any // what GET /command reports
@@ -55,11 +59,20 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Unlock()
 		var items []map[string]any
 		for _, e := range f.packEps {
-			items = append(items, map[string]any{"path": f.itemPathOrDefault(), "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]int{{"episodeNumber": e}}})
+			rej := []map[string]string{}
+			for _, reason := range f.rejections[e] {
+				rej = append(rej, map[string]string{"reason": reason})
+			}
+			items = append(items, map[string]any{"path": f.itemPathOrDefault(), "seasonNumber": 3, "series": map[string]int{"id": 1},
+				"episodes": []map[string]int{{"episodeNumber": e}}, "rejections": rej})
 		}
 		js(w, items)
 	})
 	mux.HandleFunc("GET /api/v3/episode", func(w http.ResponseWriter, r *http.Request) {
+		if f.noEpisodes {
+			js(w, []any{})
+			return
+		}
 		var eps []map[string]int
 		for n, id := range f.seasonEps {
 			eps = append(eps, map[string]int{"episodeNumber": n, "episodeFileId": id})
@@ -72,6 +85,9 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
+		if f.onDelete != nil {
+			f.onDelete()
+		}
 		f.deleted = append(f.deleted, b.EpisodeFileIDs)
 		f.mu.Unlock()
 	})
@@ -83,6 +99,12 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
+		if b.Name != "SeasonSearch" && f.failImport > 0 {
+			f.failImport--
+			f.mu.Unlock()
+			http.Error(w, "import refused", 500)
+			return
+		}
 		if b.Name == "SeasonSearch" {
 			f.searches = append(f.searches, [2]int{b.SeriesID, b.SeasonNumber})
 		} else {
@@ -316,8 +338,15 @@ func TestImportCompletionMarksDoneOnlyWithFreshFiles(t *testing.T) {
 	_ = v.st.UpdateJob(j)
 	v.fake.filesAfter, v.fake.existing = nil, map[int]bool{}
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("a fresh import gets time to settle before it is called failed, got %s", got.Status)
+	}
+	j = v.status(t, j.ID)
+	j.Deleted = time.Now().Add(-time.Hour).Unix() // the old files were deleted an hour ago and nothing has appeared
+	_ = v.st.UpdateJob(j)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "failed" {
-		t.Fatalf("empty season after import must be failed, got %s", got.Status)
+		t.Fatalf("an empty season an hour after import must be failed, got %s", got.Status)
 	}
 }
 
