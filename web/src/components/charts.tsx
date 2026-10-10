@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // ---- helpers ---------------------------------------------------------------------------------------------------
 
@@ -23,14 +23,19 @@ export function niceTicks(max: number, count = 4): number[] {
 
 function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [w, setW] = useState(600);
-  useEffect(() => {
-    if (!ref.current) return;
-    const ro = new ResizeObserver(([e]) => setW(Math.max(240, Math.floor(e.contentRect.width))));
-    ro.observe(ref.current);
+  const [w, setW] = useState(0);
+  // Measure synchronously before the first paint so a chart is never drawn at a guessed width (it would overflow a
+  // phone-sized card), then keep following the container.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const set = () => setW(Math.max(240, Math.floor(el.clientWidth)));
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  return [ref, w];
+  return [ref, w || 320];
 }
 
 const fmtTime = (t: number, span: number) => {

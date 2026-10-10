@@ -195,7 +195,7 @@ func (s *Store) Mess(minFiles int, includeAnime bool, top int) ([]Bucket, []Offe
 	edges := []struct {
 		label  string
 		lo, hi int
-	}{{"1–2 groups", 1, 2}, {"3–4", 3, 4}, {"5–6", 5, 6}, {"7+", 7, 1 << 30}}
+	}{{"1–2", 1, 2}, {"3–4", 3, 4}, {"5–6", 5, 6}, {"7 or more", 7, 1 << 30}}
 	buckets := make([]Bucket, len(edges))
 	for i, e := range edges {
 		buckets[i].Label = e.label
