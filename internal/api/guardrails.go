@@ -44,8 +44,8 @@ func ParseAllowedHosts(s string) map[string]bool {
 //     per deployment).
 func (a *API) browserGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(a.AllowedHosts) > 0 && r.URL.Path != "/healthz" && !a.AllowedHosts[hostOnly(r.Host)] {
-			fail(w, 421, "host not allowed (see CONSOLIDARR_ALLOWED_HOSTS)")
+		if r.URL.Path != "/healthz" && !a.hostAllowed(r.Host) {
+			fail(w, 421, "host not allowed (set CONSOLIDARR_ALLOWED_HOSTS to the name you browse to)")
 			return
 		}
 		switch r.Method {
@@ -58,6 +58,21 @@ func (a *API) browserGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hostAllowed applies the Host allowlist. With an explicit list, only those names pass. Without one, a server
+// that has login disabled still refuses ordinary multi-label DNS names, because a rebinding attacker's page can
+// only be served from a name they own (always dotted), while people reach a LAN service by IP address,
+// localhost or a single-label hostname. Set the allowlist to use a dotted name (for example behind Cloudflare).
+func (a *API) hostAllowed(host string) bool {
+	h := hostOnly(host)
+	if len(a.AllowedHosts) > 0 {
+		return a.AllowedHosts[h]
+	}
+	if !a.AuthDisabled {
+		return true // login is required, so a rebound page has no credentials to ride on
+	}
+	return net.ParseIP(h) != nil || !strings.Contains(h, ".")
 }
 
 func (a *API) sameOrigin(r *http.Request) bool {
@@ -74,8 +89,9 @@ func (a *API) sameOrigin(r *http.Request) bool {
 	if err != nil || u.Host == "" {
 		return false // includes the literal "null" origin of sandboxed frames
 	}
-	h := hostOnly(u.Host)
-	return h == hostOnly(r.Host) || h == hostOnly(r.Header.Get("X-Forwarded-Host")) || a.AllowedHosts[h]
+	// Compare host and port, not just the name: another service on the same machine is a different origin.
+	h := strings.ToLower(u.Host)
+	return h == strings.ToLower(r.Host) || h == strings.ToLower(r.Header.Get("X-Forwarded-Host")) || a.TrustedOrigins[h] || a.TrustedOrigins[hostOnly(h)]
 }
 
 // loginLimiter slows password guessing: after too many failures for a username, or from one address, further
@@ -107,37 +123,39 @@ func (l *loginLimiter) prune(k string, now time.Time) []time.Time {
 	return keep
 }
 
-func (l *loginLimiter) blocked(user, addr string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	return len(l.prune("u:"+user, now)) >= loginPerUser || len(l.prune("a:"+addr, now)) >= loginPerAddr
-}
-
-func (l *loginLimiter) fail(user, addr string) {
+// reserve checks the budget and counts this attempt in one step, before the password is compared, so a burst
+// of parallel guesses cannot all slip past the check. It reports false when the caller must be refused.
+func (l *loginLimiter) reserve(user, addr string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.hits == nil {
 		l.hits = map[string][]time.Time{}
 	}
-	if len(l.hits) > 10000 { // bound memory against a flood of made-up usernames
-		now := time.Now()
+	now := time.Now()
+	if len(l.prune("u:"+user, now)) >= loginPerUser || len(l.prune("a:"+addr, now)) >= loginPerAddr {
+		return false
+	}
+	if len(l.hits) > 10000 { // bound memory against a flood of made-up usernames: drop expired keys only
 		for k := range l.hits {
 			l.prune(k, now)
 		}
 		if len(l.hits) > 10000 {
-			l.hits = map[string][]time.Time{}
+			return true // full of live entries: let this attempt through uncounted rather than evict the admin's
 		}
 	}
-	now := time.Now()
 	l.hits["u:"+user] = append(l.hits["u:"+user], now)
 	l.hits["a:"+addr] = append(l.hits["a:"+addr], now)
+	return true
 }
 
-func (l *loginLimiter) ok(user string) {
+// succeed forgets the user's failures and gives back the address slot this attempt used.
+func (l *loginLimiter) succeed(user, addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.hits, "u:"+user)
+	if a := l.hits["a:"+addr]; len(a) > 0 {
+		l.hits["a:"+addr] = a[:len(a)-1]
+	}
 }
 
 func remoteAddr(r *http.Request) string {

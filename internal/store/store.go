@@ -178,6 +178,11 @@ func (s *Store) migrate() error {
 	} else {
 		_, _ = s.DB.Exec(`drop index if exists jobs_one_active`) // superseded (it did not cover 'reserving'); only dropped once its replacement exists
 	}
+	// At most one account, enforced by the database: setup's "insert if none exists" is not atomic under
+	// Postgres's READ COMMITTED, so this index is what stops two racing setups from both winning.
+	if _, err := s.DB.Exec(`create unique index if not exists users_single on users((1))`); err != nil {
+		log.Printf("WARNING: could not enforce a single account (%v)", err)
+	}
 	return nil
 }
 

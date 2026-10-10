@@ -46,9 +46,13 @@ func main() {
 	go func() { defer close(engDone); eng.Start(ctx) }()
 
 	a := &api.API{St: st, Eng: eng, Web: web.FS(), Version: version,
-		AuthDisabled: os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true",
-		CookieSecure: os.Getenv("CONSOLIDARR_COOKIE_SECURE"),
-		AllowedHosts: api.ParseAllowedHosts(os.Getenv("CONSOLIDARR_ALLOWED_HOSTS"))}
+		AuthDisabled:   os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true",
+		CookieSecure:   os.Getenv("CONSOLIDARR_COOKIE_SECURE"),
+		AllowedHosts:   api.ParseAllowedHosts(os.Getenv("CONSOLIDARR_ALLOWED_HOSTS")),
+		TrustedOrigins: api.ParseAllowedHosts(os.Getenv("CONSOLIDARR_TRUSTED_ORIGINS"))}
+	if a.AuthDisabled {
+		log.Print("login is DISABLED: put this behind an authenticating proxy (Cloudflare Access) or keep it on a trusted LAN; dotted host names are refused unless CONSOLIDARR_ALLOWED_HOSTS lists them")
+	}
 	srv := &http.Server{Addr: *addr, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	shut := make(chan struct{})
 	go func() {

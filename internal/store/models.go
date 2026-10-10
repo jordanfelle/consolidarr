@@ -219,7 +219,7 @@ var ErrSetupDone = errors.New("already set up")
 func (s *Store) CreateFirstUser(username, hash string) (int64, error) {
 	var id int64
 	err := s.QueryRow(`insert into users(username,pw_hash) select ?,? where not exists (select 1 from users) returning id`, username, hash).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || (err != nil && isUniqueViolation(err)) {
 		return 0, ErrSetupDone
 	}
 	return id, err

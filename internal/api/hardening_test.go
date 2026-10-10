@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jordanfelle/consolidarr/internal/store"
@@ -12,7 +14,7 @@ import (
 
 func send(h http.Handler, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Host = "consolidarr.lan:7480"
+	r.Host = "consolidarr:7480"
 	for k, v := range hdr {
 		r.Header.Set(k, v)
 	}
@@ -34,7 +36,7 @@ func TestCrossOriginWritesAreRefusedEvenWithAuthDisabled(t *testing.T) {
 		{"cross-site fetch metadata", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403},
 		{"same-site (sibling subdomain)", map[string]string{"Sec-Fetch-Site": "same-site"}, 403},
 		{"null origin", map[string]string{"Origin": "null"}, 403},
-		{"same origin", map[string]string{"Origin": "http://consolidarr.lan:7480", "Sec-Fetch-Site": "same-origin"}, 200},
+		{"same origin", map[string]string{"Origin": "http://consolidarr:7480", "Sec-Fetch-Site": "same-origin"}, 200},
 		{"proxied origin", map[string]string{"Origin": "https://obs.example", "X-Forwarded-Host": "obs.example"}, 200},
 		{"script, no browser headers", nil, 200},
 		{"api key header is not ambient", map[string]string{"Origin": "https://evil.example", "X-API-Key": "csl_whatever"}, 200},
@@ -57,7 +59,7 @@ func TestCrossOriginWritesAreRefusedEvenWithAuthDisabled(t *testing.T) {
 
 func TestAllowedHostsBlockRebinding(t *testing.T) {
 	a, h := newAPI(t)
-	a.AllowedHosts = ParseAllowedHosts("consolidarr.lan, 10.0.0.35")
+	a.AllowedHosts = ParseAllowedHosts("consolidarr, 10.0.0.35")
 	if w := send(h, "GET", "/api/me", "", nil); w.Code == 421 {
 		t.Error("an allowed host (with port) must pass")
 	}
@@ -74,6 +76,77 @@ func TestAllowedHostsBlockRebinding(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("healthz must work for container health checks, got %d", w.Code)
+	}
+}
+
+func TestRebindingNameIsRefusedWhenLoginIsOff(t *testing.T) {
+	a, h := newAPI(t)
+	a.AuthDisabled = true
+	get := func(host string) int {
+		r := httptest.NewRequest("GET", "/api/instances", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for _, host := range []string{"10.0.0.35:7480", "localhost:7480", "prometheus:7480", "[::1]:7480"} {
+		if c := get(host); c != 200 {
+			t.Errorf("%s must work with login off, got %d", host, c)
+		}
+	}
+	for _, host := range []string{"evil.example", "evil.example:7480", "a.b.c"} {
+		if c := get(host); c != 421 {
+			t.Errorf("%s is a dotted name: want 421, got %d", host, c)
+		}
+	}
+	a.AllowedHosts = ParseAllowedHosts("obs.example.com")
+	if c := get("obs.example.com"); c != 200 {
+		t.Errorf("an explicitly allowed dotted name must work, got %d", c)
+	}
+	a.AllowedHosts = nil
+	a.AuthDisabled = false
+	if c := get("evil.example"); c != 401 {
+		t.Errorf("with login on the host is not restricted (401 from auth), got %d", c)
+	}
+}
+
+func TestOriginComparesPortAndTrustedOrigins(t *testing.T) {
+	a, h := newAPI(t)
+	a.AuthDisabled = true
+	w := send(h, "PUT", "/api/settings", `{}`, map[string]string{"Origin": "http://consolidarr:9999"})
+	if w.Code != 403 {
+		t.Errorf("same host, other port is another service: want 403, got %d", w.Code)
+	}
+	a.TrustedOrigins = ParseAllowedHosts("public.example.com")
+	w = send(h, "PUT", "/api/settings", `{}`, map[string]string{"Origin": "https://public.example.com"})
+	if w.Code == 403 {
+		t.Error("a trusted origin must be accepted when the proxy rewrites Host")
+	}
+}
+
+func TestConcurrentLoginGuessesShareTheBudget(t *testing.T) {
+	_, h := newAPI(t)
+	old := loginDelay
+	loginDelay = 0
+	defer func() { loginDelay = old }()
+	send(h, "POST", "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
+	var wg sync.WaitGroup
+	var limited, wrong atomic.Int32
+	for i := 0; i < 60; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			switch send(h, "POST", "/api/auth/login", `{"username":"admin","password":"nope"}`, nil).Code {
+			case 429:
+				limited.Add(1)
+			case 401:
+				wrong.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if wrong.Load() > loginPerUser {
+		t.Errorf("a parallel burst got %d guesses through; the budget is %d", wrong.Load(), loginPerUser)
 	}
 }
 

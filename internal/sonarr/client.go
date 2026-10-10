@@ -53,6 +53,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, tim
 	if len(data) > maxResponse {
 		return fmt.Errorf("sonarr %s %s: response larger than %d MB", method, path, maxResponse>>20)
 	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return fmt.Errorf("sonarr %s %s: redirect refused (%d to %s); use the final URL in the instance settings", method, path, resp.StatusCode, truncate(resp.Header.Get("Location"), 100))
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("sonarr %s %s: %d %s", method, path, resp.StatusCode, truncate(string(data), 200))
 	}

@@ -93,7 +93,7 @@ func TestAPIKeysNeverLeaveTheServer(t *testing.T) {
 func TestAuthDisabledMode(t *testing.T) {
 	a, h := newAPI(t)
 	a.AuthDisabled = true
-	if w := do(h, "GET", "/api/settings", ""); w.Code != 200 {
+	if w := send(h, "GET", "/api/settings", "", nil); w.Code != 200 {
 		t.Fatalf("auth-disabled mode must let requests through, got %d", w.Code)
 	}
 }

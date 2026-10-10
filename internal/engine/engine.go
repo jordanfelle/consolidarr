@@ -286,14 +286,15 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 			return 0, err
 		}
 	}
-	unlock := e.jobMu.lock(id)
-	if j, err := e.St.Job(id); err == nil && j.Status == "reserving" { // not if something else already moved it on
-		j.Status = "downloading"
-		if err := e.St.UpdateJob(j); err != nil {
-			e.St.Event("warn", fmt.Sprintf("%s S%02d: grabbed but could not mark it downloading (%v); it will be picked up by its release title", s.Title, s.Season, err))
+	func() {
+		defer e.jobMu.lock(id)()                                           // deferred so a panic cannot leave the job locked forever
+		if j, err := e.St.Job(id); err == nil && j.Status == "reserving" { // not if something else already moved it on
+			j.Status = "downloading"
+			if err := e.St.UpdateJob(j); err != nil {
+				e.St.Event("warn", fmt.Sprintf("%s S%02d: grabbed but could not mark it downloading (%v); it will be picked up by its release title", s.Title, s.Season, err))
+			}
 		}
-	}
-	unlock()
+	}()
 	e.St.Event("info", fmt.Sprintf("grab %s S%02d on %s <- %s (%.1f GB)", s.Title, s.Season, inst.Name, title, sizeGB))
 	return id, nil
 }

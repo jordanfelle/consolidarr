@@ -323,3 +323,13 @@ func TestCreateFirstUserIsAtomic(t *testing.T) {
 		t.Fatalf("exactly one setup must win: wins=%d losses=%d users=%d", wins.Load(), losses.Load(), n)
 	}
 }
+
+func TestOnlyOneAccountCanExist(t *testing.T) {
+	st := open(t)
+	if _, err := st.Exec(`insert into users(username,pw_hash) values('a','h')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(`insert into users(username,pw_hash) values('b','h')`); err == nil {
+		t.Fatal("a second account must be rejected by the database itself, not only by application checks")
+	}
+}

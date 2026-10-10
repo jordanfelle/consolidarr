@@ -135,7 +135,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	var c creds
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&c)
 	user, addr := strings.ToLower(strings.TrimSpace(c.Username)), remoteAddr(r)
-	if a.limiter.blocked(user, addr) {
+	if !a.limiter.reserve(user, addr) {
 		w.Header().Set("Retry-After", "600")
 		fail(w, 429, "too many failed logins; try again in a few minutes")
 		return
@@ -144,12 +144,11 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	h := string(dummyHash)
 	found := a.St.QueryRow(`select id,pw_hash from users where username=?`, c.Username).Scan(&id, &h) == nil
 	if bcrypt.CompareHashAndPassword([]byte(h), []byte(c.Password)) != nil || !found {
-		a.limiter.fail(user, addr)
 		time.Sleep(loginDelay)
 		fail(w, 401, "invalid credentials")
 		return
 	}
-	a.limiter.ok(user)
+	a.limiter.succeed(user, addr)
 	a.startSession(w, r, id)
 	ok(w, map[string]any{"ok": true})
 }

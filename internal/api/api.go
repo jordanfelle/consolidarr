@@ -19,14 +19,15 @@ import (
 )
 
 type API struct {
-	St           *store.Store
-	Eng          *engine.Engine
-	Web          fs.FS // built SPA (may be nil in dev)
-	AuthDisabled bool
-	Version      string
-	CookieSecure string          // "", "auto" (follow the connection), "always" or "never"
-	AllowedHosts map[string]bool // optional Host allowlist (DNS-rebinding defence); nil allows any
-	limiter      loginLimiter
+	St             *store.Store
+	Eng            *engine.Engine
+	Web            fs.FS // built SPA (may be nil in dev)
+	AuthDisabled   bool
+	Version        string
+	CookieSecure   string          // "", "auto" (follow the connection), "always" or "never"
+	TrustedOrigins map[string]bool // extra origins accepted for writes (a proxy that rewrites Host)
+	AllowedHosts   map[string]bool // optional Host allowlist (DNS-rebinding defence); nil allows any
+	limiter        loginLimiter
 }
 
 func ok(w http.ResponseWriter, v any) {
