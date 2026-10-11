@@ -233,3 +233,58 @@ func TestLostImportCommandIsReissuedThenGivesUp(t *testing.T) {
 		t.Fatalf("the reissued import should finish the job, got %s %q", got.Status, got.Message)
 	}
 }
+
+func seedScan(v *env, id int, status string, queuedAgo time.Duration) {
+	v.fake.mu.Lock()
+	defer v.fake.mu.Unlock()
+	v.fake.scans = append(v.fake.scans, map[string]any{"id": id, "name": "DownloadedEpisodesScan", "status": status,
+		"queued": time.Now().Add(-queuedAgo).UTC().Format(time.RFC3339Nano), "body": map[string]string{"path": "/dl/pack", "downloadClientId": "d"}})
+}
+
+func importingNoFiles(t *testing.T, v *env, importAgo time.Duration, cmd int) store.Job {
+	t.Helper()
+	j := readyJob(t, v)
+	at := time.Now().Add(-importAgo).Unix()
+	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", at, at, "d", 3, []int{1, 2, 3}, cmd
+	_ = v.st.UpdateJob(j)
+	v.fake.existing = map[int]bool{} // the delete had landed
+	for n := range v.fake.seasonEps {
+		v.fake.seasonEps[n] = 0
+	}
+	return j
+}
+
+// An older scan of the same folder (an earlier attempt, a manual scan) is not this attempt's: it must not be adopted,
+// or a needed import would never be sent.
+func TestAnOlderScanOfTheSameFolderIsNotAdopted(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.realistic = true
+	j := importingNoFiles(t, v, 0, 0)
+	seedScan(v, 7, "failed", 3*time.Hour)
+	cur, _ := v.st.Job(j.ID)
+	New(v.st).advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j))
+	if got := v.status(t, j.ID); v.fake.imports != 1 || got.ImportCmd == 7 {
+		t.Fatalf("a stale failed scan must be ignored and a fresh import sent: imports=%d cmd=%d", v.fake.imports, got.ImportCmd)
+	}
+}
+
+// The case the re-ask exists for: the command finished with episodes missing and Sonarr still lists it. The re-ask
+// must send a NEW import, not re-adopt the finished one.
+func TestReaskSendsANewImportEvenWhileSonarrStillListsTheOldCommand(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.realistic = true
+	v.fake.cmdStatus = "failed"
+	j := importingNoFiles(t, v, 2*time.Hour, 42)
+	seedScan(v, 42, "failed", 2*time.Hour+time.Minute)
+	fresh := New(v.st)
+	cur, _ := v.st.Job(j.ID)
+	fresh.advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j)) // re-ask: ImportCmd back to 0
+	if got := v.status(t, j.ID); got.ImportCmd != 0 || v.fake.imports != 0 {
+		t.Fatalf("first the job must reset for a re-ask: cmd=%d imports=%d %q", got.ImportCmd, v.fake.imports, got.Message)
+	}
+	cur, _ = v.st.Job(j.ID)
+	fresh.advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j)) // ...then ask Sonarr again
+	if got := v.status(t, j.ID); v.fake.imports != 1 || got.ImportCmd == 0 || got.ImportCmd == 42 {
+		t.Fatalf("the re-ask must send a new import: imports=%d cmd=%d", v.fake.imports, got.ImportCmd)
+	}
+}

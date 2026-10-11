@@ -277,6 +277,7 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 			if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
 				if cur.Deleted > 0 {
 					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
+					e.St.SetKV(fmt.Sprintf("reimport:%d", id), "0")                             // a revived job gets its automatic re-asks back
 				} else {
 					cur.Status = "downloading"
 				}

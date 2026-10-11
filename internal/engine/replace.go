@@ -314,15 +314,24 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started (%s)", label, len(ids), how))
 }
 
-// findImportCommand finds a DownloadedEpisodesScan Sonarr already has for this download (by its folder or its
-// download client id), so a restart that lost the command id does not start a second one.
-func findImportCommand(cmds []sonarr.Command, path, downloadID string) int {
+// findImportCommand finds the DownloadedEpisodesScan this job's current import attempt started, so a restart that lost
+// the command id does not start a second scan. It matches by folder or download client id and only counts a command
+// that is still queued/running, or that was queued after this attempt began (importAt): an older command of the same
+// folder (an earlier attempt, a manual scan) must never be mistaken for the current one, or a re-ask would be swallowed.
+func findImportCommand(cmds []sonarr.Command, path, downloadID string, importAt int64) int {
 	for i := len(cmds) - 1; i >= 0; i-- {
 		c := cmds[i]
 		if c.Name != "DownloadedEpisodesScan" || c.ID == 0 {
 			continue
 		}
-		if (path != "" && c.Body.Path == path) || (downloadID != "" && strings.EqualFold(c.Body.DownloadClientID, downloadID)) {
+		if !(path != "" && c.Body.Path == path) && !(downloadID != "" && strings.EqualFold(c.Body.DownloadClientID, downloadID)) {
+			continue
+		}
+		switch strings.ToLower(c.Status) {
+		case "queued", "started":
+			return c.ID
+		}
+		if t, err := time.Parse(time.RFC3339Nano, c.Queued); err == nil && importAt > 0 && t.Unix() >= importAt-5 {
 			return c.ID
 		}
 	}
@@ -382,6 +391,8 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		// The process may have died after recording the delete but before (or while) Sonarr carried it out. Deleting is
 		// idempotent and only ever targets files that are still there, so finish it now: an import against files that are
 		// still present is rejected as "not an upgrade" and the job would end up failed.
+		unlockInst := e.instMu.lock(inst.ID) // one season at a time, same as a replacement
+		defer unlockInst()
 		if left, lerr := liveOld(ctx, c, j.SeriesID, j.OldFileIDs); lerr != nil {
 			return
 		} else if len(left) > 0 {
@@ -396,7 +407,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		// instead of starting a second scan of the same download.
 		if cmds, cerr := c.Commands(ctx); cerr != nil {
 			return
-		} else if id := findImportCommand(cmds, mine[0].OutputPath, mine[0].DownloadID); id != 0 {
+		} else if id := findImportCommand(cmds, mine[0].OutputPath, mine[0].DownloadID, j.ImportAt); id != 0 {
 			j.ImportCmd, j.Message = id, "import already started (found after a restart)"
 			_ = e.St.UpdateJob(*j)
 			return

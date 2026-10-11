@@ -51,7 +51,15 @@ type fakeSonarr struct {
 	realistic     bool // model Sonarr honestly: a delete removes files, an import is rejected while old files remain, scans are listed
 	rejected      int  // imports Sonarr refused because old files were still present
 	scans         []map[string]any
+	scanStatus    string // status new scans get in realistic mode (default completed)
 	srv           *httptest.Server
+}
+
+func (f *fakeSonarr) scanStatusOrDefault() string {
+	if f.scanStatus != "" {
+		return f.scanStatus
+	}
+	return "completed"
 }
 
 func newFake(packEps []int) *fakeSonarr {
@@ -129,7 +137,7 @@ func newFake(packEps []int) *fakeSonarr {
 			f.imports++
 			if f.realistic {
 				id := 100 + f.imports
-				f.scans = append(f.scans, map[string]any{"id": id, "name": b.Name, "status": "completed", "body": map[string]string{"path": b.Path, "downloadClientId": b.ClientID}})
+				f.scans = append(f.scans, map[string]any{"id": id, "name": b.Name, "status": f.scanStatusOrDefault(), "queued": time.Now().UTC().Format(time.RFC3339Nano), "body": map[string]string{"path": b.Path, "downloadClientId": b.ClientID}})
 				if len(f.existing) > 0 {
 					f.rejected++ // "not an upgrade": Sonarr will not import over files that are still there
 				} else {
@@ -153,6 +161,17 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Lock()
 		f.removed = append(f.removed, removal{b.IDs, r.URL.RawQuery})
 		f.mu.Unlock()
+	})
+	mux.HandleFunc("GET /api/v3/command/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, sc := range f.scans {
+			if fmt.Sprint(sc["id"]) == r.PathValue("id") {
+				js(w, sc)
+				return
+			}
+		}
+		http.NotFound(w, r)
 	})
 	mux.HandleFunc("GET /api/v3/command/42", func(w http.ResponseWriter, r *http.Request) {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
