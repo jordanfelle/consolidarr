@@ -158,6 +158,17 @@ func (l *loginLimiter) succeed(user, addr string) {
 	}
 }
 
+// clientAddr is the address a request is attributed to for rate limiting: the real client behind a trusted proxy when
+// CONSOLIDARR_ALLOWED_IPS/TRUSTED_PROXIES are configured, otherwise the TCP peer.
+func (a *API) clientAddr(r *http.Request) string {
+	if a.IPAllow != nil {
+		if c, ok := a.IPAllow.ClientIP(r); ok {
+			return c.String()
+		}
+	}
+	return remoteAddr(r)
+}
+
 func remoteAddr(r *http.Request) string {
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return h

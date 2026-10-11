@@ -52,6 +52,12 @@ func parsePrefixes(s string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
 		if pfx, err := netip.ParsePrefix(f); err == nil {
+			if a := pfx.Addr(); a.Is4In6() && pfx.Bits() >= 96 {
+				pfx = netip.PrefixFrom(a.Unmap(), pfx.Bits()-96) // ::ffff:10.0.0.0/120 means 10.0.0.0/24: clients are matched unmapped
+			}
+			if pfx.Bits() == 0 {
+				log.Printf("warning: %q admits every %s address (IPv4 and IPv6 are matched separately)", f, map[bool]string{true: "IPv4", false: "IPv6"}[pfx.Addr().Is4()])
+			}
 			out = append(out, pfx.Masked())
 			continue
 		}
@@ -76,6 +82,10 @@ func contains(list []netip.Prefix, a netip.Addr) bool {
 }
 
 // clientIP is the address the request is attributed to (see IPAllow). ok is false when the peer address cannot be read.
+// ClientIP is the address the request is attributed to (see IPAllow); callers such as the login limiter use it so
+// every user behind a trusted proxy does not share the proxy's address.
+func (ip *IPAllow) ClientIP(r *http.Request) (netip.Addr, bool) { return ip.clientIP(r) }
+
 func (ip *IPAllow) clientIP(r *http.Request) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -95,7 +105,11 @@ func (ip *IPAllow) clientIP(r *http.Request) (netip.Addr, bool) {
 		chain = append(chain, strings.Split(h, ",")...)
 	}
 	for i := len(chain) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(chain[i]))
+		hop := strings.TrimSpace(chain[i])
+		if hop == "" {
+			continue // an empty hop (a trailing comma) carries no address to believe or to be fooled by
+		}
+		a, err := parseHop(hop)
 		if err != nil {
 			return netip.Addr{}, false // a garbled hop in the trusted chain: refuse rather than guess
 		}
@@ -105,6 +119,18 @@ func (ip *IPAllow) clientIP(r *http.Request) (netip.Addr, bool) {
 		}
 	}
 	return peer, true // no usable chain: the proxy itself is the client
+}
+
+// parseHop reads one X-Forwarded-For entry: a bare address, or the address:port / [v6]:port form some proxies append.
+func parseHop(h string) (netip.Addr, error) {
+	if a, err := netip.ParseAddr(strings.Trim(h, "[]")); err == nil {
+		return a, nil
+	}
+	ap, err := netip.ParseAddrPort(h)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return ap.Addr(), nil
 }
 
 // Wrap refuses clients that are not on the list. /healthz from the loopback is always answered so a container

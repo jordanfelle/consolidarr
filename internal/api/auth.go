@@ -134,7 +134,7 @@ func (a *API) setup(w http.ResponseWriter, r *http.Request) {
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	var c creds
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&c)
-	user, addr := strings.ToLower(strings.TrimSpace(c.Username)), remoteAddr(r)
+	user, addr := strings.ToLower(strings.TrimSpace(c.Username)), a.clientAddr(r)
 	if !a.limiter.reserve(user, addr) {
 		w.Header().Set("Retry-After", "600")
 		fail(w, 429, "too many failed logins; try again in a few minutes")

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
+	"time"
 )
 
 func serve(t *testing.T, ip *IPAllow, remote string, hdr map[string]string, path string) int {
@@ -123,15 +126,67 @@ func TestBadConfigurationIsRefusedNotIgnored(t *testing.T) {
 	}
 }
 
-func TestDenialLogIsBounded(t *testing.T) {
+func TestDenialLogIsBoundedAndDeduplicated(t *testing.T) {
 	ip := mustParse(t, "10.0.0.0/24", "")
 	for i := 0; i < 3000; i++ {
-		serve(t, ip, "203.0."+string(rune('0'+i%10))+".9:1", nil, "/") // unparseable octets are fine: they all land in the unreadable bucket
+		serve(t, ip, fmt.Sprintf("192.168.%d.%d:1", i/250, i%250+1), nil, "/") // 3000 distinct refused addresses
 	}
 	ip.mu.Lock()
 	n := len(ip.seen)
 	ip.mu.Unlock()
-	if n > 1000 {
-		t.Fatalf("the denial log map must stay bounded, got %d", n)
+	if n == 0 || n > 1000 {
+		t.Fatalf("the denial log map must stay within 1000 entries, got %d", n)
+	}
+	// the same address is only logged once inside the window
+	first := time.Now().Add(-time.Minute)
+	ip.mu.Lock()
+	ip.seen = map[netip.Addr]time.Time{netip.MustParseAddr("192.168.9.9"): first}
+	ip.mu.Unlock()
+	serve(t, ip, "192.168.9.9:1", nil, "/")
+	ip.mu.Lock()
+	got := ip.seen[netip.MustParseAddr("192.168.9.9")]
+	ip.mu.Unlock()
+	if !got.Equal(first) {
+		t.Fatal("a repeat denial inside the window must not be logged again")
+	}
+}
+
+func TestForwardedHopsMayCarryPortsBracketsAndEmptyEntries(t *testing.T) {
+	ip := mustParse(t, "10.0.0.0/24", "172.18.0.2")
+	for _, xff := range []string{"10.0.0.5:51234", "[::ffff:10.0.0.5]", "10.0.0.5,", "10.0.0.5, , "} {
+		if got := serve(t, ip, "172.18.0.2:1", map[string]string{"X-Forwarded-For": xff}, "/"); got != 200 {
+			t.Errorf("%q: a hop in a common proxy format must be understood, got %d", xff, got)
+		}
+	}
+	ip6 := mustParse(t, "fd00::/8", "172.18.0.2")
+	if got := serve(t, ip6, "172.18.0.2:1", map[string]string{"X-Forwarded-For": "[fd00::5]:443"}, "/"); got != 200 {
+		t.Errorf("[v6]:port hop must be understood, got %d", got)
+	}
+}
+
+func TestFourInSixPrefixesMeanTheirIPv4Range(t *testing.T) {
+	ip := mustParse(t, "::ffff:10.0.0.0/120", "")
+	if got := serve(t, ip, "10.0.0.5:1", nil, "/"); got != 200 {
+		t.Errorf("an IPv4 client must match a 4in6 prefix, got %d", got)
+	}
+	if got := serve(t, ip, "10.0.1.5:1", nil, "/"); got != 403 {
+		t.Errorf("outside the range must be refused, got %d", got)
+	}
+}
+
+// Behind a trusted proxy the login limiter must tell clients apart, not give them the proxy's single bucket.
+func TestLoginLimiterKeysOnTheRealClientBehindATrustedProxy(t *testing.T) {
+	a := &API{IPAllow: mustParse(t, "10.0.0.0/24", "172.18.0.2")}
+	mk := func(client string) *http.Request {
+		r := httptest.NewRequest("POST", "/api/auth/login", nil)
+		r.RemoteAddr = "172.18.0.2:5555"
+		r.Header.Set("X-Forwarded-For", client)
+		return r
+	}
+	if a.clientAddr(mk("10.0.0.5")) == a.clientAddr(mk("10.0.0.6")) {
+		t.Fatal("two clients behind the same proxy must not share a limiter address")
+	}
+	if got := a.clientAddr(mk("10.0.0.5")); got != "10.0.0.5" {
+		t.Fatalf("want the forwarded client, got %s", got)
 	}
 }
