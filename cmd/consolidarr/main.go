@@ -35,6 +35,11 @@ func main() {
 	dburl := flag.String("database-url", env("CONSOLIDARR_DATABASE_URL", ""), "postgres://... (default: SQLite in the data dir)")
 	flag.Parse()
 
+	// Read the restriction before anything starts: a typo must stop the container, not run it open (or leave work half-started).
+	ipAllow, err := api.ParseIPAllow(os.Getenv("CONSOLIDARR_ALLOWED_IPS"), os.Getenv("CONSOLIDARR_TRUSTED_PROXIES"))
+	if err != nil {
+		log.Fatal(err) // a restriction that was asked for but cannot be read must not silently become no restriction
+	}
 	if err := os.MkdirAll(*data, 0o755); err != nil {
 		log.Fatal(err)
 	}
@@ -48,7 +53,7 @@ func main() {
 	engDone := make(chan struct{})
 	go func() { defer close(engDone); eng.Start(ctx) }()
 
-	a := &api.API{St: st, Eng: eng, Web: web.FS(), Version: version,
+	a := &api.API{St: st, IPAllow: ipAllow, Eng: eng, Web: web.FS(), Version: version,
 		AuthDisabled:   os.Getenv("CONSOLIDARR_AUTH_DISABLED") == "true",
 		CookieSecure:   os.Getenv("CONSOLIDARR_COOKIE_SECURE"),
 		AllowedHosts:   api.ParseAllowedHosts(os.Getenv("CONSOLIDARR_ALLOWED_HOSTS")),

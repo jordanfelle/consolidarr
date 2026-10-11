@@ -69,6 +69,8 @@ with the reason. With *Dry run* on (the default), the scheduler only logs what i
 | `CONSOLIDARR_AUTH_DISABLED` | `false` | skip the login (only behind an authenticating reverse proxy) |
 | `CONSOLIDARR_COOKIE_SECURE` | `auto` | session cookie `Secure` flag: `auto` sets it when the request is HTTPS (directly or via `X-Forwarded-Proto`), `always`, or `never` |
 | `CONSOLIDARR_ALLOWED_HOSTS` | any | comma-separated Host names the server answers to (DNS-rebinding defence); others get 421. Cross-origin browser writes are always refused; API-key requests are exempt |
+| `CONSOLIDARR_ALLOWED_IPS` | any | comma-separated client IPs/CIDRs (`10.0.0.0/24, 192.168.1.5, fd00::/8`) allowed to reach the UI and API; everyone else gets a bare 403. A malformed entry stops startup. `/healthz` from the loopback is always answered for container healthchecks |
+| `CONSOLIDARR_TRUSTED_PROXIES` | none | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is believed when applying `CONSOLIDARR_ALLOWED_IPS` (walked from the right; a header from any other peer is ignored). Only valid together with `CONSOLIDARR_ALLOWED_IPS` |
 | `CONSOLIDARR_TRUSTED_ORIGINS` | none | extra origins accepted for browser writes, for a proxy that rewrites the Host header (otherwise writes get 403). With login disabled, dotted host names are refused unless listed in `CONSOLIDARR_ALLOWED_HOSTS`; IPs, `localhost` and single-label names always work |
 
 Everything else (scheduler, size cap, in-flight limit, last-resort indexers, anime) is in the UI under **Settings**.

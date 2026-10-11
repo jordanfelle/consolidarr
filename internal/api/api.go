@@ -27,6 +27,7 @@ type API struct {
 	CookieSecure   string          // "", "auto" (follow the connection), "always" or "never"
 	TrustedOrigins map[string]bool // extra origins accepted for writes (a proxy that rewrites Host)
 	AllowedHosts   map[string]bool // optional Host allowlist (DNS-rebinding defence); nil allows any
+	IPAllow        *IPAllow        // optional client address allowlist; nil allows any
 	limiter        loginLimiter
 }
 
@@ -138,7 +139,7 @@ func (a *API) Handler() http.Handler {
 	if a.Web != nil {
 		m.Handle("/", spa(a.Web))
 	}
-	return a.browserGuard(m)
+	return a.IPAllow.Wrap(a.browserGuard(m))
 }
 
 // spa serves static files and falls back to index.html for client-side routes.
