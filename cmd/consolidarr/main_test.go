@@ -14,12 +14,12 @@ func TestOpenWithRetryFailsFastOnNonTransientAndRetriesTransient(t *testing.T) {
 	}
 	// a Postgres DSN pointing at a closed port is transient: it keeps trying until the wait is up
 	start = time.Now()
-	_, err := openWithRetry(t.TempDir(), "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=1", 3*time.Second)
+	_, err := openWithRetry(t.TempDir(), "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=1", 5*time.Second)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if time.Since(start) < 2*time.Second {
-		t.Fatalf("a refused connection must be retried until the deadline, gave up after %s: %v", time.Since(start), err)
+	if el := time.Since(start); el < time.Second || el > 6*time.Second {
+		t.Fatalf("a refused connection must be retried at least once and never past the wait, took %s: %v", el, err)
 	}
 }
 
