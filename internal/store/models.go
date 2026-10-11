@@ -157,6 +157,33 @@ func (s *Store) Job(id int64) (Job, error) {
 	return j, err
 }
 
+// VanishedLostJobs are jobs that ended "lost" only because their download left Sonarr's queue (nothing was
+// deleted or changed by us), the one lost state that can later turn out to be a finished import.
+func (s *Store) VanishedLostJobs(instID int64) ([]Job, error) {
+	rows, err := s.Query(`select `+jobCols+` from jobs where inst_id=? and status='lost' and message like 'no longer in Sonarr%' order by id`, instID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Job{}
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// NewerJobExists reports whether the season has any later job, whatever its status: a lost job that is not the
+// season's latest word must not be re-judged against files a later job may have replaced.
+func (s *Store) NewerJobExists(instID int64, seriesID, season int, id int64) (bool, error) {
+	var n int
+	err := s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and id>?`, instID, seriesID, season, id).Scan(&n)
+	return n > 0, err
+}
+
 // ActiveJob reports whether the season already has an unfinished job.
 func (s *Store) ActiveJob(instID int64, seriesID, season int) bool {
 	var n int

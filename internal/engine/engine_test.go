@@ -747,3 +747,130 @@ func airDate(future bool) string {
 	}
 	return time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
 }
+
+func TestReconcileLostFixesOnlyVanishedJobsSonarrImported(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	lost := func(msg string) store.Job {
+		j := v.job(t, time.Now().Add(-time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=? where id=?`, msg, "Show S03 1080p WEB x265-NOXXUS", j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+	a := lost("no longer in Sonarr's queue; old files untouched")
+	b := lost("the grab never completed; nothing was downloaded or changed") // a different lost reason: not ours to judge
+	_, _ = v.st.Exec(`update jobs set season=4 where id=?`, b.ID)            // its own season, so it is not "later" than a
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if got := v.status(t, a.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
+		t.Fatalf("a vanished-lost job Sonarr imported must become done, got %s %q", got.Status, got.Message)
+	}
+	if got := v.status(t, b.ID); got.Status != "lost" {
+		t.Fatalf("other lost jobs must be untouched, got %s", got.Status)
+	}
+	if v.st.KV("reconciled:vanished-lost:v1:1") == "" {
+		t.Fatal("a clean pass must write the marker so it never runs again")
+	}
+	// a Sonarr error leaves the marker unset so the next cycle retries
+	v2 := setup(t, []int{1, 2, 3})
+	j := v2.job(t, time.Now().Add(-time.Hour))
+	_, _ = v2.st.Exec(`update jobs set status='lost', message=?, release=? where id=?`, "no longer in Sonarr's queue; old files untouched", "Show S03 1080p WEB x265-NOXXUS", j.ID)
+	v2.fake.failFiles = true
+	v2.e.reconcileLost(context.Background(), v2.inst, v2.c)
+	if v2.st.KV("reconciled:vanished-lost:v1:1") != "" || v2.status(t, j.ID).Status != "lost" {
+		t.Fatal("an error must neither flip the job nor write the marker")
+	}
+}
+
+func TestReconcileLostSkipsSeasonsWithALaterJobAndKeepsGoingPastErrors(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(season int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+	old, latest := mk(3), mk(3) // two past attempts at the same season
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if got := v.status(t, old.ID); got.Status != "lost" {
+		t.Fatalf("an older job with a later one for the same season must be left alone, got %s", got.Status)
+	}
+	if got := v.status(t, latest.ID); got.Status != "done" {
+		t.Fatalf("the season's latest job should be reconciled, got %s", got.Status)
+	}
+	// a job that moved on since it was listed (retried by the user) is not overwritten
+	v2 := setup(t, []int{1, 2, 3})
+	id, _ := v2.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11}, Release: "x-NOXXUS", Status: "downloading"})
+	if !v2.e.reconcileOne(context.Background(), v2.inst, v2.c, id) || v2.status(t, id).Status != "downloading" {
+		t.Fatal("a job that is no longer lost must not be touched")
+	}
+}
+
+func TestReconcileLostRetriesThenGivesUpWithoutBlockingOthers(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(series, season int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: series, Season: season, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	j1 := mk(1, 3) // Sonarr's episodefile endpoint fails for every series in this fake, so every job errors
+	j2 := mk(2, 3)
+	v.fake.failFiles = true
+	key := "reconciled:vanished-lost:v1:1"
+	for i := 1; i <= 4; i++ {
+		v.e.reconcileLost(context.Background(), v.inst, v.c)
+		if v.st.KV(key) != "" {
+			t.Fatalf("marker written after only %d tries", i)
+		}
+	}
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if v.st.KV(key) == "" {
+		t.Fatal("the 5th failed try must stop the retries")
+	}
+	evs, _ := v.st.Events(20)
+	gaveUp := false
+	for _, e := range evs {
+		if e.Level == "warn" && strings.Contains(e.Msg, "gave up re-checking") && strings.Contains(e.Msg, fmt.Sprint([]int64{j1.ID, j2.ID})) {
+			gaveUp = true
+		}
+	}
+	if !gaveUp {
+		t.Fatal("giving up must be logged with the ids of the jobs it could not check")
+	}
+	for _, j := range []store.Job{j1, j2} {
+		if got := v.status(t, j.ID); got.Status != "lost" {
+			t.Fatalf("giving up must leave job %d lost, got %s", j.ID, got.Status)
+		}
+	}
+}
+
+func TestReconcileLostCountsTriesPerJobAndIgnoresShutdown(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(series int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: series, Season: 3, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	a, b := mk(1), mk(2)
+	v.fake.failFiles = true
+	key := "reconciled:vanished-lost:v1:1"
+	v.st.SetKV(fmt.Sprintf("%s:tries:%d", key, a.ID), "4") // a is one failure from exhausted, b is fresh
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if v.st.KV(key) != "" {
+		t.Fatal("job b still has tries left, so the pass must not finish just because job a ran out")
+	}
+	if got := v.st.KV(fmt.Sprintf("%s:tries:%d", key, b.ID)); got != "1" {
+		t.Fatalf("b must have exactly one try counted, got %q", got)
+	}
+	// a shutdown mid-pass burns no try and never finishes the pass
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	v.e.reconcileLost(ctx, v.inst, v.c)
+	if v.st.KV(key) != "" || v.st.KV(fmt.Sprintf("%s:tries:%d", key, b.ID)) != "1" {
+		t.Fatal("a cancelled context must not count tries or write the marker")
+	}
+}
