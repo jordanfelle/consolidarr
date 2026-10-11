@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -34,7 +35,11 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request) {
 	if !good {
 		return
 	}
-	j, err := a.Eng.Adopt(r.Context(), inst, sid, sn)
+	j, err := a.Eng.Adopt(r.Context(), inst, sid, sn, r.URL.Query().Get("force") == "1")
+	if errors.Is(err, engine.ErrDowngrade) {
+		fail(w, 409, err.Error())
+		return
+	}
 	if err == store.ErrNotFound {
 		fail(w, 404, "no stuck download for that season (it may already be handled)")
 		return

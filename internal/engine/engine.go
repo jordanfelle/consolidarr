@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -917,7 +918,10 @@ var probeFn = probe
 // probe checks a file with ffprobe through the instance's path mapping.
 // why == "unverified" means ffprobe or the file isn't reachable (not an error).
 func probe(inst store.Instance, path string) (ok bool, why string) {
-	local := mapPath(inst, path)
+	local := filepath.Clean(mapPath(inst, path))
+	if !filepath.IsAbs(local) { // never let a name that starts with "-" be read as an ffprobe option
+		return true, "unverified"
+	}
 	if _, err := os.Stat(local); err != nil {
 		return true, "unverified"
 	}
@@ -927,7 +931,7 @@ func probe(inst store.Instance, path string) (ok bool, why string) {
 	var stdout, stderr strings.Builder
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second) // a hung NFS read must not stall every job
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", local)
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", "-i", local)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil || strings.Contains(stderr.String(), "encv") {
 		return false, fmt.Sprintf("%s: unreadable or DRM-encrypted", baseName(local))

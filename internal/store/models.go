@@ -76,6 +76,13 @@ func (s *Store) SaveInstance(i Instance) (int64, error) {
 }
 
 func (s *Store) DeleteInstance(id int64) error {
+	var busy int
+	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and (status='importing' or (status in ('failed','lost') and deleted>0))`, id).Scan(&busy); err != nil {
+		return err
+	}
+	if busy > 0 {
+		return ErrJobBusy
+	}
 	for _, t := range []string{"seasons", "jobs"} {
 		if _, err := s.Exec(`delete from `+t+` where inst_id=?`, id); err != nil {
 			return err
@@ -228,8 +235,25 @@ func (s *Store) UpdateJob(j Job) error {
 	return err
 }
 
+// ErrJobBusy is returned when a job's row is the only record of a replacement that may be mid-flight.
+var ErrJobBusy = errors.New("this job is mid-replacement (importing, or failed after its old files were deleted): its record is what lets a restart finish it, so it cannot be deleted")
+
+// DeleteJob removes a job record. A job that is importing, or that failed/was lost after the delete began, is
+// refused: deleting that row would orphan a half-replaced season and the recovery that depends on it.
 func (s *Store) DeleteJob(id int64) error {
-	_, err := s.Exec(`delete from jobs where id=?`, id)
+	var status string
+	var deleted int64
+	err := s.QueryRow(`select status, deleted from jobs where id=?`, id).Scan(&status, &deleted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if status == "importing" || ((status == "failed" || status == "lost") && deleted > 0) {
+		return ErrJobBusy
+	}
+	_, err = s.Exec(`delete from jobs where id=?`, id)
 	return err
 }
 

@@ -48,8 +48,19 @@ func (a *API) browserGuard(next http.Handler) http.Handler {
 			fail(w, 421, "host not allowed (set CONSOLIDARR_ALLOWED_HOSTS to the name you browse to)")
 			return
 		}
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			// A page on another site can make the browser fetch a GET (an <img> pointing at a search endpoint) even though
+			// it cannot read the answer; Sonarr and the indexers would still be hit. Browsers label such requests.
+			if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("Sec-Fetch-Site") == "cross-site" && apiKey(r) == "" {
+				fail(w, 403, "cross-site request refused")
+				return
+			}
 		default:
 			if apiKey(r) == "" && !a.sameOrigin(r) {
 				fail(w, 403, "cross-origin request refused")
@@ -103,9 +114,10 @@ type loginLimiter struct {
 }
 
 const (
-	loginWindow  = 10 * time.Minute
-	loginPerUser = 10
-	loginPerAddr = 40
+	loginWindow      = 10 * time.Minute
+	loginPerUserAddr = 10  // wrong guesses for one username from one address
+	loginPerUser     = 100 // ...from everywhere: a ceiling against distributed guessing that is far above what one host can use
+	loginPerAddr     = 40
 )
 
 func (l *loginLimiter) prune(k string, now time.Time) []time.Time {
@@ -132,7 +144,8 @@ func (l *loginLimiter) reserve(user, addr string) bool {
 		l.hits = map[string][]time.Time{}
 	}
 	now := time.Now()
-	if len(l.prune("u:"+user, now)) >= loginPerUser || len(l.prune("a:"+addr, now)) >= loginPerAddr {
+	// The per-address budget decides who is refused first, so a stranger hammering "admin" locks out only themselves.
+	if len(l.prune("ua:"+user+"@"+addr, now)) >= loginPerUserAddr || len(l.prune("u:"+user, now)) >= loginPerUser || len(l.prune("a:"+addr, now)) >= loginPerAddr {
 		return false
 	}
 	if len(l.hits) > 10000 { // bound memory against a flood of made-up usernames: drop expired keys only
@@ -143,6 +156,7 @@ func (l *loginLimiter) reserve(user, addr string) bool {
 			return true // full of live entries: let this attempt through uncounted rather than evict the admin's
 		}
 	}
+	l.hits["ua:"+user+"@"+addr] = append(l.hits["ua:"+user+"@"+addr], now)
 	l.hits["u:"+user] = append(l.hits["u:"+user], now)
 	l.hits["a:"+addr] = append(l.hits["a:"+addr], now)
 	return true
@@ -153,6 +167,7 @@ func (l *loginLimiter) succeed(user, addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.hits, "u:"+user)
+	delete(l.hits, "ua:"+user+"@"+addr)
 	if a := l.hits["a:"+addr]; len(a) > 0 {
 		l.hits["a:"+addr] = a[:len(a)-1]
 	}

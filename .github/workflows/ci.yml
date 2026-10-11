@@ -6,18 +6,18 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Least privilege by default; only the job that publishes the image gets to write packages.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version: "1.27" }
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
       - run: npm ci && npm run build
         working-directory: web
@@ -35,8 +35,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version: "1.27" }
       - run: mkdir -p web/dist && touch web/dist/.gitkeep
       - run: go test -count=1 ./internal/store
@@ -46,23 +46,23 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with: { node-version: "24" }
       - run: npm audit --audit-level=high
         working-directory: web
-      - uses: golang/govulncheck-action@v1
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
-          go-version-input: "1.26"
+          go-version-input: "1.27" # the toolchain the image is built with
           go-package: ./...
 
   smoke:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           load: true
@@ -75,17 +75,20 @@ jobs:
   image:
     needs: [test, test-postgres, security, smoke]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - if: github.event_name == 'push'
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -97,7 +100,7 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then v="$GITHUB_REF_NAME"; else v="main-${GITHUB_SHA::7}"; fi
           echo "v=$v" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           push: ${{ github.event_name == 'push' }}

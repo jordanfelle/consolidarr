@@ -974,6 +974,31 @@
     }
    }
   },
+  "/api/auth/logout-all": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Sign out everywhere (ends every session)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/healthz": {
    "get": {
     "tags": [

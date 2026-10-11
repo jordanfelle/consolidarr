@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -198,13 +199,13 @@ func TestLoginIsRateLimited(t *testing.T) {
 	loginDelay = 0
 	defer func() { loginDelay = old }()
 	send(h, "POST", "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
-	for i := 0; i < loginPerUser; i++ {
+	for i := 0; i < loginPerUserAddr; i++ {
 		if w := send(h, "POST", "/api/auth/login", `{"username":"admin","password":"nope"}`, nil); w.Code != 401 {
 			t.Fatalf("attempt %d: want 401, got %d", i, w.Code)
 		}
 	}
 	if w := send(h, "POST", "/api/auth/login", `{"username":"admin","password":"correct-horse"}`, nil); w.Code != 429 {
-		t.Errorf("after %d failures even the right password waits: got %d", loginPerUser, w.Code)
+		t.Errorf("after %d failures even the right password waits: got %d", loginPerUserAddr, w.Code)
 	}
 	if w := send(h, "POST", "/api/auth/login", `{"username":"Admin ","password":"x"}`, nil); w.Code != 429 {
 		t.Errorf("username case/space variants share the budget: got %d", w.Code)
@@ -216,5 +217,104 @@ func TestSwaggerAssetsArePinnedWithSRI(t *testing.T) {
 	body := send(h, "GET", "/api/docs", "", nil).Body.String()
 	if strings.Count(body, `integrity="sha384-`) != 2 || !strings.Contains(body, `crossorigin="anonymous"`) {
 		t.Errorf("both swagger assets need an integrity hash:\n%s", body)
+	}
+}
+
+// One host hammering the admin's username must lock out only itself, not the admin signing in from elsewhere.
+func TestAStrangerCannotLockTheAdminOut(t *testing.T) {
+	a, h := newAPI(t)
+	old := loginDelay
+	loginDelay = 0
+	defer func() { loginDelay = old }()
+	_ = a
+	send(h, "POST", "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
+	from := func(addr, pw string) int {
+		r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"`+pw+`"}`))
+		r.Host, r.RemoteAddr = "consolidarr:7480", addr
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < loginPerUserAddr+5; i++ {
+		from("203.0.113.9:1111", "guess")
+	}
+	if got := from("203.0.113.9:1111", "correct-horse"); got != 429 {
+		t.Fatalf("the attacker's own address stays locked, got %d", got)
+	}
+	if got := from("198.51.100.4:2222", "correct-horse"); got != 200 {
+		t.Fatalf("the admin on another address must still be able to sign in, got %d", got)
+	}
+}
+
+func TestSetupAndKeyCreationAreRefusedWhileLoginIsOff(t *testing.T) {
+	a, h := newAPI(t)
+	a.AuthDisabled = true
+	if w := send(h, "POST", "/api/auth/setup", `{"username":"x","password":"longenough1"}`, nil); w.Code != 409 {
+		t.Errorf("setup with login off must be refused, got %d", w.Code)
+	}
+	if w := send(h, "POST", "/api/keys", `{"name":"k"}`, nil); w.Code != 409 {
+		t.Errorf("minting a key with login off must be refused, got %d", w.Code)
+	}
+}
+
+func TestSessionsAreStoredHashedAndLogoutAllEndsThem(t *testing.T) {
+	a, h := newAPI(t)
+	send(h, "POST", "/api/auth/setup", `{"username":"admin","password":"correct-horse"}`, nil)
+	w := send(h, "POST", "/api/auth/login", `{"username":"admin","password":"correct-horse"}`, nil)
+	var raw string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName {
+			raw = c.Value
+		}
+	}
+	if raw == "" {
+		t.Fatal("no session cookie")
+	}
+	var n int
+	_ = a.St.QueryRow(`select count(*) from sessions where token=?`, raw).Scan(&n)
+	if n != 0 {
+		t.Fatal("the raw token must not be in the database")
+	}
+	cookie := map[string]string{"Cookie": cookieName + "=" + raw}
+	if w := send(h, "GET", "/api/settings", "", cookie); w.Code != 200 {
+		t.Fatalf("the hashed session must still authenticate, got %d", w.Code)
+	}
+	if w := send(h, "POST", "/api/auth/logout-all", "", cookie); w.Code != 200 {
+		t.Fatalf("logout-all: %d", w.Code)
+	}
+	if w := send(h, "GET", "/api/settings", "", cookie); w.Code != 401 {
+		t.Fatalf("every session must be dead after logout-all, got %d", w.Code)
+	}
+}
+
+func TestSecurityHeadersAndCrossSiteGETs(t *testing.T) {
+	a, h := newAPI(t)
+	a.AuthDisabled = true
+	w := send(h, "GET", "/api/status", "", nil)
+	if w.Header().Get("X-Frame-Options") != "DENY" || !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("framing/sniffing headers missing: %v", w.Header())
+	}
+	if w := send(h, "GET", "/api/status", "", map[string]string{"Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
+		t.Errorf("a cross-site GET to the API must be refused, got %d", w.Code)
+	}
+	if w := send(h, "GET", "/api/status", "", map[string]string{"Sec-Fetch-Site": "same-origin"}); w.Code != 200 {
+		t.Errorf("same-origin GET must work, got %d", w.Code)
+	}
+	if w := send(h, "GET", "/", "", map[string]string{"Sec-Fetch-Site": "cross-site"}); w.Code == 403 {
+		t.Errorf("following a link to the UI from another site must still work")
+	}
+}
+
+func TestTestErrorDoesNotEchoRemoteBodies(t *testing.T) {
+	for in, banned := range map[string]string{
+		`sonarr GET /system/status: 404 {"secret":"internal-service-data"}`: "internal-service-data",
+		`sonarr GET /system/status: 200 <html>admin panel</html>`:           "admin panel",
+	} {
+		if got := testError(errors.New(in)); strings.Contains(got, banned) || got == "" {
+			t.Errorf("%q leaked: %q", in, got)
+		}
+	}
+	if got := testError(errors.New("dial tcp 10.0.0.9:8989: connect: connection refused")); !strings.Contains(got, "connection refused") {
+		t.Errorf("network errors stay informative: %q", got)
 	}
 }

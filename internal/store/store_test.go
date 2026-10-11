@@ -333,3 +333,43 @@ func TestOnlyOneAccountCanExist(t *testing.T) {
 		t.Fatal("a second account must be rejected by the database itself, not only by application checks")
 	}
 }
+
+func TestAJobMidReplacementCannotBeDeleted(t *testing.T) {
+	st, err := Open(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(season int, status string, deleted int64) int64 {
+		id, err := st.AddJob(Job{InstID: 1, SeriesID: 1, Season: season, Title: "S", Status: "downloading"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = st.Exec(`update jobs set status=?, deleted=? where id=?`, status, deleted, id)
+		return id
+	}
+	for _, c := range []struct {
+		status  string
+		deleted int64
+		busy    bool
+	}{{"importing", 5, true}, {"failed", 5, true}, {"lost", 5, true}, {"failed", 0, false}, {"downloading", 0, false}, {"done", 5, false}} {
+		id := mk(10+int(id64(c.status, c.deleted)), c.status, c.deleted)
+		err := st.DeleteJob(id)
+		if c.busy && err != ErrJobBusy {
+			t.Errorf("%s/deleted=%d must be refused, got %v", c.status, c.deleted, err)
+		}
+		if !c.busy && err != nil {
+			t.Errorf("%s/deleted=%d should delete, got %v", c.status, c.deleted, err)
+		}
+	}
+	// the instance cannot be removed out from under one either
+	if _, err := st.SaveInstance(Instance{Name: "x", URL: "http://x", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := st.AddJob(Job{InstID: 1, SeriesID: 9, Season: 9, Title: "S", Status: "downloading"})
+	_, _ = st.Exec(`update jobs set status='importing', deleted=1 where id=?`, id)
+	if err := st.DeleteInstance(1); err != ErrJobBusy {
+		t.Fatalf("an instance with a mid-replacement job must not be deletable, got %v", err)
+	}
+}
+
+func id64(status string, deleted int64) int64 { return int64(len(status))*10 + deleted }
