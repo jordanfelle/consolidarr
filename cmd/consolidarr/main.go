@@ -3,11 +3,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,7 +38,7 @@ func main() {
 	if err := os.MkdirAll(*data, 0o755); err != nil {
 		log.Fatal(err)
 	}
-	st, err := store.Open(*data, *dburl)
+	st, err := openWithRetry(*data, *dburl, 2*time.Minute)
 	if err != nil {
 		log.Fatalf("database: %v", err)
 	}
@@ -58,7 +61,7 @@ func main() {
 	go func() {
 		defer close(shut)
 		<-ctx.Done()
-		sh, c := context.WithTimeout(context.Background(), 10*time.Second)
+		sh, c := context.WithTimeout(context.Background(), 2*time.Second)
 		defer c()
 		_ = srv.Shutdown(sh)
 	}()
@@ -69,9 +72,50 @@ func main() {
 	// ListenAndServe returns as soon as Shutdown starts; wait for in-flight requests and the engine so a
 	// restart does not cut a replacement or a database write in half.
 	<-shut
+	eng.Drain()              // set synchronously: WaitIdle below must never run before the flag
+	grace := 8 * time.Second // a courtesy, not a requirement: correctness comes from crash recovery, so keep this inside docker's default 10s stop timeout
+	if d, err := time.ParseDuration(os.Getenv("CONSOLIDARR_SHUTDOWN_GRACE")); err == nil && d > 0 {
+		grace = d
+	}
+	deadline := time.Now().Add(grace)
 	select {
 	case <-engDone:
-	case <-time.After(15 * time.Second):
+	case <-time.After(grace):
 		log.Print("engine did not stop in time")
 	}
+	if !eng.WaitIdle(time.Until(deadline)) {
+		log.Print("a replacement was still between delete and import at shutdown; this is fine: the job resumes as 'importing' on the next start")
+	}
+}
+
+// openWithRetry waits for a database that is still starting (or being restarted by an update): connection-type
+// failures against a Postgres DSN are retried with backoff instead of crash-looping the container. Anything else (a
+// bad DSN, a failing migration, SQLite) fails at once with the real error.
+func openWithRetry(dir, url string, wait time.Duration) (*store.Store, error) {
+	deadline := time.Now().Add(wait)
+	delay := time.Second
+	for {
+		st, err := store.Open(dir, url)
+		if err == nil || !strings.HasPrefix(url, "postgres") || !transient(err) || time.Now().Add(delay).After(deadline) {
+			return st, err
+		}
+		log.Printf("database not ready (%v); retrying in %s", err, delay)
+		time.Sleep(delay)
+		delay = min(delay*2, 15*time.Second)
+	}
+}
+
+// transient reports whether err looks like "the server is not accepting connections yet".
+func transient(err error) bool {
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	for _, s := range []string{"connection refused", "no such host", "starting up", "shutting down", "connection reset", "eof", "timeout", "i/o", "network is unreachable", "recovery mode"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
 }

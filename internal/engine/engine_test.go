@@ -48,7 +48,18 @@ type fakeSonarr struct {
 	existing      map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
 	cmdStatus     string
 	failFiles     bool // GET /episodefile answers 500
+	realistic     bool // model Sonarr honestly: a delete removes files, an import is rejected while old files remain, scans are listed
+	rejected      int  // imports Sonarr refused because old files were still present
+	scans         []map[string]any
+	scanStatus    string // status new scans get in realistic mode (default completed)
 	srv           *httptest.Server
+}
+
+func (f *fakeSonarr) scanStatusOrDefault() string {
+	if f.scanStatus != "" {
+		return f.scanStatus
+	}
+	return "completed"
 }
 
 func newFake(packEps []int) *fakeSonarr {
@@ -92,6 +103,16 @@ func newFake(packEps []int) *fakeSonarr {
 			f.onDelete()
 		}
 		f.deleted = append(f.deleted, b.EpisodeFileIDs)
+		if f.realistic {
+			for _, id := range b.EpisodeFileIDs {
+				delete(f.existing, id)
+				for n, fid := range f.seasonEps {
+					if fid == id {
+						f.seasonEps[n] = 0
+					}
+				}
+			}
+		}
 		f.mu.Unlock()
 	})
 	mux.HandleFunc("POST /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +120,8 @@ func newFake(packEps []int) *fakeSonarr {
 			Name         string `json:"name"`
 			SeriesID     int    `json:"seriesId"`
 			SeasonNumber int    `json:"seasonNumber"`
+			Path         string `json:"path"`
+			ClientID     string `json:"downloadClientId"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
@@ -112,6 +135,20 @@ func newFake(packEps []int) *fakeSonarr {
 			f.searches = append(f.searches, [2]int{b.SeriesID, b.SeasonNumber})
 		} else {
 			f.imports++
+			if f.realistic {
+				id := 100 + f.imports
+				f.scans = append(f.scans, map[string]any{"id": id, "name": b.Name, "status": f.scanStatusOrDefault(), "queued": time.Now().UTC().Format(time.RFC3339Nano), "body": map[string]string{"path": b.Path, "downloadClientId": b.ClientID}})
+				if len(f.existing) > 0 {
+					f.rejected++ // "not an upgrade": Sonarr will not import over files that are still there
+				} else {
+					for _, n := range f.packEps {
+						f.seasonEps[n] = 900 + n
+					}
+				}
+				f.mu.Unlock()
+				js(w, map[string]int{"id": id})
+				return
+			}
 		}
 		f.mu.Unlock()
 		js(w, map[string]int{"id": 42})
@@ -124,6 +161,17 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Lock()
 		f.removed = append(f.removed, removal{b.IDs, r.URL.RawQuery})
 		f.mu.Unlock()
+	})
+	mux.HandleFunc("GET /api/v3/command/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, sc := range f.scans {
+			if fmt.Sprint(sc["id"]) == r.PathValue("id") {
+				js(w, sc)
+				return
+			}
+		}
+		http.NotFound(w, r)
 	})
 	mux.HandleFunc("GET /api/v3/command/42", func(w http.ResponseWriter, r *http.Request) {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
@@ -144,6 +192,12 @@ func newFake(packEps []int) *fakeSonarr {
 		js(w, fs)
 	})
 	mux.HandleFunc("GET /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
+		if f.realistic {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			js(w, append([]map[string]any{}, f.scans...))
+			return
+		}
 		if f.cmds == nil {
 			js(w, []any{})
 			return

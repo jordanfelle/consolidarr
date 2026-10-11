@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -266,13 +267,27 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		_ = e.St.UpdateJob(*j)
 		return
 	}
+	e.inflight.Add(1) // counted before the draining check so a shutdown's WaitIdle cannot miss us
+	defer e.inflight.Add(-1)
+	if e.draining.Load() {
+		return // shutting down: nothing has been recorded or deleted, the job is exactly as it was
+	}
+	e.kill("before-record")
+	prev := *j
 	now := time.Now().Unix()
 	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0
 	j.Message = fmt.Sprintf("deleting %d old files, then importing", len(ids))
-	_ = e.St.UpdateJob(*j) // before the delete
+	if err := e.St.UpdateJob(*j); err != nil { // the write-ahead record: without it a crash after the delete loses the job
+		*j = prev
+		e.St.Event("error", fmt.Sprintf("%s: could not record the replacement, so nothing was deleted: %v", label, err))
+		return
+	}
+	e.kill("after-record")
 	if len(ids) > 0 {
 		if err := c.DeleteEpisodeFiles(ctx, ids); err != nil {
 			if left, lerr := liveOld(ctx, c, j.SeriesID, ids); lerr == nil && len(left) == len(ids) {
+				// If this write fails the job stays 'importing' with the delete recorded; finishImport then retries the
+				// (idempotent) delete before it imports, so nothing is lost either way.
 				j.Status, j.Deleted, j.Message = "holding", 0, "delete failed, nothing was removed: "+err.Error()
 				_ = e.St.UpdateJob(*j)
 				return
@@ -281,7 +296,9 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			e.St.Event("error", fmt.Sprintf("%s: delete reported an error after possibly removing files: %v", label, err))
 		}
 	}
+	e.kill("after-delete")
 	id, err := c.ImportDownload(ctx, v.OutputPath, v.DownloadID)
+	e.kill("after-import-start")
 	if err != nil {
 		j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
 		_ = e.St.UpdateJob(*j)
@@ -295,6 +312,37 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	}
 	_ = e.St.UpdateJob(*j)
 	e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started (%s)", label, len(ids), how))
+}
+
+// findImportCommand finds the DownloadedEpisodesScan this job's current import attempt started, so a restart that lost
+// the command id does not start a second scan. It matches by folder or download client id and only counts a command
+// that is still queued/running, or that was queued after this attempt began (importAt): an older command of the same
+// folder (an earlier attempt, a manual scan) must never be mistaken for the current one, or a re-ask would be swallowed.
+func findImportCommand(cmds []sonarr.Command, path, downloadID string, importAt int64) int {
+	for i := len(cmds) - 1; i >= 0; i-- {
+		c := cmds[i]
+		if c.Name != "DownloadedEpisodesScan" || c.ID == 0 {
+			continue
+		}
+		if !(path != "" && c.Body.Path == path) && !(downloadID != "" && strings.EqualFold(c.Body.DownloadClientID, downloadID)) {
+			continue
+		}
+		switch strings.ToLower(c.Status) {
+		case "queued", "started":
+			return c.ID
+		}
+		if t, err := time.Parse(time.RFC3339Nano, c.Queued); err == nil && importAt > 0 && t.Unix() >= importAt-5 {
+			return c.ID
+		}
+	}
+	return 0
+}
+
+// kill is a test hook: a process death at this step. It is nil in production.
+func (e *Engine) kill(stage string) {
+	if e.killpoint != nil {
+		e.killpoint(stage)
+	}
 }
 
 // finishImport follows a job whose old files are (or may be) gone until every expected episode has a new file.
@@ -317,14 +365,14 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	want, _, got := coverage(j, eps)
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg
+		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 7*24*time.Hour, "failed after delete") // never auto-regrab over a half-replaced season; first, so a crash between the two cannot leave a failed job unprotected
 		_ = e.St.UpdateJob(*j)
-		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 7*24*time.Hour, "failed after delete") // never auto-regrab over a half-replaced season
 		e.St.Event("error", label+": "+msg)
 	}
 	if len(want) > 0 && got >= len(want) { // with nothing known to wait for, only the age checks below can end the job
 		j.Status, j.Message = "done", fmt.Sprintf("%d episodes imported", got)
-		_ = e.St.UpdateJob(*j)
 		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
+		_ = e.St.UpdateJob(*j)
 		e.St.Event("info", fmt.Sprintf("done %s: %d episodes imported", label, got))
 		e.rescanSeries(ctx, inst, j.SeriesID)
 		return
@@ -337,7 +385,35 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 			}
 			return
 		}
+		if e.draining.Load() {
+			return
+		}
+		// The process may have died after recording the delete but before (or while) Sonarr carried it out. Deleting is
+		// idempotent and only ever targets files that are still there, so finish it now: an import against files that are
+		// still present is rejected as "not an upgrade" and the job would end up failed.
+		unlockInst := e.instMu.lock(inst.ID) // one season at a time, same as a replacement
+		defer unlockInst()
+		if left, lerr := liveOld(ctx, c, j.SeriesID, j.OldFileIDs); lerr != nil {
+			return
+		} else if len(left) > 0 {
+			if derr := c.DeleteEpisodeFiles(ctx, left); derr != nil {
+				j.Message = fmt.Sprintf("finishing the interrupted delete failed (%v). It will be retried", derr)
+				_ = e.St.UpdateJob(*j)
+				return
+			}
+			e.St.Event("info", fmt.Sprintf("%s: finished a delete that was interrupted by a restart (%d files)", label, len(left)))
+		}
+		// The process may also have died after Sonarr accepted the import but before we saved its id: adopt that command
+		// instead of starting a second scan of the same download.
+		if cmds, cerr := c.Commands(ctx); cerr != nil {
+			return
+		} else if id := findImportCommand(cmds, mine[0].OutputPath, mine[0].DownloadID, j.ImportAt); id != 0 {
+			j.ImportCmd, j.Message = id, "import already started (found after a restart)"
+			_ = e.St.UpdateJob(*j)
+			return
+		}
 		id, err := c.ImportDownload(ctx, mine[0].OutputPath, mine[0].DownloadID)
+		e.kill("fi-after-import-start")
 		if err != nil {
 			j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
 			_ = e.St.UpdateJob(*j)
@@ -351,6 +427,18 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	finished := cerr != nil || cmd.Status == "completed" || cmd.Status == "failed" // an unknown command was pruned: judge by the files
 	switch {
 	case finished && age > importSettle:
+		// A host or Sonarr that was down can lose the command (or fail it) while the pack is still queued: ask again a
+		// couple of times before handing the job to a human.
+		if mine := ownedItems(queue, j); len(mine) > 0 && !e.draining.Load() {
+			rk := fmt.Sprintf("reimport:%d", j.ID)
+			if n, _ := strconv.Atoi(e.St.KV(rk)); n < 2 {
+				e.St.SetKV(rk, strconv.Itoa(n+1))
+				j.ImportCmd, j.ImportAt, j.Message = 0, time.Now().Unix(), fmt.Sprintf("the import finished with %d of %d episodes; asking Sonarr again (%d of 2)", got, len(want), n+1)
+				_ = e.St.UpdateJob(*j)
+				e.St.Event("warn", label+": "+j.Message)
+				return
+			}
+		}
 		fail(fmt.Sprintf("the import finished but only %d of %d episodes have files. Your old files were already replaced; use Needs attention to retry or adopt the pack", got, len(want)))
 	case !finished && age > importHardStop:
 		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))

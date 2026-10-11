@@ -70,10 +70,14 @@ create index if not exists snapshots_ts on snapshots(ts);
 create table if not exists api_keys(id {{PK}}, name text not null, prefix text not null, hash text unique not null, created bigint not null, last_used bigint not null default 0);
 `
 
-// Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir.
+// Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir. A failed attempt closes its
+// pool, so a caller that retries (a database still starting) does not leak one per try.
 func Open(dir, databaseURL string) (*Store, error) {
 	st := &Store{}
 	pk := "integer primary key"
+	// SQLite runs with synchronous=FULL on purpose: the "importing" write-ahead record must survive power loss, because a
+	// delete may already be on its way to Sonarr. The cost is an fsync per write, which is fine for this app's handful of
+	// writes per minute (slow media such as an SD card will feel it, but correctness wins over throughput here).
 	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
 		db, err := sql.Open("pgx", databaseURL)
 		if err != nil {
@@ -81,23 +85,27 @@ func Open(dir, databaseURL string) (*Store, error) {
 		}
 		st.DB, st.PG, pk = db, true, "bigserial primary key"
 	} else {
-		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "consolidarr.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "consolidarr.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
 		if err != nil {
 			return nil, err
 		}
 		db.SetMaxOpenConns(1) // sqlite: one writer; keeps this simple and race-free
 		st.DB = db
 	}
+	fail := func(err error) (*Store, error) {
+		_ = st.DB.Close()
+		return nil, err
+	}
 	for _, stmt := range strings.Split(strings.ReplaceAll(schemaTmpl, "{{PK}}", pk), ";\n") {
 		if strings.TrimSpace(stmt) == "" {
 			continue
 		}
 		if _, err := st.DB.Exec(stmt); err != nil {
-			return nil, fmt.Errorf("schema: %w", err)
+			return fail(fmt.Errorf("schema: %w", err))
 		}
 	}
 	if err := st.migrate(); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+		return fail(fmt.Errorf("migrate: %w", err))
 	}
 	_, _ = st.Exec(`delete from sessions where expires < ?`, time.Now().Unix()) // expired sessions are dead weight
 	return st, nil

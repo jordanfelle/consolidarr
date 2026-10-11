@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
@@ -24,6 +25,10 @@ type Engine struct {
 
 	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
 	instMu locks // one season per instance is deleted-and-imported at a time
+
+	killpoint func(stage string) // tests only: called at each durable step of a replacement so a test can 'kill -9' there
+	draining  atomic.Bool        // set once shutdown begins: no new replacement may start deleting
+	inflight  atomic.Int64       // replacements between 'record importing' and 'import started'; a restart waits for them
 
 	mu       sync.Mutex
 	scanning map[int64]bool
@@ -334,8 +339,42 @@ func healthy(ctx context.Context, c *sonarr.Client) string {
 	return ""
 }
 
+// logResume records what a (re)start is picking back up. Nothing here needs repair: every state a job can be in
+// when the process dies is resumable from the database alone (see replace for the ordering that guarantees it).
+func (e *Engine) logResume() {
+	js, err := e.St.Jobs(true, 10000)
+	if err != nil || len(js) == 0 {
+		return
+	}
+	by := map[string]int{}
+	for _, j := range js {
+		by[j.Status]++
+	}
+	e.St.Event("info", fmt.Sprintf("started: resuming %d active jobs %v", len(js), by))
+}
+
+// Drain begins shutdown: no replacement may start deleting from here on. Start also calls it when its context ends.
+func (e *Engine) Drain() { e.draining.Store(true) }
+
+// WaitIdle blocks until no replacement is between its first database write and the import being started, or the
+// timeout passes. A shutdown calls it for a few seconds as a courtesy so a clean stop usually lands between
+// replacements. It is not what makes restarts safe: a hard kill, OOM or power loss at any step is recovered from the
+// database alone (the job resumes as 'importing'; see TestKillNineAtEveryStepOfAReplacementIsRecovered).
+func (e *Engine) WaitIdle(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for e.inflight.Load() > 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true
+}
+
 // Start runs the scheduler until ctx ends.
 func (e *Engine) Start(ctx context.Context) {
+	go func() { <-ctx.Done(); e.Drain() }()
+	e.logResume()
 	_ = e.St.RecordSnapshot(e.St.Settings().MinFiles) // a point on every restart keeps the history line continuous
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
@@ -447,6 +486,9 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		return false // an unreadable queue is not an empty one; regrabbing seasons already downloading would waste data
 	}
 	for _, r := range rows {
+		if e.draining.Load() {
+			return false // shutting down: start nothing new
+		}
 		if limitHit() {
 			return true
 		}
@@ -520,7 +562,7 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 	}
 	var failed []int64
 	for _, j0 := range jobs {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || e.draining.Load() {
 			return // shutting down: the marker is not written, so the next start finishes the pass
 		}
 		if !e.reconcileOne(ctx, inst, c, j0.ID) {
@@ -618,6 +660,9 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 	for _, j := range jobs {
 		if j.InstID != inst.ID {
 			continue
+		}
+		if e.draining.Load() {
+			return // shutting down: leave the rest for the next start
 		}
 		e.advance(ctx, inst, c, set, j, queue)
 	}
@@ -819,6 +864,9 @@ func removeOld(ctx context.Context, c *sonarr.Client, seriesID int, old []int) e
 // state can have changed since.
 func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job) error {
 	defer e.jobMu.lock(j0.ID)()
+	if e.draining.Load() {
+		return errors.New("consolidarr is restarting; try again in a minute")
+	}
 	j, err := e.St.Job(j0.ID)
 	if err != nil {
 		return err
