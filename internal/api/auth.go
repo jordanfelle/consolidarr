@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,7 @@ func (a *API) authed(r *http.Request) bool {
 		return false
 	}
 	var exp int64
-	if a.St.QueryRow(`select expires from sessions where token=?`, c.Value).Scan(&exp) != nil {
+	if a.St.QueryRow(`select expires from sessions where token=?`, sessionHash(c.Value)).Scan(&exp) != nil {
 		return false
 	}
 	return exp > time.Now().Unix()
@@ -80,7 +81,8 @@ func (a *API) startSession(w http.ResponseWriter, r *http.Request, uid int64) {
 	_, _ = rand.Read(b)
 	tok := hex.EncodeToString(b)
 	exp := time.Now().Add(30 * 24 * time.Hour)
-	_, _ = a.St.Exec(`insert into sessions(token,user_id,expires) values(?,?,?)`, tok, uid, exp.Unix())
+	_, _ = a.St.Exec(`delete from sessions where expires < ?`, time.Now().Unix()) // expired sessions are dead weight
+	_, _ = a.St.Exec(`insert into sessions(token,user_id,expires) values(?,?,?)`, sessionHash(tok), uid, exp.Unix())
 	c := a.sessionCookie(r, tok)
 	c.Expires = exp
 	http.SetCookie(w, c)
@@ -100,6 +102,10 @@ var loginDelay = 500 * time.Millisecond
 var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("consolidarr-dummy-password"), bcrypt.DefaultCost)
 
 func (a *API) setup(w http.ResponseWriter, r *http.Request) {
+	if a.AuthDisabled {
+		fail(w, 409, "login is disabled (CONSOLIDARR_AUTH_DISABLED), so there is nothing to set up")
+		return
+	}
 	if a.userCount() > 0 {
 		fail(w, 409, "already set up")
 		return
@@ -153,9 +159,25 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"ok": true})
 }
 
+// sessionHash is what the sessions table stores: a database read (a backup, a leaked dump) must not hand over live
+// session tokens. The cookie keeps the raw random token.
+func sessionHash(tok string) string {
+	h := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(h[:])
+}
+
+// logoutAll ends every session, this one included (a stolen cookie, a forgotten browser).
+func (a *API) logoutAll(w http.ResponseWriter, r *http.Request) {
+	_, _ = a.St.Exec(`delete from sessions`)
+	c := a.sessionCookie(r, "")
+	c.MaxAge = -1
+	http.SetCookie(w, c)
+	ok(w, map[string]any{"ok": true})
+}
+
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
-		_, _ = a.St.Exec(`delete from sessions where token=?`, c.Value)
+		_, _ = a.St.Exec(`delete from sessions where token=?`, sessionHash(c.Value))
 	}
 	c := a.sessionCookie(r, "")
 	c.MaxAge = -1

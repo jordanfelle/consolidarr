@@ -63,6 +63,10 @@ func (a *API) listKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
+	if a.AuthDisabled {
+		fail(w, 409, "login is disabled (CONSOLIDARR_AUTH_DISABLED): a key made now would silently become a standing credential the day login is turned on. Create keys while login is on")
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}

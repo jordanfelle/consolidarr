@@ -75,7 +75,7 @@ func TestAttentionSkipsSeasonsAnActiveJobOwns(t *testing.T) {
 
 func TestAdoptCreatesAJobAndVerifiesWithoutDeletingUnderDryRun(t *testing.T) {
 	v := attentionEnv(t, stuckItem(10, 1, 3, "Not an upgrade for existing episode file(s)."))
-	j, err := v.e.Adopt(context.Background(), v.inst, 1, 3)
+	j, err := v.e.Adopt(context.Background(), v.inst, 1, 3, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAdoptStillRefusesToDeleteWhenVerificationFails(t *testing.T) {
 	v := attentionEnv(t, stuckItem(10, 1, 3, "Not an upgrade for existing episode file(s)."))
 	probeFn = func(store.Instance, string) (bool, string) { return false, "e.mkv: unreadable or DRM-encrypted" }
 	_ = v.st.SaveSettings(live())
-	j, err := v.e.Adopt(context.Background(), v.inst, 1, 3)
+	j, err := v.e.Adopt(context.Background(), v.inst, 1, 3, true)
 	if err != nil {
 		t.Fatal(err)
 	}

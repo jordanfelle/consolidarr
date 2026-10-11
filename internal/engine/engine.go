@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -260,6 +261,23 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 	return out, nil
 }
 
+// CurrentRank is the best quality among the season's files right now (0 when it has none).
+func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.Season) (int, error) {
+	files, err := client(inst).EpisodeFiles(ctx, s.SeriesID)
+	if err != nil {
+		return 0, err
+	}
+	cur := 0
+	for _, f := range files {
+		if f.SeasonNumber == s.Season {
+			if rk := f.Quality.Rank(); rk > cur {
+				cur = rk
+			}
+		}
+	}
+	return cur, nil
+}
+
 // Grab records the season's current files, grabs the release and starts tracking a job.
 func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer string) (int64, error) {
 	c := client(inst)
@@ -288,7 +306,7 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 		// a grab that timed out may still have reached the download client
 		time.Sleep(grabRetryWait)
 		if q, qerr := c.Queue(ctx, 2*time.Minute); qerr != nil || !inQueue(q, s.SeriesID, s.Season) {
-			_ = e.St.DeleteJob(id) // release the reservation
+			_ = e.St.DeleteJob(id, false) // release the reservation
 			return 0, err
 		}
 	}
@@ -917,7 +935,10 @@ var probeFn = probe
 // probe checks a file with ffprobe through the instance's path mapping.
 // why == "unverified" means ffprobe or the file isn't reachable (not an error).
 func probe(inst store.Instance, path string) (ok bool, why string) {
-	local := mapPath(inst, path)
+	local := filepath.Clean(mapPath(inst, path))
+	if !filepath.IsAbs(local) { // never let a name that starts with "-" be read as an ffprobe option
+		return true, "unverified"
+	}
 	if _, err := os.Stat(local); err != nil {
 		return true, "unverified"
 	}
@@ -927,7 +948,7 @@ func probe(inst store.Instance, path string) (ok bool, why string) {
 	var stdout, stderr strings.Builder
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second) // a hung NFS read must not stall every job
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", local)
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", "-i", local)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil || strings.Contains(stderr.String(), "encv") {
 		return false, fmt.Sprintf("%s: unreadable or DRM-encrypted", baseName(local))

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -78,6 +79,7 @@ type Attention struct {
 	QueueIDs   []int    `json:"queueIds"`
 	DownloadID string   `json:"downloadId"`
 	OutputPath string   `json:"outputPath"`
+	PackRank   int      `json:"packRank"` // quality rank of the downloaded pack (0 = unknown)
 	State      string   `json:"state"`
 	Reasons    []Reason `json:"reasons"`
 	HaveFiles  int      `json:"haveFiles"`
@@ -117,6 +119,9 @@ func (e *Engine) attentionFor(ctx context.Context, inst store.Instance, owned ma
 			counts[k] = map[string]*Reason{}
 		}
 		g.Items++
+		if rk := q.Quality.Rank(); rk > g.PackRank {
+			g.PackRank = rk
+		}
 		g.QueueIDs = append(g.QueueIDs, q.ID)
 		g.SizeGB = maxf(g.SizeGB, q.Size/1e9)
 		seen := map[string]bool{} // count each file once per reason, however many warnings repeat it
@@ -225,10 +230,13 @@ func (e *Engine) findAttention(ctx context.Context, inst store.Instance, seriesI
 	return nil, store.ErrNotFound
 }
 
+// ErrDowngrade is returned by Adopt when the stuck pack is lower quality than the files it would replace.
+var ErrDowngrade = errors.New("needs force: the pack is lower quality than the files it would replace")
+
 // Adopt turns a stuck download into a normal job: it records the season's current files as the ones to replace
 // and runs one verification pass right away. From there it follows every rule a grabbed job does (probe,
 // coverage, dry run / manual approval, the import-health gate), so nothing is deleted without those checks.
-func (e *Engine) Adopt(ctx context.Context, inst store.Instance, seriesID, season int) (store.Job, error) {
+func (e *Engine) Adopt(ctx context.Context, inst store.Instance, seriesID, season int, force bool) (store.Job, error) {
 	g, err := e.findAttention(ctx, inst, seriesID, season)
 	if err != nil {
 		return store.Job{}, err
@@ -238,10 +246,17 @@ func (e *Engine) Adopt(ctx context.Context, inst store.Instance, seriesID, seaso
 		return store.Job{}, err
 	}
 	var old []int
+	cur := 0
 	for _, f := range files {
 		if f.SeasonNumber == season {
 			old = append(old, f.ID)
+			if rk := f.Quality.Rank(); rk > cur {
+				cur = rk
+			}
 		}
+	}
+	if !force && g.PackRank > 0 && g.PackRank < cur {
+		return store.Job{}, ErrDowngrade
 	}
 	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: seriesID, Season: season, Title: g.Series, OldFileIDs: old,
 		Release: g.Pack, Indexer: g.Indexer, SizeGB: g.SizeGB, DownloadID: g.DownloadID})

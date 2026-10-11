@@ -3,10 +3,20 @@ services:
     image: ghcr.io/jordanfelle/consolidarr:latest
     container_name: consolidarr
     restart: unless-stopped
+    # The app needs no privileges and writes only to /data, so take everything else away (checked: it starts and
+    # serves with all three of these).
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     ports:
+      # To limit who can reach it, bind a single interface ("10.0.0.5:7480:7480"), or keep the port open and set
+      # CONSOLIDARR_ALLOWED_IPS (and CONSOLIDARR_TRUSTED_PROXIES behind a reverse proxy): see the README.
       - "7480:7480"
     environment:
       TZ: Etc/UTC
+      # Optional: only these clients may reach the UI/API (everyone else gets a 403). Unset = anyone who can reach the port.
+      # CONSOLIDARR_ALLOWED_IPS: 192.168.1.0/24, 10.0.0.5
       # Optional: use Postgres instead of the bundled SQLite file.
       # CONSOLIDARR_DATABASE_URL: postgres://consolidarr:password@postgres:5432/consolidarr?sslmode=disable
     volumes:

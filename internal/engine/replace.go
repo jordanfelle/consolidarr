@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -134,7 +135,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 			continue
 		}
 		// every file must live inside the download folder; library paths mean we are looking at the wrong thing
-		if folder != "" && it.Path != folder && !strings.HasPrefix(it.Path, strings.TrimRight(folder, "/")+"/") {
+		if folder != "" && !insideFolder(it.Path, folder) {
 			outside++
 			continue
 		}
@@ -336,6 +337,16 @@ func findImportCommand(cmds []sonarr.Command, path, downloadID string, importAt 
 		}
 	}
 	return 0
+}
+
+// insideFolder reports whether path is the folder or lies under it, after cleaning both, so "/dl/x/../../etc/y" is not
+// "inside" /dl/x. Relative paths are never inside anything.
+func insideFolder(path, folder string) bool {
+	if !filepath.IsAbs(path) || !filepath.IsAbs(folder) {
+		return false
+	}
+	p, f := filepath.Clean(path), filepath.Clean(folder)
+	return p == f || strings.HasPrefix(p, strings.TrimRight(f, "/")+"/")
 }
 
 // kill is a test hook: a process death at this step. It is nil in production.

@@ -66,7 +66,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, tim
 }
 
 // maxResponse bounds how much of a reply is buffered; the largest real payloads (a whole library) are far below it.
-var maxResponse = 256 << 20
+var maxResponse = 64 << 20
 
 func truncate(s string, n int) string {
 	if len(s) > n {
@@ -161,6 +161,7 @@ type QueueItem struct {
 	DownloadID   string  `json:"downloadId"`
 	OutputPath   string  `json:"outputPath"`
 	TrackedState string  `json:"trackedDownloadState"`
+	Quality      Quality `json:"quality"`
 }
 
 type ManualImportItem struct {

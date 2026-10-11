@@ -52,6 +52,18 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
+// The server refuses a lower-quality or Sonarr-rejected pack with "needs force: <why>". Ask the person once; only an
+// explicit yes retries with force.
+async function withForce<T>(go: (force: boolean) => Promise<T>): Promise<T> {
+  try {
+    return await go(false);
+  } catch (e) {
+    const m = (e as Error).message || "";
+    if (m.startsWith("needs force:") && window.confirm(m.replace("needs force:", "Are you sure?") + "\n\nProceed anyway?")) return go(true);
+    throw e;
+  }
+}
+
 export const api = {
   me: () => req<{ setupRequired: boolean; authenticated: boolean; version: string }>("GET", "/auth/me"),
   setup: (username: string, password: string) => req("POST", "/auth/setup", { username, password }),
@@ -65,12 +77,10 @@ export const api = {
   seasons: (q: URLSearchParams) => req<{ total: number; seasons: Season[] }>("GET", "/seasons?" + q.toString()),
   candidates: (s: Season) => req<Candidate[]>("GET", `/seasons/${s.instId}/${s.seriesId}/${s.season}/candidates`),
   grab: (s: Season, c: Candidate) =>
-    req("POST", `/seasons/${s.instId}/${s.seriesId}/${s.season}/grab`, {
-      guid: c.guid, indexerId: c.indexerId, title: c.title, sizeGB: c.size / 1e9, indexer: c.indexer,
-    }),
+    withForce((force) => req("POST", `/seasons/${s.instId}/${s.seriesId}/${s.season}/grab`, { guid: c.guid, force })),
   jobs: (active = false) => req<Job[]>("GET", "/jobs" + (active ? "?active=1" : "")),
   approve: (id: number) => req("POST", `/jobs/${id}/approve`),
-  deleteJob: (id: number) => req("DELETE", `/jobs/${id}`),
+  deleteJob: (id: number) => withForce((force) => req("DELETE", `/jobs/${id}${force ? "?force=1" : ""}`)),
   settings: () => req<Settings>("GET", "/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/settings", s),
   events: () => req<Event[]>("GET", "/events"),
@@ -82,7 +92,8 @@ export const api = {
   metrics: (range: string) => req<Metrics>("GET", `/metrics?range=${range}`),
   indexers: () => req<IndexerList>("GET", "/indexers"),
   attention: () => req<{ items: Attention[]; errors: string[] }>("GET", "/attention"),
-  adopt: (a: Attention) => req<Job>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/adopt`),
+  adopt: (a: Attention) =>
+    withForce((force) => req<Job>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/adopt${force ? "?force=1" : ""}`)),
   retryImport: (a: Attention) => req<{ commandId: number }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/retry`),
   removePack: (a: Attention, o: { blocklist: boolean; deleteFiles: boolean; research: boolean }) =>
     req<{ removed: number; searched: boolean }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/remove`, o),

@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -81,6 +82,7 @@ func (a *API) Routes() []route {
 		{"POST", "/api/auth/setup", a.setup, true},
 		{"POST", "/api/auth/login", a.login, true},
 		{"POST", "/api/auth/logout", a.logout, true},
+		{"POST", "/api/auth/logout-all", a.logoutAll, false},
 		{"GET", "/healthz", func(w http.ResponseWriter, r *http.Request) { ok(w, map[string]string{"status": "ok"}) }, true},
 		{"GET", "/api/openapi.json", a.openapi, true},
 		{"GET", "/api/docs", a.docs, true},
@@ -248,6 +250,10 @@ func (a *API) getInstance(w http.ResponseWriter, r *http.Request) {
 func (a *API) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err := a.St.DeleteInstance(id); err != nil {
+		if errors.Is(err, store.ErrJobBusy) {
+			fail(w, 409, err.Error())
+			return
+		}
 		fail(w, 500, err.Error())
 		return
 	}
@@ -274,7 +280,7 @@ func (a *API) testInstance(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	v, err := sonarr.New(i.URL, i.APIKey).Status(ctx)
 	if err != nil {
-		fail(w, 502, err.Error())
+		fail(w, 502, testError(err))
 		return
 	}
 	ok(w, map[string]string{"version": v})
@@ -410,6 +416,7 @@ func (a *API) grab(w http.ResponseWriter, r *http.Request) {
 		Title     string  `json:"title"`
 		SizeGB    float64 `json:"sizeGB"`
 		Indexer   string  `json:"indexer"`
+		Force     bool    `json:"force"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -418,7 +425,40 @@ func (a *API) grab(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "guid required")
 		return
 	}
-	id, err := a.Eng.Grab(r.Context(), inst, s, b.GUID, b.IndexerID, b.Title, b.SizeGB, b.Indexer)
+	// Only a release Sonarr lists for this season right now can be grabbed, and its title, size and indexer come from
+	// Sonarr's record, not the request: they drive how the download is recognised later. A release with blocking
+	// rejections, or lower in quality than the files being replaced, needs an explicit force.
+	cands, err := a.Eng.Candidates(r.Context(), inst, s)
+	if err != nil {
+		fail(w, 502, err.Error())
+		return
+	}
+	var pick *engine.Candidate
+	for i := range cands {
+		if cands[i].GUID == b.GUID {
+			pick = &cands[i]
+			break
+		}
+	}
+	if pick == nil {
+		fail(w, 409, "that release is not in this season's current candidate list; refresh the list and try again")
+		return
+	}
+	if !b.Force {
+		if len(pick.Blocking) > 0 {
+			fail(w, 409, "needs force: Sonarr would reject it ("+pick.Blocking[0]+")")
+			return
+		}
+		cur := s.CurRank
+		if fresh, err := a.Eng.CurrentRank(r.Context(), inst, s); err == nil {
+			cur = fresh // the stored value is from the last scan; the files may have changed since
+		}
+		if pick.Quality.Rank() < cur {
+			fail(w, 409, "needs force: it is lower quality than the files it would replace")
+			return
+		}
+	}
+	id, err := a.Eng.Grab(r.Context(), inst, s, pick.GUID, pick.IndexerID, pick.Title, float64(pick.Size)/1e9, pick.Indexer)
 	if err == store.ErrDuplicate {
 		fail(w, 409, err.Error())
 		return
@@ -525,7 +565,11 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteJob(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err := a.St.DeleteJob(id); err != nil {
+	if err := a.St.DeleteJob(id, r.URL.Query().Get("force") == "1"); err != nil {
+		if errors.Is(err, store.ErrJobBusy) || errors.Is(err, store.ErrJobNeedsForce) {
+			fail(w, 409, err.Error())
+			return
+		}
 		fail(w, 500, err.Error())
 		return
 	}

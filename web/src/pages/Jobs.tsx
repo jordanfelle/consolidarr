@@ -22,9 +22,11 @@ export default function Jobs() {
   const del = useMutation({ mutationFn: api.deleteJob, onSuccess: refresh });
   const retry = useMutation({ mutationFn: api.retryJob, onSuccess: refresh });
   const reject = useMutation({ mutationFn: (id: number) => api.rejectJob(id, true), onSuccess: refresh });
+  const err = approve.error || del.error || retry.error || reject.error;
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Replacements</h1>
+      {err && <div className="text-bad">{(err as Error).message}</div>}
       <p className="text-sm text-muted">
         A pack is downloaded, probed and checked against what you have today before any old file is deleted.
         <b> Ready</b> means verified and waiting for you; <b>holding</b> means a check failed and nothing was touched.
