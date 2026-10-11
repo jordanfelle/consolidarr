@@ -81,7 +81,6 @@ func contains(list []netip.Prefix, a netip.Addr) bool {
 	return false
 }
 
-// clientIP is the address the request is attributed to (see IPAllow). ok is false when the peer address cannot be read.
 // ClientIP exposes clientIP so callers such as the login limiter attribute a request to the real client, not to the
 // trusted proxy in front of it.
 func (ip *IPAllow) ClientIP(r *http.Request) (netip.Addr, bool) { return ip.clientIP(r) }
