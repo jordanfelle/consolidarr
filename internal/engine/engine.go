@@ -534,6 +534,14 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	}
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	// The error timer counts consecutive failed checks: any pass through advance that is not such a failure resets it.
+	// (It is in memory only, so a restart restarts the day; that fails safe by leaving the job alone longer.)
+	keepErr := false
+	defer func() {
+		if !keepErr {
+			e.clearErr(j.ID)
+		}
+	}()
 	switch j.Status {
 	case "done", "failed", "lost":
 		return
@@ -570,9 +578,9 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
 			got, ok, ierr := e.importedBySonarr(ctx, c, &j)
 			if ierr != nil && !e.errorsPersisted(j.ID) {
+				keepErr = true
 				return // Sonarr hiccup: look again next cycle rather than writing a terminal state; a day of errors in a row falls through to lost
 			}
-			e.clearErr(j.ID)
 			if ok {
 				j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
 				e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")

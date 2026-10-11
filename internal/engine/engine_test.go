@@ -401,6 +401,30 @@ func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
 	if got := run(v, j); got.Status != "done" {
 		t.Fatalf("the next cycle should recover to done, got %s %q", got.Status, got.Message)
 	}
+	// error, a pass that is not an error, then another error: the timer restarted, so one blip never ends the job
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.failFiles = true
+	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-25*time.Hour).Unix(), j.ID)
+	j, _ = v.st.Job(j.ID)
+	run(v, j)
+	v.e.mu.Lock()
+	v.e.errSince[j.ID] = time.Now().Add(-25 * time.Hour) // stale timer from the first error
+	v.e.mu.Unlock()
+	q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: j.Release, DownloadID: "X", Size: 100, SizeLeft: 50, Status: "downloading"}}
+	j.DownloadID = "X"
+	_ = v.st.UpdateJob(j)
+	j, _ = v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, q) // reappears in the queue: not an error
+	v.e.mu.Lock()
+	_, stale := v.e.errSince[j.ID]
+	v.e.mu.Unlock()
+	if stale {
+		t.Fatal("a pass that is not an error must clear the timer")
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("a fresh blip after a clean pass must not end the job, got %s", got.Status)
+	}
 	// errors that persist for a day end as lost instead of hanging forever
 	v, j = grab(t, []int{11, 12, 13})
 	v.fake.failFiles = true
@@ -410,8 +434,12 @@ func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
 		t.Fatalf("one blip on an old job must not end it, got %s", got.Status)
 	}
 	v.e.mu.Lock()
+	first, recorded := v.e.errSince[j.ID]
 	v.e.errSince[j.ID] = time.Now().Add(-25 * time.Hour)
 	v.e.mu.Unlock()
+	if !recorded || first.IsZero() {
+		t.Fatal("the first error must be recorded")
+	}
 	if got := run(v, j); got.Status != "lost" {
 		t.Fatalf("a day of errors in a row should fall through to lost, got %s", got.Status)
 	}
