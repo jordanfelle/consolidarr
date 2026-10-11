@@ -82,10 +82,12 @@ func contains(list []netip.Prefix, a netip.Addr) bool {
 }
 
 // clientIP is the address the request is attributed to (see IPAllow). ok is false when the peer address cannot be read.
-// ClientIP is the address the request is attributed to (see IPAllow); callers such as the login limiter use it so
-// every user behind a trusted proxy does not share the proxy's address.
+// ClientIP exposes clientIP so callers such as the login limiter attribute a request to the real client, not to the
+// trusted proxy in front of it.
 func (ip *IPAllow) ClientIP(r *http.Request) (netip.Addr, bool) { return ip.clientIP(r) }
 
+// clientIP is the address the request is attributed to (see IPAllow). ok is false when the peer address cannot be read
+// or a forwarded hop is garbled.
 func (ip *IPAllow) clientIP(r *http.Request) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -121,7 +123,7 @@ func (ip *IPAllow) clientIP(r *http.Request) (netip.Addr, bool) {
 	return peer, true // no usable chain: the proxy itself is the client
 }
 
-// parseHop reads one X-Forwarded-For entry: a bare address, or the address:port / [v6]:port form some proxies append.
+// parseHop reads one X-Forwarded-For entry: a bare address, or the address:port / [v6]:port that some proxies append.
 func parseHop(h string) (netip.Addr, error) {
 	if a, err := netip.ParseAddr(strings.Trim(h, "[]")); err == nil {
 		return a, nil
