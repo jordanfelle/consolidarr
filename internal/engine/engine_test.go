@@ -760,6 +760,7 @@ func TestReconcileLostFixesOnlyVanishedJobsSonarrImported(t *testing.T) {
 	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
 	a := lost("no longer in Sonarr's queue; old files untouched")
 	b := lost("the grab never completed; nothing was downloaded or changed") // a different lost reason: not ours to judge
+	_, _ = v.st.Exec(`update jobs set season=4 where id=?`, b.ID)            // its own season, so it is not "later" than a
 	v.e.reconcileLost(context.Background(), v.inst, v.c)
 	if got := v.status(t, a.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
 		t.Fatalf("a vanished-lost job Sonarr imported must become done, got %s %q", got.Status, got.Message)
@@ -778,5 +779,31 @@ func TestReconcileLostFixesOnlyVanishedJobsSonarrImported(t *testing.T) {
 	v2.e.reconcileLost(context.Background(), v2.inst, v2.c)
 	if v2.st.KV("reconciled:vanished-lost:v1:1") != "" || v2.status(t, j.ID).Status != "lost" {
 		t.Fatal("an error must neither flip the job nor write the marker")
+	}
+}
+
+func TestReconcileLostSkipsSeasonsWithALaterJobAndKeepsGoingPastErrors(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(season int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+	old, latest := mk(3), mk(3) // two past attempts at the same season
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if got := v.status(t, old.ID); got.Status != "lost" {
+		t.Fatalf("an older job with a later one for the same season must be left alone, got %s", got.Status)
+	}
+	if got := v.status(t, latest.ID); got.Status != "done" {
+		t.Fatalf("the season's latest job should be reconciled, got %s", got.Status)
+	}
+	// a job that moved on since it was listed (retried by the user) is not overwritten
+	v2 := setup(t, []int{1, 2, 3})
+	id, _ := v2.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11}, Release: "x-NOXXUS", Status: "downloading"})
+	if !v2.e.reconcileOne(context.Background(), v2.inst, v2.c, id) || v2.status(t, id).Status != "downloading" {
+		t.Fatal("a job that is no longer lost must not be touched")
 	}
 }

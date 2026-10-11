@@ -509,22 +509,41 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 	if err != nil {
 		return
 	}
-	for _, j := range jobs {
-		if e.St.ActiveJob(j.InstID, j.SeriesID, j.Season) {
-			continue // a newer job owns this season
+	hadErr := false
+	for _, j0 := range jobs {
+		if !e.reconcileOne(ctx, inst, c, j0.ID) {
+			hadErr = true // keep judging the others; one bad series must not block them
 		}
-		unlock := e.jobMu.lock(j.ID)
-		got, ok, ierr := e.importedBySonarr(ctx, c, &j)
-		if ierr != nil {
-			unlock()
+	}
+	if hadErr { // retry on later cycles, but a permanently failing job cannot keep this running forever
+		triesKey := key + ":tries"
+		n, _ := strconv.Atoi(e.St.KV(triesKey))
+		e.St.SetKV(triesKey, strconv.Itoa(n+1))
+		if n+1 < 5 {
 			return
 		}
-		if ok {
-			e.markImportedBySonarr(ctx, inst, &j, got)
-		}
-		unlock()
 	}
 	e.St.SetKV(key, "1")
+}
+
+// reconcileOne judges one lost job under its lock, against its current row. It returns false on a Sonarr error.
+func (e *Engine) reconcileOne(ctx context.Context, inst store.Instance, c *sonarr.Client, id int64) bool {
+	defer e.jobMu.lock(id)()
+	j, err := e.St.Job(id)
+	if err != nil || j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
+		return true // retried, adopted or otherwise moved on since the list was read
+	}
+	if e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID) {
+		return true // a later job has the last word on this season
+	}
+	got, ok, ierr := e.importedBySonarr(ctx, c, &j)
+	if ierr != nil {
+		return false
+	}
+	if ok {
+		e.markImportedBySonarr(ctx, inst, &j, got)
+	}
+	return true
 }
 
 // errorsPersisted records a failed Sonarr check for the job and reports whether it has now been failing for a day.
