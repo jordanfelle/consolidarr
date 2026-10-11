@@ -562,7 +562,7 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 	}
 	var failed []int64
 	for _, j0 := range jobs {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || e.draining.Load() {
 			return // shutting down: the marker is not written, so the next start finishes the pass
 		}
 		if !e.reconcileOne(ctx, inst, c, j0.ID) {
