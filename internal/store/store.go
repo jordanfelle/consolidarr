@@ -75,6 +75,9 @@ create table if not exists api_keys(id {{PK}}, name text not null, prefix text n
 func Open(dir, databaseURL string) (*Store, error) {
 	st := &Store{}
 	pk := "integer primary key"
+	// SQLite runs with synchronous=FULL on purpose: the "importing" write-ahead record must survive power loss, because a
+	// delete may already be on its way to Sonarr. The cost is an fsync per write, which is fine for this app's handful of
+	// writes per minute (slow media such as an SD card will feel it, but correctness wins over throughput here).
 	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
 		db, err := sql.Open("pgx", databaseURL)
 		if err != nil {

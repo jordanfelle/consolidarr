@@ -96,7 +96,7 @@ func openWithRetry(dir, url string, wait time.Duration) (*store.Store, error) {
 	delay := time.Second
 	for {
 		st, err := store.Open(dir, url)
-		if err == nil || !strings.HasPrefix(url, "postgres") || !transient(err) || time.Now().After(deadline) {
+		if err == nil || !strings.HasPrefix(url, "postgres") || !transient(err) || time.Now().Add(delay).After(deadline) {
 			return st, err
 		}
 		log.Printf("database not ready (%v); retrying in %s", err, delay)
