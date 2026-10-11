@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -316,5 +317,48 @@ func TestTestErrorDoesNotEchoRemoteBodies(t *testing.T) {
 	}
 	if got := testError(errors.New("dial tcp 10.0.0.9:8989: connect: connection refused")); !strings.Contains(got, "connection refused") {
 		t.Errorf("network errors stay informative: %q", got)
+	}
+}
+
+// The per-address budget decides who is refused first; the per-user ceiling still bounds guessing spread over addresses.
+func TestPerUserCeilingBoundsGuessingAcrossAddresses(t *testing.T) {
+	a, h := newAPI(t)
+	old := loginDelay
+	loginDelay = 0
+	defer func() { loginDelay = old }()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("correct-horse"), bcrypt.MinCost) // cheap hash: this test makes ~100 real attempts
+	if _, err := a.St.CreateFirstUser("admin", string(hash)); err != nil {
+		t.Fatal(err)
+	}
+	from := func(addr string) int {
+		r := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"guess"}`))
+		r.Host, r.RemoteAddr = "consolidarr:7480", addr
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	refused := 0
+	for i := 0; i < loginPerUser/loginPerUserAddr+5; i++ { // more addresses than the ceiling allows, each within its own budget
+		for j := 0; j < loginPerUserAddr; j++ {
+			if from("198.51.100."+strconv.Itoa(i+1)+":1") == 429 {
+				refused++
+			}
+		}
+	}
+	if refused == 0 {
+		t.Fatal("guessing spread across many addresses must hit the per-user ceiling")
+	}
+	if got := from("203.0.113.77:1"); got != 429 {
+		t.Fatalf("once the ceiling is reached a fresh address is refused too, got %d", got)
+	}
+}
+
+func TestPublicPagesOpenFromAnotherSite(t *testing.T) {
+	a, h := newAPI(t)
+	a.AuthDisabled = true
+	for _, p := range []string{"/api/docs", "/api/openapi.json", "/api/auth/me"} {
+		if w := send(h, "GET", p, "", map[string]string{"Sec-Fetch-Site": "cross-site"}); w.Code != 200 {
+			t.Errorf("%s should open from a link on another site, got %d", p, w.Code)
+		}
 	}
 }

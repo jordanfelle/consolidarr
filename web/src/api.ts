@@ -80,7 +80,7 @@ export const api = {
     withForce((force) => req("POST", `/seasons/${s.instId}/${s.seriesId}/${s.season}/grab`, { guid: c.guid, force })),
   jobs: (active = false) => req<Job[]>("GET", "/jobs" + (active ? "?active=1" : "")),
   approve: (id: number) => req("POST", `/jobs/${id}/approve`),
-  deleteJob: (id: number) => req("DELETE", `/jobs/${id}`),
+  deleteJob: (id: number) => withForce((force) => req("DELETE", `/jobs/${id}${force ? "?force=1" : ""}`)),
   settings: () => req<Settings>("GET", "/settings"),
   saveSettings: (s: Settings) => req<Settings>("PUT", "/settings", s),
   events: () => req<Event[]>("GET", "/events"),

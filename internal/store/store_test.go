@@ -334,12 +334,14 @@ func TestOnlyOneAccountCanExist(t *testing.T) {
 	}
 }
 
-func TestAJobMidReplacementCannotBeDeleted(t *testing.T) {
+func TestJobDeletionProtectsTheCrashRecoveryRecord(t *testing.T) {
 	st, err := Open(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mk := func(season int, status string, deleted int64) int64 {
+	season := 0
+	mk := func(status string, deleted int64) int64 {
+		season++ // a distinct season per job: only one unfinished job may exist per season
 		id, err := st.AddJob(Job{InstID: 1, SeriesID: 1, Season: season, Title: "S", Status: "downloading"})
 		if err != nil {
 			t.Fatal(err)
@@ -350,26 +352,38 @@ func TestAJobMidReplacementCannotBeDeleted(t *testing.T) {
 	for _, c := range []struct {
 		status  string
 		deleted int64
-		busy    bool
-	}{{"importing", 5, true}, {"failed", 5, true}, {"lost", 5, true}, {"failed", 0, false}, {"downloading", 0, false}, {"done", 5, false}} {
-		id := mk(10+int(id64(c.status, c.deleted)), c.status, c.deleted)
-		err := st.DeleteJob(id)
-		if c.busy && err != ErrJobBusy {
-			t.Errorf("%s/deleted=%d must be refused, got %v", c.status, c.deleted, err)
-		}
-		if !c.busy && err != nil {
-			t.Errorf("%s/deleted=%d should delete, got %v", c.status, c.deleted, err)
+		force   bool
+		want    error
+	}{
+		{"importing", 5, false, ErrJobBusy},
+		{"importing", 5, true, ErrJobBusy}, // never, not even forced
+		{"failed", 5, false, ErrJobNeedsForce},
+		{"lost", 5, false, ErrJobNeedsForce},
+		{"failed", 5, true, nil}, // abandoning the import is allowed when asked for explicitly
+		{"failed", 0, false, nil},
+		{"downloading", 0, false, nil},
+		{"reserving", 0, false, nil}, // releasing a grab reservation must keep working
+		{"done", 5, false, nil},
+	} {
+		id := mk(c.status, c.deleted)
+		if err := st.DeleteJob(id, c.force); err != c.want {
+			t.Errorf("%s deleted=%d force=%v: want %v, got %v", c.status, c.deleted, c.force, c.want, err)
 		}
 	}
-	// the instance cannot be removed out from under one either
-	if _, err := st.SaveInstance(Instance{Name: "x", URL: "http://x", Enabled: true}); err != nil {
-		t.Fatal(err)
+	// an instance is blocked only by a job that is importing right now; a dead Sonarr with a failed job can be removed
+	addJob := func(inst int64, status string, deleted int64) {
+		id, err := st.AddJob(Job{InstID: inst, SeriesID: 1, Season: 1, Title: "S", Status: "downloading"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = st.Exec(`update jobs set status=?, deleted=? where id=?`, status, deleted, id)
 	}
-	id, _ := st.AddJob(Job{InstID: 1, SeriesID: 9, Season: 9, Title: "S", Status: "downloading"})
-	_, _ = st.Exec(`update jobs set status='importing', deleted=1 where id=?`, id)
-	if err := st.DeleteInstance(1); err != ErrJobBusy {
-		t.Fatalf("an instance with a mid-replacement job must not be deletable, got %v", err)
+	addJob(7, "failed", 3)
+	if err := st.DeleteInstance(7); err != nil {
+		t.Fatalf("a failed-after-delete job must not pin a dead instance forever, got %v", err)
+	}
+	addJob(8, "importing", 3)
+	if err := st.DeleteInstance(8); err != ErrJobBusy {
+		t.Fatalf("an instance with an importing job must not be deletable, got %v", err)
 	}
 }
-
-func id64(status string, deleted int64) int64 { return int64(len(status))*10 + deleted }

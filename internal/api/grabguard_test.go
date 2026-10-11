@@ -36,7 +36,8 @@ func grabEnv(t *testing.T) (http.Handler, *int, *sync.Mutex) {
 		})
 	})
 	mux.HandleFunc("GET /api/v3/episodefile", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]rel{{"id": 1, "seriesId": 1, "seasonNumber": 1}})
+		// the season's current file is 1080p bluray: the fresh rank the guard compares against comes from here
+		_ = json.NewEncoder(w).Encode([]rel{{"id": 1, "seriesId": 1, "seasonNumber": 1, "quality": rel{"quality": rel{"name": "Bluray-1080p", "source": "bluray", "resolution": 1080}}}})
 	})
 	mux.HandleFunc("GET /api/v3/queue", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(rel{"records": []any{}})
@@ -55,7 +56,7 @@ func grabEnv(t *testing.T) (http.Handler, *int, *sync.Mutex) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.St.ReplaceSeasons(id, 1, []audit.Season{{InstID: int(id), SeriesID: 1, Season: 1, Title: "Show", Files: 5, Single: 5, CurRank: 1080*10 + 3}}); err != nil {
+	if err := a.St.ReplaceSeasons(id, 1, []audit.Season{{InstID: int(id), SeriesID: 1, Season: 1, Title: "Show", Files: 5, Single: 5, CurRank: 0}}); err != nil { // the stored rank is stale (0): the guard must use the live files, not this
 		t.Fatal(err)
 	}
 	return h, &grabbed, &mu

@@ -449,7 +449,11 @@ func (a *API) grab(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "needs force: Sonarr would reject it ("+pick.Blocking[0]+")")
 			return
 		}
-		if pick.Quality.Rank() < s.CurRank {
+		cur := s.CurRank
+		if fresh, err := a.Eng.CurrentRank(r.Context(), inst, s); err == nil {
+			cur = fresh // the stored value is from the last scan; the files may have changed since
+		}
+		if pick.Quality.Rank() < cur {
 			fail(w, 409, "needs force: it is lower quality than the files it would replace")
 			return
 		}
@@ -561,8 +565,8 @@ func (a *API) approve(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteJob(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err := a.St.DeleteJob(id); err != nil {
-		if errors.Is(err, store.ErrJobBusy) {
+	if err := a.St.DeleteJob(id, r.URL.Query().Get("force") == "1"); err != nil {
+		if errors.Is(err, store.ErrJobBusy) || errors.Is(err, store.ErrJobNeedsForce) {
 			fail(w, 409, err.Error())
 			return
 		}

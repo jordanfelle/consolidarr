@@ -261,6 +261,23 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 	return out, nil
 }
 
+// CurrentRank is the best quality among the season's files right now (0 when it has none).
+func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.Season) (int, error) {
+	files, err := client(inst).EpisodeFiles(ctx, s.SeriesID)
+	if err != nil {
+		return 0, err
+	}
+	cur := 0
+	for _, f := range files {
+		if f.SeasonNumber == s.Season {
+			if rk := f.Quality.Rank(); rk > cur {
+				cur = rk
+			}
+		}
+	}
+	return cur, nil
+}
+
 // Grab records the season's current files, grabs the release and starts tracking a job.
 func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer string) (int64, error) {
 	c := client(inst)
@@ -289,7 +306,7 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 		// a grab that timed out may still have reached the download client
 		time.Sleep(grabRetryWait)
 		if q, qerr := c.Queue(ctx, 2*time.Minute); qerr != nil || !inQueue(q, s.SeriesID, s.Season) {
-			_ = e.St.DeleteJob(id) // release the reservation
+			_ = e.St.DeleteJob(id, false) // release the reservation
 			return 0, err
 		}
 	}

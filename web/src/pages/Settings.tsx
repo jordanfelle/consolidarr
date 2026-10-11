@@ -167,7 +167,11 @@ export default function SettingsPage() {
   });
   const dirty = !!s && !!remote.data && JSON.stringify(s) !== JSON.stringify(remote.data);
   const scan = useMutation({ mutationFn: api.scan, onSuccess: () => qc.invalidateQueries({ queryKey: ["instances"] }) });
-  const del = useMutation({ mutationFn: api.deleteInstance, onSuccess: () => qc.invalidateQueries({ queryKey: ["instances"] }) });
+  const del = useMutation({
+    mutationFn: api.deleteInstance,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["instances"] }),
+    onError: (e) => setNote({ ok: false, msg: (e as Error).message }),
+  });
   const num = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => s && setS({ ...s, [k]: Number(e.target.value) });
   return (
     <div className="max-w-4xl space-y-8">

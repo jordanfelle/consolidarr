@@ -77,7 +77,7 @@ func (s *Store) SaveInstance(i Instance) (int64, error) {
 
 func (s *Store) DeleteInstance(id int64) error {
 	var busy int
-	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and (status='importing' or (status in ('failed','lost') and deleted>0))`, id).Scan(&busy); err != nil {
+	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and status='importing'`, id).Scan(&busy); err != nil {
 		return err
 	}
 	if busy > 0 {
@@ -235,12 +235,16 @@ func (s *Store) UpdateJob(j Job) error {
 	return err
 }
 
-// ErrJobBusy is returned when a job's row is the only record of a replacement that may be mid-flight.
-var ErrJobBusy = errors.New("this job is mid-replacement (importing, or failed after its old files were deleted): its record is what lets a restart finish it, so it cannot be deleted")
+// ErrJobBusy is returned when a job's row is the only record of a replacement that is mid-flight.
+var ErrJobBusy = errors.New("this job is importing right now: its record is what lets a restart finish the replacement, so it cannot be removed")
 
-// DeleteJob removes a job record. A job that is importing, or that failed/was lost after the delete began, is
-// refused: deleting that row would orphan a half-replaced season and the recovery that depends on it.
-func (s *Store) DeleteJob(id int64) error {
+// ErrJobNeedsForce is returned for a failed/lost job whose old files were already deleted: removing it abandons the
+// chance to resume the import with Retry, so it takes an explicit force.
+var ErrJobNeedsForce = errors.New("needs force: this job failed after its old files were deleted, so removing it gives up on finishing the import (Retry now would resume it)")
+
+// DeleteJob removes a job record. An importing job is always refused (deleting that row would orphan a half-replaced
+// season and the recovery that depends on it); one that failed or was lost after the delete began needs force.
+func (s *Store) DeleteJob(id int64, force bool) error {
 	var status string
 	var deleted int64
 	err := s.QueryRow(`select status, deleted from jobs where id=?`, id).Scan(&status, &deleted)
@@ -250,8 +254,11 @@ func (s *Store) DeleteJob(id int64) error {
 	if err != nil {
 		return err
 	}
-	if status == "importing" || ((status == "failed" || status == "lost") && deleted > 0) {
+	if status == "importing" {
 		return ErrJobBusy
+	}
+	if (status == "failed" || status == "lost") && deleted > 0 && !force {
+		return ErrJobNeedsForce
 	}
 	_, err = s.Exec(`delete from jobs where id=?`, id)
 	return err

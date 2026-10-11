@@ -57,7 +57,7 @@ func (a *API) browserGuard(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			// A page on another site can make the browser fetch a GET (an <img> pointing at a search endpoint) even though
 			// it cannot read the answer; Sonarr and the indexers would still be hit. Browsers label such requests.
-			if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("Sec-Fetch-Site") == "cross-site" && apiKey(r) == "" {
+			if strings.HasPrefix(r.URL.Path, "/api/") && !publicPage(r.URL.Path) && r.Header.Get("Sec-Fetch-Site") == "cross-site" && apiKey(r) == "" {
 				fail(w, 403, "cross-site request refused")
 				return
 			}
@@ -103,6 +103,11 @@ func (a *API) sameOrigin(r *http.Request) bool {
 	// Compare host and port, not just the name: another service on the same machine is a different origin.
 	h := strings.ToLower(u.Host)
 	return h == strings.ToLower(r.Host) || h == strings.ToLower(r.Header.Get("X-Forwarded-Host")) || a.TrustedOrigins[h] || a.TrustedOrigins[hostOnly(h)]
+}
+
+// publicPage: documentation and identity pages that are harmless to open from a link on another site.
+func publicPage(p string) bool {
+	return p == "/api/docs" || p == "/api/openapi.json" || p == "/api/auth/me"
 }
 
 // loginLimiter slows password guessing: after too many failures for a username, or from one address, further
