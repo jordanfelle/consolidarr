@@ -509,12 +509,13 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 	if err != nil {
 		return
 	}
-	hadErr := false
+	var failed []int64
 	for _, j0 := range jobs {
 		if !e.reconcileOne(ctx, inst, c, j0.ID) {
-			hadErr = true // keep judging the others; one bad series must not block them
+			failed = append(failed, j0.ID) // keep judging the others; one bad series must not block them
 		}
 	}
+	hadErr := len(failed) > 0
 	if hadErr { // retry on later cycles, but a permanently failing job cannot keep this running forever
 		triesKey := key + ":tries"
 		n, _ := strconv.Atoi(e.St.KV(triesKey))
@@ -522,6 +523,7 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 		if n+1 < 5 {
 			return
 		}
+		e.St.Event("warn", fmt.Sprintf("%s: gave up re-checking lost jobs %v after %d tries (Sonarr kept failing); they stay lost", inst.Name, failed, n+1))
 	}
 	e.St.SetKV(key, "1")
 }
@@ -530,7 +532,13 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 func (e *Engine) reconcileOne(ctx context.Context, inst store.Instance, c *sonarr.Client, id int64) bool {
 	defer e.jobMu.lock(id)()
 	j, err := e.St.Job(id)
-	if err != nil || j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
+	if errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		return false // a database hiccup is a retry, not "moved on"
+	}
+	if j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
 		return true // retried, adopted or otherwise moved on since the list was read
 	}
 	if e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID) {

@@ -180,7 +180,9 @@ func (s *Store) VanishedLostJobs(instID int64) ([]Job, error) {
 // season's latest word must not be re-judged against files a later job may have replaced.
 func (s *Store) NewerJobExists(instID int64, seriesID, season int, id int64) bool {
 	var n int
-	_ = s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and id>?`, instID, seriesID, season, id).Scan(&n)
+	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and id>?`, instID, seriesID, season, id).Scan(&n); err != nil {
+		return true // a guard fails closed: when unsure, do not judge the job
+	}
 	return n > 0
 }
 

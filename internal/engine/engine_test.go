@@ -807,3 +807,37 @@ func TestReconcileLostSkipsSeasonsWithALaterJobAndKeepsGoingPastErrors(t *testin
 		t.Fatal("a job that is no longer lost must not be touched")
 	}
 }
+
+func TestReconcileLostRetriesThenGivesUpWithoutBlockingOthers(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(series, season int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: series, Season: season, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	mk(1, 3) // Sonarr's episodefile endpoint fails for every series in this fake, so every job errors
+	mk(2, 3)
+	v.fake.failFiles = true
+	key := "reconciled:vanished-lost:v1:1"
+	for i := 1; i <= 4; i++ {
+		v.e.reconcileLost(context.Background(), v.inst, v.c)
+		if v.st.KV(key) != "" {
+			t.Fatalf("marker written after only %d tries", i)
+		}
+	}
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if v.st.KV(key) == "" {
+		t.Fatal("the 5th failed try must stop the retries")
+	}
+	evs, _ := v.st.Events(20)
+	gaveUp := false
+	for _, e := range evs {
+		if e.Level == "warn" && strings.Contains(e.Msg, "gave up re-checking") {
+			gaveUp = true
+		}
+	}
+	if !gaveUp {
+		t.Fatal("giving up must be logged")
+	}
+}
