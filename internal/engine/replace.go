@@ -313,33 +313,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	if err != nil {
 		return
 	}
-	old := map[int]bool{}
-	for _, id := range j.OldFileIDs {
-		old[id] = true
-	}
-	covered := map[int]bool{}
-	for _, ep := range eps {
-		if ep.EpisodeFileID != 0 && !old[ep.EpisodeFileID] {
-			covered[ep.EpisodeNumber] = true
-		}
-	}
-	want := j.ExpectedEps
-	if len(want) == 0 {
-		// A job recorded before episodes were tracked. Counting files would let episodes Sonarr imported earlier
-		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
-		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
-		for _, ep := range eps {
-			if aired(ep) {
-				want = append(want, ep.EpisodeNumber)
-			}
-		}
-	}
-	got := 0
-	for _, n := range want {
-		if covered[n] {
-			got++
-		}
-	}
+	want, _, got := coverage(j, eps)
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg
 		_ = e.St.UpdateJob(*j)
@@ -380,6 +354,50 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	case !finished && age > importHardStop:
 		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))
 	}
+}
+
+// coverage works out which episodes the job is waiting for, which of them already have a file that is not one of
+// the old files, and how many that is.
+func coverage(j *store.Job, eps []sonarr.Episode) (want []int, covered map[int]bool, got int) {
+	old := map[int]bool{}
+	for _, id := range j.OldFileIDs {
+		old[id] = true
+	}
+	covered = map[int]bool{}
+	for _, ep := range eps {
+		if ep.EpisodeFileID != 0 && !old[ep.EpisodeFileID] {
+			covered[ep.EpisodeNumber] = true
+		}
+	}
+	want = j.ExpectedEps
+	if len(want) == 0 {
+		// A job recorded before episodes were tracked. Counting files would let episodes Sonarr imported earlier
+		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
+		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
+		for _, ep := range eps {
+			if aired(ep) {
+				want = append(want, ep.EpisodeNumber)
+			}
+		}
+	}
+	for _, n := range want {
+		if covered[n] {
+			got++
+		}
+	}
+	return want, covered, got
+}
+
+// importedBySonarr reports whether Sonarr already replaced the whole season itself (its own upgrade import of a
+// finished pack, which can beat our verification on a small pack). Nothing is deleted on this path: it only lets
+// a job that would be called "lost" end as "done" when every wanted episode already has a file that is not an old one.
+func (e *Engine) importedBySonarr(ctx context.Context, c *sonarr.Client, j *store.Job) (int, bool) {
+	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
+	if err != nil {
+		return 0, false
+	}
+	want, _, got := coverage(j, eps)
+	return got, len(want) > 0 && got >= len(want)
 }
 
 // aired reports whether an episode has already aired (specials, season 0, are not waited for).

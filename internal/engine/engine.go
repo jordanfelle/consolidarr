@@ -549,6 +549,14 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	mine := ownedItems(queue, &j)
 	if len(mine) == 0 {
 		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
+			if got, ok := e.importedBySonarr(ctx, c, &j); ok {
+				j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
+				e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
+				e.St.Event("info", fmt.Sprintf("done %s: %s", label, j.Message))
+				_ = e.St.UpdateJob(j)
+				e.rescanSeries(ctx, inst, j.SeriesID)
+				return
+			}
 			j.Status = "lost"
 			j.Message = "no longer in Sonarr's queue; old files untouched"
 			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 24*time.Hour, "lost")

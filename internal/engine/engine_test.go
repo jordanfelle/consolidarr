@@ -318,6 +318,24 @@ func TestVanishedDownloadIsLostNotDeleted(t *testing.T) {
 	}
 }
 
+func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Now().Add(-time.Hour))
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93} // Sonarr upgraded every episode to new files on its own
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
+		t.Fatalf("got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+	// a partial replacement is still lost, never done
+	v = setup(t, []int{1, 2, 3})
+	j = v.job(t, time.Now().Add(-time.Hour))
+	v.fake.seasonEps = map[int]int{1: 91, 2: 12, 3: 13}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "lost" {
+		t.Fatalf("partial replacement must stay lost, got %s", got.Status)
+	}
+}
+
 func TestRecentJobMissingFromQueueIsLeftAlone(t *testing.T) {
 	v := setup(t, []int{1, 2, 3})
 	j := v.job(t, time.Time{}) // just created: the queue may not list it yet
