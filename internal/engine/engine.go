@@ -403,6 +403,7 @@ func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Setti
 			e.St.Event("error", fmt.Sprintf("scan %s: %v", inst.Name, err))
 		}
 	}
+	e.reconcileLost(ctx, inst, c)
 	e.advanceJobs(ctx, inst, c, set)
 	return e.topUp(ctx, inst, c, set)
 }
@@ -486,6 +487,44 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		time.Sleep(grabPause) // let the download client breathe between grabs
 	}
 	return true
+}
+
+func (e *Engine) markImportedBySonarr(ctx context.Context, inst store.Instance, j *store.Job, got int) {
+	j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
+	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
+	e.St.Event("info", fmt.Sprintf("done %s S%02d: %s", j.Title, j.Season, j.Message))
+	_ = e.St.UpdateJob(*j)
+	e.rescanSeries(ctx, inst, j.SeriesID)
+}
+
+// reconcileLost re-judges, once per instance, jobs an older build ended as "lost" because the pack left the queue:
+// when Sonarr had in fact imported the pack itself they become "done". It never deletes anything and any other job is
+// left exactly as it was. The marker is only written after a clean pass, so a Sonarr hiccup retries next cycle.
+func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sonarr.Client) {
+	key := fmt.Sprintf("reconciled:vanished-lost:v1:%d", inst.ID)
+	if e.St.KV(key) != "" {
+		return
+	}
+	jobs, err := e.St.VanishedLostJobs(inst.ID)
+	if err != nil {
+		return
+	}
+	for _, j := range jobs {
+		if e.St.ActiveJob(j.InstID, j.SeriesID, j.Season) {
+			continue // a newer job owns this season
+		}
+		unlock := e.jobMu.lock(j.ID)
+		got, ok, ierr := e.importedBySonarr(ctx, c, &j)
+		if ierr != nil {
+			unlock()
+			return
+		}
+		if ok {
+			e.markImportedBySonarr(ctx, inst, &j, got)
+		}
+		unlock()
+	}
+	e.St.SetKV(key, "1")
 }
 
 // errorsPersisted records a failed Sonarr check for the job and reports whether it has now been failing for a day.
@@ -582,11 +621,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 				return // Sonarr hiccup: look again next cycle rather than writing a terminal state; a day of errors in a row falls through to lost
 			}
 			if ok {
-				j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
-				e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
-				e.St.Event("info", fmt.Sprintf("done %s: %s", label, j.Message))
-				_ = e.St.UpdateJob(j)
-				e.rescanSeries(ctx, inst, j.SeriesID)
+				e.markImportedBySonarr(ctx, inst, &j, got)
 				return
 			}
 			j.Status = "lost"

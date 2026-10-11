@@ -747,3 +747,36 @@ func airDate(future bool) string {
 	}
 	return time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)
 }
+
+func TestReconcileLostFixesOnlyVanishedJobsSonarrImported(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	lost := func(msg string) store.Job {
+		j := v.job(t, time.Now().Add(-time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=? where id=?`, msg, "Show S03 1080p WEB x265-NOXXUS", j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+	a := lost("no longer in Sonarr's queue; old files untouched")
+	b := lost("the grab never completed; nothing was downloaded or changed") // a different lost reason: not ours to judge
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if got := v.status(t, a.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
+		t.Fatalf("a vanished-lost job Sonarr imported must become done, got %s %q", got.Status, got.Message)
+	}
+	if got := v.status(t, b.ID); got.Status != "lost" {
+		t.Fatalf("other lost jobs must be untouched, got %s", got.Status)
+	}
+	if v.st.KV("reconciled:vanished-lost:v1:1") == "" {
+		t.Fatal("a clean pass must write the marker so it never runs again")
+	}
+	// a Sonarr error leaves the marker unset so the next cycle retries
+	v2 := setup(t, []int{1, 2, 3})
+	j := v2.job(t, time.Now().Add(-time.Hour))
+	_, _ = v2.st.Exec(`update jobs set status='lost', message=?, release=? where id=?`, "no longer in Sonarr's queue; old files untouched", "Show S03 1080p WEB x265-NOXXUS", j.ID)
+	v2.fake.failFiles = true
+	v2.e.reconcileLost(context.Background(), v2.inst, v2.c)
+	if v2.st.KV("reconciled:vanished-lost:v1:1") != "" || v2.status(t, j.ID).Status != "lost" {
+		t.Fatal("an error must neither flip the job nor write the marker")
+	}
+}
