@@ -178,12 +178,10 @@ func (s *Store) VanishedLostJobs(instID int64) ([]Job, error) {
 
 // NewerJobExists reports whether the season has any later job, whatever its status: a lost job that is not the
 // season's latest word must not be re-judged against files a later job may have replaced.
-func (s *Store) NewerJobExists(instID int64, seriesID, season int, id int64) bool {
+func (s *Store) NewerJobExists(instID int64, seriesID, season int, id int64) (bool, error) {
 	var n int
-	if err := s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and id>?`, instID, seriesID, season, id).Scan(&n); err != nil {
-		return true // a guard fails closed: when unsure, do not judge the job
-	}
-	return n > 0
+	err := s.QueryRow(`select count(*) from jobs where inst_id=? and series_id=? and season=? and id>?`, instID, seriesID, season, id).Scan(&n)
+	return n > 0, err
 }
 
 // ActiveJob reports whether the season already has an unfinished job.

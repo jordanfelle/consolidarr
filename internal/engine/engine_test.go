@@ -816,8 +816,8 @@ func TestReconcileLostRetriesThenGivesUpWithoutBlockingOthers(t *testing.T) {
 		j, _ := v.st.Job(id)
 		return j
 	}
-	mk(1, 3) // Sonarr's episodefile endpoint fails for every series in this fake, so every job errors
-	mk(2, 3)
+	j1 := mk(1, 3) // Sonarr's episodefile endpoint fails for every series in this fake, so every job errors
+	j2 := mk(2, 3)
 	v.fake.failFiles = true
 	key := "reconciled:vanished-lost:v1:1"
 	for i := 1; i <= 4; i++ {
@@ -833,11 +833,16 @@ func TestReconcileLostRetriesThenGivesUpWithoutBlockingOthers(t *testing.T) {
 	evs, _ := v.st.Events(20)
 	gaveUp := false
 	for _, e := range evs {
-		if e.Level == "warn" && strings.Contains(e.Msg, "gave up re-checking") {
+		if e.Level == "warn" && strings.Contains(e.Msg, "gave up re-checking") && strings.Contains(e.Msg, fmt.Sprint([]int64{j1.ID, j2.ID})) {
 			gaveUp = true
 		}
 	}
 	if !gaveUp {
-		t.Fatal("giving up must be logged")
+		t.Fatal("giving up must be logged with the ids of the jobs it could not check")
+	}
+	for _, j := range []store.Job{j1, j2} {
+		if got := v.status(t, j.ID); got.Status != "lost" {
+			t.Fatalf("giving up must leave job %d lost, got %s", j.ID, got.Status)
+		}
 	}
 }

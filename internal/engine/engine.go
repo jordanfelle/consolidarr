@@ -523,7 +523,7 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 		if n+1 < 5 {
 			return
 		}
-		e.St.Event("warn", fmt.Sprintf("%s: gave up re-checking lost jobs %v after %d tries (Sonarr kept failing); they stay lost", inst.Name, failed, n+1))
+		e.St.Event("warn", fmt.Sprintf("%s: gave up re-checking lost jobs %v after %d tries (Sonarr or the database kept failing); they stay lost. Delete kv keys %s and %s:tries to re-run them", inst.Name, failed, n+1, key, key))
 	}
 	e.St.SetKV(key, "1")
 }
@@ -541,7 +541,11 @@ func (e *Engine) reconcileOne(ctx context.Context, inst store.Instance, c *sonar
 	if j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
 		return true // retried, adopted or otherwise moved on since the list was read
 	}
-	if e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID) {
+	newer, nerr := e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID)
+	if nerr != nil {
+		return false // cannot tell whether a later job owns the season: retry rather than skip silently
+	}
+	if newer {
 		return true // a later job has the last word on this season
 	}
 	got, ok, ierr := e.importedBySonarr(ctx, c, &j)
