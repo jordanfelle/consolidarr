@@ -550,8 +550,8 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	if len(mine) == 0 {
 		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
 			got, ok, ierr := e.importedBySonarr(ctx, c, &j)
-			if ierr != nil {
-				return // Sonarr hiccup: look again next cycle rather than writing a terminal state
+			if ierr != nil && time.Since(time.Unix(j.Created, 0)) < 24*time.Hour {
+				return // Sonarr hiccup: look again next cycle rather than writing a terminal state; a day of errors falls through to lost
 			}
 			if ok {
 				j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)

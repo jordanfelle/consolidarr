@@ -3,11 +3,11 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
@@ -389,22 +389,21 @@ func coverage(j *store.Job, eps []sonarr.Episode) (want []int, covered map[int]b
 	return want, covered, got
 }
 
-// releaseGroup is the scene group of a release title ("...x265-NOXXUS" -> "noxxus"), or "" when there is none.
-func releaseGroup(title string) string {
-	i := strings.LastIndexByte(title, '-')
-	if i < 0 {
-		return ""
-	}
-	return normGroup(title[i+1:])
-}
+var trailingTag = regexp.MustCompile(`\[[^\]]*\]$`)
 
-func normGroup(g string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return unicode.ToLower(r)
-		}
-		return -1
-	}, g)
+// groupMatches reports whether a Sonarr file's release group is the group at the end of the grabbed release title
+// ("...H.264-D-Z0N3", "...-NTb[rartv]"). Quality tokens that follow a hyphen ("WEB-DL") are never a group.
+func groupMatches(title, group string) bool {
+	g := strings.ToLower(strings.TrimSpace(group))
+	switch g {
+	case "", "dl", "rip", "hd", "hdtv":
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(title))
+	for trailingTag.MatchString(t) {
+		t = strings.TrimSpace(trailingTag.ReplaceAllString(t, ""))
+	}
+	return strings.HasSuffix(t, "-"+g)
 }
 
 // importedBySonarr reports whether Sonarr already replaced the whole season with this pack itself (its own upgrade
@@ -413,8 +412,7 @@ func normGroup(g string) string {
 // the job recorded old files, that every wanted episode has a file that is not one of them, and that each of those
 // files carries the release group of the grabbed pack. A Sonarr error is returned so the caller retries next cycle.
 func (e *Engine) importedBySonarr(ctx context.Context, c *sonarr.Client, j *store.Job) (int, bool, error) {
-	grp := releaseGroup(j.Release)
-	if grp == "" || len(j.OldFileIDs) == 0 {
+	if j.Release == "" || len(j.OldFileIDs) == 0 {
 		return 0, false, nil
 	}
 	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
@@ -425,9 +423,9 @@ func (e *Engine) importedBySonarr(ctx context.Context, c *sonarr.Client, j *stor
 	if err != nil {
 		return 0, false, err
 	}
-	group := map[int]string{}
+	group := map[int]string{} // file id -> Sonarr's release group
 	for _, f := range files {
-		group[f.ID] = normGroup(f.ReleaseGroup)
+		group[f.ID] = f.ReleaseGroup
 	}
 	want, _, _ := coverage(j, eps)
 	if len(want) == 0 {
@@ -443,7 +441,7 @@ func (e *Engine) importedBySonarr(ctx context.Context, c *sonarr.Client, j *stor
 	}
 	for _, n := range want {
 		id := byEp[n]
-		if id == 0 || old[id] || group[id] != grp {
+		if id == 0 || old[id] || !groupMatches(j.Release, group[id]) {
 			return 0, false, nil
 		}
 	}

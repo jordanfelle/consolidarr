@@ -47,6 +47,7 @@ type fakeSonarr struct {
 	filesAfter    []sonarr.EpisodeFile
 	existing      map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
 	cmdStatus     string
+	failFiles     bool // GET /episodefile answers 500
 	srv           *httptest.Server
 }
 
@@ -128,6 +129,10 @@ func newFake(packEps []int) *fakeSonarr {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
 	})
 	mux.HandleFunc("GET /api/v3/episodefile", func(w http.ResponseWriter, r *http.Request) {
+		if f.failFiles {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
 		if f.filesAfter != nil { // a test that scripts the post-import state
 			js(w, f.filesAfter)
 			return
@@ -357,11 +362,52 @@ func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
 	if got := run(v, j); got.Status != "lost" {
 		t.Fatalf("empty OldFileIDs must stay lost, got %s", got.Status)
 	}
+	// hyphenated groups and trailing site tags still match
+	v, j = grab(t, []int{11, 12, 13})
+	_, _ = v.st.Exec(`update jobs set release=? where id=?`, "Show S03 1080p WEB-DL H.264-D-Z0N3[rartv]", j.ID)
+	for i := range v.fake.filesAfter {
+		v.fake.filesAfter[i].ReleaseGroup = "D-Z0N3"
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "done" {
+		t.Fatalf("hyphenated group with a site tag should match, got %s %q", got.Status, got.Message)
+	}
+	// a quality token is never a group
+	v, j = grab(t, []int{11, 12, 13})
+	_, _ = v.st.Exec(`update jobs set release=? where id=?`, "Show S03 1080p WEB-DL", j.ID)
+	for i := range v.fake.filesAfter {
+		v.fake.filesAfter[i].ReleaseGroup = "DL"
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("WEB-DL must not parse as group DL, got %s", got.Status)
+	}
 	// a Sonarr error is not evidence either way: leave the job to be re-checked next cycle
 	v, j = grab(t, []int{11, 12, 13})
 	v.fake.srv.Close()
 	if got := run(v, j); got.Status != "downloading" {
 		t.Fatalf("a Sonarr error must not write a terminal state, got %s", got.Status)
+	}
+	// a failure of the second call (episode files) is handled the same, and a later good cycle recovers
+	v, j = grab(t, []int{11, 12, 13})
+	good := v.fake.filesAfter
+	v.fake.filesAfter = nil
+	v.fake.failFiles = true
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("an episodefile error must not write a terminal state, got %s", got.Status)
+	}
+	v.fake.failFiles, v.fake.filesAfter = false, good
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "done" {
+		t.Fatalf("the next cycle should recover to done, got %s %q", got.Status, got.Message)
+	}
+	// errors that persist for a day end as lost instead of hanging forever
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.failFiles = true
+	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-25*time.Hour).Unix(), j.ID)
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("a day of errors should fall through to lost, got %s", got.Status)
 	}
 }
 
