@@ -266,6 +266,11 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		_ = e.St.UpdateJob(*j)
 		return
 	}
+	e.inflight.Add(1) // counted before the draining check so a shutdown's WaitIdle cannot miss us
+	defer e.inflight.Add(-1)
+	if e.draining.Load() {
+		return // shutting down: nothing has been recorded or deleted, the job is exactly as it was
+	}
 	now := time.Now().Unix()
 	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0
 	j.Message = fmt.Sprintf("deleting %d old files, then importing", len(ids))

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,7 +36,7 @@ func main() {
 	if err := os.MkdirAll(*data, 0o755); err != nil {
 		log.Fatal(err)
 	}
-	st, err := store.Open(*data, *dburl)
+	st, err := openWithRetry(*data, *dburl, 2*time.Minute)
 	if err != nil {
 		log.Fatalf("database: %v", err)
 	}
@@ -69,9 +70,33 @@ func main() {
 	// ListenAndServe returns as soon as Shutdown starts; wait for in-flight requests and the engine so a
 	// restart does not cut a replacement or a database write in half.
 	<-shut
+	grace := 150 * time.Second // keep below the container's stop_grace_period (compose sets 3m)
+	if d, err := time.ParseDuration(os.Getenv("CONSOLIDARR_SHUTDOWN_GRACE")); err == nil && d > 0 {
+		grace = d
+	}
+	deadline := time.Now().Add(grace)
 	select {
 	case <-engDone:
-	case <-time.After(15 * time.Second):
+	case <-time.After(grace):
 		log.Print("engine did not stop in time")
+	}
+	if !eng.WaitIdle(time.Until(deadline)) {
+		log.Print("a replacement was still between delete and import at shutdown; it resumes as 'importing' on the next start")
+	}
+}
+
+// openWithRetry waits for a database that is still starting (or being restarted by an update): a Postgres DSN gets
+// retried with backoff instead of crash-looping the container; SQLite fails fast since nothing else can fix it.
+func openWithRetry(dir, url string, wait time.Duration) (*store.Store, error) {
+	deadline := time.Now().Add(wait)
+	delay := time.Second
+	for {
+		st, err := store.Open(dir, url)
+		if err == nil || !strings.HasPrefix(url, "postgres") || time.Now().Add(delay).After(deadline) {
+			return st, err
+		}
+		log.Printf("database not ready (%v); retrying in %s", err, delay)
+		time.Sleep(delay)
+		delay = min(delay*2, 15*time.Second)
 	}
 }
