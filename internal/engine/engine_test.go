@@ -319,20 +319,49 @@ func TestVanishedDownloadIsLostNotDeleted(t *testing.T) {
 }
 
 func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
-	v := setup(t, []int{1, 2, 3})
-	j := v.job(t, time.Now().Add(-time.Hour))
-	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93} // Sonarr upgraded every episode to new files on its own
-	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
-	if got := v.status(t, j.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
+	grab := func(t *testing.T, oldIDs []int) (*env, store.Job) {
+		v := setup(t, []int{1, 2, 3})
+		j := v.job(t, time.Now().Add(-time.Hour))
+		ids, _ := json.Marshal(oldIDs)
+		if oldIDs == nil {
+			ids = []byte("[]")
+		}
+		_, _ = v.st.Exec(`update jobs set release=?, old_file_ids=? where id=?`, "Show S03 1080p WEB x265-NOXXUS", string(ids), j.ID)
+		j, _ = v.st.Job(j.ID)
+		v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+		v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+		return v, j
+	}
+	run := func(v *env, j store.Job) store.Job {
+		v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+		return v.status(t, j.ID)
+	}
+	v, j := grab(t, []int{11, 12, 13})
+	if got := run(v, j); got.Status != "done" || len(v.fake.deleted) != 0 {
 		t.Fatalf("got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
 	}
+	// new files from a different release group are someone else's upgrade, not this pack
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.filesAfter[1].ReleaseGroup = "OTHER"
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("a mixed-group season must stay lost, got %s", got.Status)
+	}
 	// a partial replacement is still lost, never done
-	v = setup(t, []int{1, 2, 3})
-	j = v.job(t, time.Now().Add(-time.Hour))
+	v, j = grab(t, []int{11, 12, 13})
 	v.fake.seasonEps = map[int]int{1: 91, 2: 12, 3: 13}
-	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
-	if got := v.status(t, j.ID); got.Status != "lost" {
+	if got := run(v, j); got.Status != "lost" {
 		t.Fatalf("partial replacement must stay lost, got %s", got.Status)
+	}
+	// no recorded old files: every file would look new, so claim nothing
+	v, j = grab(t, nil)
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("empty OldFileIDs must stay lost, got %s", got.Status)
+	}
+	// a Sonarr error is not evidence either way: leave the job to be re-checked next cycle
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.srv.Close()
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("a Sonarr error must not write a terminal state, got %s", got.Status)
 	}
 }
 
