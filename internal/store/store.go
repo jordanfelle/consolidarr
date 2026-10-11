@@ -70,18 +70,9 @@ create index if not exists snapshots_ts on snapshots(ts);
 create table if not exists api_keys(id {{PK}}, name text not null, prefix text not null, hash text unique not null, created bigint not null, last_used bigint not null default 0);
 `
 
-// Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir.
-func Open(dir, databaseURL string) (st *Store, err error) {
-	defer func() {
-		if err != nil && st != nil && st.DB != nil {
-			_ = st.DB.Close() // a failed attempt must not leak its pool (the caller may retry)
-			st = nil
-		}
-	}()
-	return openStore(dir, databaseURL)
-}
-
-func openStore(dir, databaseURL string) (*Store, error) {
+// Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir. A failed attempt closes its
+// pool, so a caller that retries (a database still starting) does not leak one per try.
+func Open(dir, databaseURL string) (*Store, error) {
 	st := &Store{}
 	pk := "integer primary key"
 	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
@@ -98,16 +89,20 @@ func openStore(dir, databaseURL string) (*Store, error) {
 		db.SetMaxOpenConns(1) // sqlite: one writer; keeps this simple and race-free
 		st.DB = db
 	}
+	fail := func(err error) (*Store, error) {
+		_ = st.DB.Close()
+		return nil, err
+	}
 	for _, stmt := range strings.Split(strings.ReplaceAll(schemaTmpl, "{{PK}}", pk), ";\n") {
 		if strings.TrimSpace(stmt) == "" {
 			continue
 		}
 		if _, err := st.DB.Exec(stmt); err != nil {
-			return nil, fmt.Errorf("schema: %w", err)
+			return fail(fmt.Errorf("schema: %w", err))
 		}
 	}
 	if err := st.migrate(); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+		return fail(fmt.Errorf("migrate: %w", err))
 	}
 	_, _ = st.Exec(`delete from sessions where expires < ?`, time.Now().Unix()) // expired sessions are dead weight
 	return st, nil

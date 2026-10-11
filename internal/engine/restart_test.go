@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
+	"github.com/jordanfelle/consolidarr/internal/store"
 )
 
 func okVerdict() verdict {
@@ -50,23 +51,6 @@ func TestShutdownMidReplacementStillFinishesAndWaitIdleWaits(t *testing.T) {
 	}
 }
 
-// Every point the process can die at leaves a job a brand-new Engine (no memory of the old one) can finish.
-func TestACrashBeforeTheDeleteResumesOnAFreshEngine(t *testing.T) {
-	v := setup(t, []int{1, 2, 3})
-	j := readyJob(t, v)
-	now := time.Now().Unix()
-	// state replace() wrote just before the delete request, then the process died
-	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, "d", 3, []int{1, 2, 3}, 0
-	_ = v.st.UpdateJob(j)
-	fresh := New(v.st)
-	q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Status: "completed", DownloadID: "d", OutputPath: "/dl/pack", Title: j.Release}}
-	cur, _ := v.st.Job(j.ID)
-	fresh.advance(context.Background(), v.inst, v.c, live(), cur, q)
-	if after := v.status(t, j.ID); after.ImportCmd != 42 || v.fake.imports != 1 || len(v.fake.deleted) != 0 {
-		t.Fatalf("a fresh engine must start the import without deleting anything again: %+v imports=%d deleted=%v", after, v.fake.imports, v.fake.deleted)
-	}
-}
-
 func TestStartLogsWhatItResumes(t *testing.T) {
 	v := setup(t, []int{1, 2, 3})
 	_ = v.job(t, time.Time{})
@@ -82,62 +66,170 @@ func TestStartLogsWhatItResumes(t *testing.T) {
 
 type killed struct{}
 
-// A SIGKILL can land at any step of a replacement. For every step: the process dies there, a brand-new engine (no
-// memory of the old one) takes over from the database alone, and the season must end done, with no further delete
-// and no second delete of files the first run already removed.
+func queueFor(j store.Job) []sonarr.QueueItem {
+	return []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Status: "completed", DownloadID: "d", OutputPath: "/dl/pack", Title: j.Release}}
+}
+
+// runKilled runs fn and swallows the simulated process death (a panic at a kill point).
+func runKilled(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(killed); !ok {
+				panic(r)
+			}
+		}
+	}()
+	fn()
+}
+
+// resume is a brand-new engine (no memory of the dead one) working a job from the database alone.
+func resume(t *testing.T, v *env, j store.Job) store.Job {
+	t.Helper()
+	fresh := New(v.st)
+	for i := 0; i < 6; i++ {
+		cur, _ := v.st.Job(j.ID)
+		if cur.Status == "done" || cur.Status == "failed" {
+			break
+		}
+		fresh.advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j))
+	}
+	return v.status(t, j.ID)
+}
+
+// A SIGKILL, OOM or power cut can land at any step of a replacement. Sonarr is modelled honestly: a delete removes
+// the files, an import is refused while the old files are still there. For every step the replacement must finish
+// from the database alone with the old files deleted exactly once and ONE import.
 func TestKillNineAtEveryStepOfAReplacementIsRecovered(t *testing.T) {
 	for _, stage := range []string{"before-record", "after-record", "after-delete", "after-import-start"} {
-		for _, sonarrFinishedAnyway := range []bool{false, true} {
-			t.Run(stage, func(t *testing.T) {
+		for _, deleteLanded := range []bool{false, true} {
+			if deleteLanded && stage != "after-record" {
+				continue // stages after the delete always had it land
+			}
+			name := stage
+			if stage == "after-record" {
+				name += map[bool]string{false: "/delete-never-sent", true: "/delete-reached-sonarr"}[deleteLanded]
+			}
+			t.Run(name, func(t *testing.T) {
 				v := setup(t, []int{1, 2, 3})
+				v.fake.realistic = true
 				j := readyJob(t, v)
 				v.e.killpoint = func(s string) {
 					if s == stage {
+						if deleteLanded { // the request was on the wire: Sonarr carried it out although we died
+							v.fake.mu.Lock()
+							v.fake.existing = map[int]bool{}
+							for n := range v.fake.seasonEps {
+								v.fake.seasonEps[n] = 0
+							}
+							v.fake.mu.Unlock()
+						}
 						panic(killed{})
 					}
 				}
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							if _, ok := r.(killed); !ok {
-								panic(r)
-							}
-						}
-					}()
-					v.e.replace(context.Background(), v.inst, v.c, &j, okVerdict(), completed(), "test")
-				}()
-				deletedBefore := len(v.fake.deleted)
-				// what Sonarr did meanwhile: if the delete went through the old files are gone; if its import
-				// was started (or it finished the import on its own) the new files appear
-				deleteLanded := stage == "after-delete" || stage == "after-import-start" || (stage == "after-record" && sonarrFinishedAnyway)
-				if deleteLanded {
-					v.fake.existing = map[int]bool{}
-				}
-				fresh := New(v.st)
-				q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Status: "completed", DownloadID: "d", OutputPath: "/dl/pack", Title: j.Release}}
-				for i := 0; i < 6; i++ {
-					cur, _ := v.st.Job(j.ID)
-					if cur.Status == "done" {
-						break
-					}
-					fresh.advance(context.Background(), v.inst, v.c, live(), cur, q)
-					if cur2, _ := v.st.Job(j.ID); cur2.ImportCmd != 0 || v.fake.imports > 0 {
-						v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93} // Sonarr finishes the import
-					}
-				}
-				got := v.status(t, j.ID)
+				runKilled(func() { v.e.replace(context.Background(), v.inst, v.c, &j, okVerdict(), completed(), "test") })
+				got := resume(t, v, j)
 				if got.Status != "done" {
-					t.Fatalf("kill at %s: the job must recover to done, got %s %q", stage, got.Status, got.Message)
-				}
-				// nothing was recorded before "before-record", so the job is still an untouched 'ready' one and the new
-				// engine is entitled to do the (single) replacement itself; from "after-record" on it must only resume
-				if stage != "before-record" && len(v.fake.deleted) != deletedBefore {
-					t.Fatalf("kill at %s: the recovering engine must never delete again (before=%d after=%d)", stage, deletedBefore, len(v.fake.deleted))
+					t.Fatalf("kill at %s: must recover to done, got %s %q", name, got.Status, got.Message)
 				}
 				if len(v.fake.deleted) > 1 {
-					t.Fatalf("kill at %s: old files must be deleted at most once, got %v", stage, v.fake.deleted)
+					t.Fatalf("kill at %s: old files deleted more than once: %v", name, v.fake.deleted)
+				}
+				if v.fake.imports != 1 || v.fake.rejected != 0 {
+					t.Fatalf("kill at %s: want exactly one import and none refused, got imports=%d refused=%d", name, v.fake.imports, v.fake.rejected)
+				}
+				if len(v.fake.existing) != 0 {
+					t.Fatalf("kill at %s: old files must be gone at the end: %v", name, v.fake.existing)
 				}
 			})
 		}
+	}
+}
+
+// Killed inside finishImport, after Sonarr accepted the import but before its id was saved: the resumed job must
+// find that command and not start a second scan.
+func TestKillBetweenImportAcceptedAndSavedDoesNotImportTwice(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.realistic = true
+	j := readyJob(t, v)
+	now := time.Now().Unix()
+	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, "d", 3, []int{1, 2, 3}, 0
+	_ = v.st.UpdateJob(j)
+	v.fake.existing = map[int]bool{} // the delete had already landed
+	for n := range v.fake.seasonEps {
+		v.fake.seasonEps[n] = 0
+	}
+	first := New(v.st)
+	first.killpoint = func(s string) {
+		if s == "fi-after-import-start" {
+			panic(killed{})
+		}
+	}
+	runKilled(func() {
+		cur, _ := v.st.Job(j.ID)
+		first.advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j))
+	})
+	if v.fake.imports != 1 {
+		t.Fatalf("setup: the first run should have started one import, got %d", v.fake.imports)
+	}
+	v.fake.mu.Lock()
+	for n := range v.fake.seasonEps {
+		v.fake.seasonEps[n] = 0 // Sonarr is still working on the import we started
+	}
+	v.fake.mu.Unlock()
+	fresh := New(v.st)
+	cur, _ := v.st.Job(j.ID)
+	fresh.advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j))
+	after := v.status(t, j.ID)
+	if v.fake.imports != 1 || after.ImportCmd == 0 {
+		t.Fatalf("a restart must adopt the import Sonarr already has, not start another: imports=%d cmd=%d %q", v.fake.imports, after.ImportCmd, after.Message)
+	}
+	v.fake.mu.Lock()
+	for _, n := range []int{1, 2, 3} {
+		v.fake.seasonEps[n] = 900 + n // the import completes
+	}
+	v.fake.mu.Unlock()
+	if got := resume(t, v, j); got.Status != "done" || v.fake.imports != 1 {
+		t.Fatalf("job should finish with the single import: %s imports=%d", got.Status, v.fake.imports)
+	}
+}
+
+// If the write-ahead record cannot be saved, nothing may be deleted: a crash after an unrecorded delete loses the job.
+func TestFailedWriteAheadRecordMeansNothingIsDeleted(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := readyJob(t, v)
+	before := v.status(t, j.ID)
+	if _, err := v.st.Exec(`create trigger no_update before update on jobs begin select raise(abort, 'disk full'); end`); err != nil {
+		t.Skip("sqlite triggers unavailable: ", err)
+	}
+	v.e.replace(context.Background(), v.inst, v.c, &j, okVerdict(), completed(), "test")
+	if len(v.fake.deleted) != 0 || v.fake.imports != 0 {
+		t.Fatalf("an unrecorded replacement must not touch Sonarr: deleted=%v imports=%d", v.fake.deleted, v.fake.imports)
+	}
+	if j.Status != before.Status {
+		t.Fatalf("the in-memory job must be rolled back, got %s want %s", j.Status, before.Status)
+	}
+}
+
+// The import command is lost (Sonarr restarted / host was down) while the pack is still queued: ask again instead of
+// leaving a human to click Retry, but only a couple of times.
+func TestLostImportCommandIsReissuedThenGivesUp(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.realistic = true
+	j := readyJob(t, v)
+	long := time.Now().Add(-2 * time.Hour).Unix()
+	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", long, long, "d", 3, []int{1, 2, 3}, 77
+	_ = v.st.UpdateJob(j)
+	v.fake.existing = map[int]bool{}
+	for n := range v.fake.seasonEps {
+		v.fake.seasonEps[n] = 0
+	}
+	cur, _ := v.st.Job(j.ID)
+	New(v.st).advance(context.Background(), v.inst, v.c, live(), cur, queueFor(j)) // command 77 is unknown to Sonarr now
+	cur = v.status(t, j.ID)
+	if cur.Status != "importing" || cur.ImportCmd != 0 {
+		t.Fatalf("a lost import command must be reissued, got %s cmd=%d %q", cur.Status, cur.ImportCmd, cur.Message)
+	}
+	if got := resume(t, v, j); got.Status != "done" {
+		t.Fatalf("the reissued import should finish the job, got %s %q", got.Status, got.Message)
 	}
 }

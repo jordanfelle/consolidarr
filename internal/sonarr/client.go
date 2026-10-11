@@ -185,6 +185,10 @@ type Command struct {
 	Message string `json:"message"`
 	Queued  string `json:"queued"`
 	Started string `json:"started"`
+	Body    struct {
+		Path             string `json:"path"`
+		DownloadClientID string `json:"downloadClientId"`
+	} `json:"body"`
 }
 
 type Health struct {
