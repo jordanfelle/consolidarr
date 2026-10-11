@@ -271,10 +271,12 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	if e.draining.Load() {
 		return // shutting down: nothing has been recorded or deleted, the job is exactly as it was
 	}
+	e.kill("before-record")
 	now := time.Now().Unix()
 	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0
 	j.Message = fmt.Sprintf("deleting %d old files, then importing", len(ids))
 	_ = e.St.UpdateJob(*j) // before the delete
+	e.kill("after-record")
 	if len(ids) > 0 {
 		if err := c.DeleteEpisodeFiles(ctx, ids); err != nil {
 			if left, lerr := liveOld(ctx, c, j.SeriesID, ids); lerr == nil && len(left) == len(ids) {
@@ -286,7 +288,9 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			e.St.Event("error", fmt.Sprintf("%s: delete reported an error after possibly removing files: %v", label, err))
 		}
 	}
+	e.kill("after-delete")
 	id, err := c.ImportDownload(ctx, v.OutputPath, v.DownloadID)
+	e.kill("after-import-start")
 	if err != nil {
 		j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
 		_ = e.St.UpdateJob(*j)
@@ -300,6 +304,13 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	}
 	_ = e.St.UpdateJob(*j)
 	e.St.Event("info", fmt.Sprintf("%s: verified, deleted %d old files, import started (%s)", label, len(ids), how))
+}
+
+// kill is a test hook: a process death at this step. It is nil in production.
+func (e *Engine) kill(stage string) {
+	if e.killpoint != nil {
+		e.killpoint(stage)
+	}
 }
 
 // finishImport follows a job whose old files are (or may be) gone until every expected episode has a new file.

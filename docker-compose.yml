@@ -1,7 +1,6 @@
 services:
   consolidarr:
     image: ghcr.io/jordanfelle/consolidarr:latest
-    stop_grace_period: 3m # lets an in-flight replacement reach 'import started' before SIGKILL (the app waits up to 150s)
     container_name: consolidarr
     restart: unless-stopped
     ports:

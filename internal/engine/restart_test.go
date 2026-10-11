@@ -79,3 +79,65 @@ func TestStartLogsWhatItResumes(t *testing.T) {
 	}
 	t.Fatal("a start with active jobs must say so")
 }
+
+type killed struct{}
+
+// A SIGKILL can land at any step of a replacement. For every step: the process dies there, a brand-new engine (no
+// memory of the old one) takes over from the database alone, and the season must end done, with no further delete
+// and no second delete of files the first run already removed.
+func TestKillNineAtEveryStepOfAReplacementIsRecovered(t *testing.T) {
+	for _, stage := range []string{"before-record", "after-record", "after-delete", "after-import-start"} {
+		for _, sonarrFinishedAnyway := range []bool{false, true} {
+			t.Run(stage, func(t *testing.T) {
+				v := setup(t, []int{1, 2, 3})
+				j := readyJob(t, v)
+				v.e.killpoint = func(s string) {
+					if s == stage {
+						panic(killed{})
+					}
+				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							if _, ok := r.(killed); !ok {
+								panic(r)
+							}
+						}
+					}()
+					v.e.replace(context.Background(), v.inst, v.c, &j, okVerdict(), completed(), "test")
+				}()
+				deletedBefore := len(v.fake.deleted)
+				// what Sonarr did meanwhile: if the delete went through the old files are gone; if its import
+				// was started (or it finished the import on its own) the new files appear
+				deleteLanded := stage == "after-delete" || stage == "after-import-start" || (stage == "after-record" && sonarrFinishedAnyway)
+				if deleteLanded {
+					v.fake.existing = map[int]bool{}
+				}
+				fresh := New(v.st)
+				q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Status: "completed", DownloadID: "d", OutputPath: "/dl/pack", Title: j.Release}}
+				for i := 0; i < 6; i++ {
+					cur, _ := v.st.Job(j.ID)
+					if cur.Status == "done" {
+						break
+					}
+					fresh.advance(context.Background(), v.inst, v.c, live(), cur, q)
+					if cur2, _ := v.st.Job(j.ID); cur2.ImportCmd != 0 || v.fake.imports > 0 {
+						v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93} // Sonarr finishes the import
+					}
+				}
+				got := v.status(t, j.ID)
+				if got.Status != "done" {
+					t.Fatalf("kill at %s: the job must recover to done, got %s %q", stage, got.Status, got.Message)
+				}
+				// nothing was recorded before "before-record", so the job is still an untouched 'ready' one and the new
+				// engine is entitled to do the (single) replacement itself; from "after-record" on it must only resume
+				if stage != "before-record" && len(v.fake.deleted) != deletedBefore {
+					t.Fatalf("kill at %s: the recovering engine must never delete again (before=%d after=%d)", stage, deletedBefore, len(v.fake.deleted))
+				}
+				if len(v.fake.deleted) > 1 {
+					t.Fatalf("kill at %s: old files must be deleted at most once, got %v", stage, v.fake.deleted)
+				}
+			})
+		}
+	}
+}

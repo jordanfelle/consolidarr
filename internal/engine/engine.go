@@ -26,8 +26,9 @@ type Engine struct {
 	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
 	instMu locks // one season per instance is deleted-and-imported at a time
 
-	draining atomic.Bool  // set once shutdown begins: no new replacement may start deleting
-	inflight atomic.Int64 // replacements between 'record importing' and 'import started'; a restart waits for them
+	killpoint func(stage string) // tests only: called at each durable step of a replacement so a test can 'kill -9' there
+	draining  atomic.Bool        // set once shutdown begins: no new replacement may start deleting
+	inflight  atomic.Int64       // replacements between 'record importing' and 'import started'; a restart waits for them
 
 	mu       sync.Mutex
 	scanning map[int64]bool
@@ -352,9 +353,13 @@ func (e *Engine) logResume() {
 	e.St.Event("info", fmt.Sprintf("started: resuming %d active jobs %v", len(js), by))
 }
 
+// Drain begins shutdown: no replacement may start deleting from here on. Start also calls it when its context ends.
+func (e *Engine) Drain() { e.draining.Store(true) }
+
 // WaitIdle blocks until no replacement is between its first database write and the import being started, or the
-// timeout passes. A shutdown calls it so SIGTERM never lands between deleting old files and starting the import
-// (a hard kill there is still recoverable, just slower: the job resumes as 'importing').
+// timeout passes. A shutdown calls it for a few seconds as a courtesy so a clean stop usually lands between
+// replacements. It is not what makes restarts safe: a hard kill, OOM or power loss at any step is recovered from the
+// database alone (the job resumes as 'importing'; see TestKillNineAtEveryStepOfAReplacementIsRecovered).
 func (e *Engine) WaitIdle(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for e.inflight.Load() > 0 {
@@ -368,7 +373,7 @@ func (e *Engine) WaitIdle(timeout time.Duration) bool {
 
 // Start runs the scheduler until ctx ends.
 func (e *Engine) Start(ctx context.Context) {
-	go func() { <-ctx.Done(); e.draining.Store(true) }()
+	go func() { <-ctx.Done(); e.Drain() }()
 	e.logResume()
 	_ = e.St.RecordSnapshot(e.St.Settings().MinFiles) // a point on every restart keeps the history line continuous
 	tick := time.NewTicker(30 * time.Second)
@@ -859,6 +864,9 @@ func removeOld(ctx context.Context, c *sonarr.Client, seriesID int, old []int) e
 // state can have changed since.
 func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job) error {
 	defer e.jobMu.lock(j0.ID)()
+	if e.draining.Load() {
+		return errors.New("consolidarr is restarting; try again in a minute")
+	}
 	j, err := e.St.Job(j0.ID)
 	if err != nil {
 		return err

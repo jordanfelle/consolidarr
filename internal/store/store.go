@@ -71,7 +71,17 @@ create table if not exists api_keys(id {{PK}}, name text not null, prefix text n
 `
 
 // Open connects to databaseURL when set (postgres://...), otherwise SQLite under dir.
-func Open(dir, databaseURL string) (*Store, error) {
+func Open(dir, databaseURL string) (st *Store, err error) {
+	defer func() {
+		if err != nil && st != nil && st.DB != nil {
+			_ = st.DB.Close() // a failed attempt must not leak its pool (the caller may retry)
+			st = nil
+		}
+	}()
+	return openStore(dir, databaseURL)
+}
+
+func openStore(dir, databaseURL string) (*Store, error) {
 	st := &Store{}
 	pk := "integer primary key"
 	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
@@ -81,7 +91,7 @@ func Open(dir, databaseURL string) (*Store, error) {
 		}
 		st.DB, st.PG, pk = db, true, "bigserial primary key"
 	} else {
-		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "consolidarr.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+		db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "consolidarr.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)")
 		if err != nil {
 			return nil, err
 		}
