@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -313,33 +314,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	if err != nil {
 		return
 	}
-	old := map[int]bool{}
-	for _, id := range j.OldFileIDs {
-		old[id] = true
-	}
-	covered := map[int]bool{}
-	for _, ep := range eps {
-		if ep.EpisodeFileID != 0 && !old[ep.EpisodeFileID] {
-			covered[ep.EpisodeNumber] = true
-		}
-	}
-	want := j.ExpectedEps
-	if len(want) == 0 {
-		// A job recorded before episodes were tracked. Counting files would let episodes Sonarr imported earlier
-		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
-		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
-		for _, ep := range eps {
-			if aired(ep) {
-				want = append(want, ep.EpisodeNumber)
-			}
-		}
-	}
-	got := 0
-	for _, n := range want {
-		if covered[n] {
-			got++
-		}
-	}
+	want, _, got := coverage(j, eps)
 	fail := func(msg string) {
 		j.Status, j.Message = "failed", msg
 		_ = e.St.UpdateJob(*j)
@@ -380,6 +355,98 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	case !finished && age > importHardStop:
 		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))
 	}
+}
+
+// coverage works out which episodes the job is waiting for, which of them already have a file that is not one of
+// the old files, and how many that is.
+func coverage(j *store.Job, eps []sonarr.Episode) (want []int, covered map[int]bool, got int) {
+	old := map[int]bool{}
+	for _, id := range j.OldFileIDs {
+		old[id] = true
+	}
+	covered = map[int]bool{}
+	for _, ep := range eps {
+		if ep.EpisodeFileID != 0 && !old[ep.EpisodeFileID] {
+			covered[ep.EpisodeNumber] = true
+		}
+	}
+	want = j.ExpectedEps
+	if len(want) == 0 {
+		// A job recorded before episodes were tracked. Counting files would let episodes Sonarr imported earlier
+		// satisfy it, so be strict instead: every episode of the season must have a new file. A season with
+		// unaired episodes then ends up "failed" with a message pointing at Adopt, which is safe.
+		for _, ep := range eps {
+			if aired(ep) {
+				want = append(want, ep.EpisodeNumber)
+			}
+		}
+	}
+	for _, n := range want {
+		if covered[n] {
+			got++
+		}
+	}
+	return want, covered, got
+}
+
+var trailingTag = regexp.MustCompile(`\[[^\]]*\]$`)
+
+// groupMatches reports whether a Sonarr file's release group is the group at the end of the grabbed release title
+// (a group that is only the tail of a longer hyphenated group still matches; the worst case is a "done" with nothing deleted)
+// ("...H.264-D-Z0N3", "...-NTb[rartv]"). Quality tokens that follow a hyphen ("WEB-DL") are never a group.
+func groupMatches(title, group string) bool {
+	g := strings.ToLower(strings.TrimSpace(group))
+	switch g {
+	case "", "dl", "rip", "hd", "hdtv", "dtv", "ray", "r", "res", "hdr":
+		return false
+	}
+	t := strings.ToLower(strings.TrimSpace(title))
+	for trailingTag.MatchString(t) {
+		t = strings.TrimSpace(trailingTag.ReplaceAllString(t, ""))
+	}
+	return strings.HasSuffix(t, "-"+g)
+}
+
+// importedBySonarr reports whether Sonarr already replaced the whole season with this pack itself (its own upgrade
+// import of a finished pack, which can beat our verification on a small pack). Nothing is deleted on this path: it
+// only lets a job that would be called "lost" end as "done". To avoid crediting unrelated upgrades it requires that
+// the job recorded old files, that every wanted episode has a file that is not one of them, and that each of those
+// files carries the release group of the grabbed pack. A Sonarr error is returned so the caller retries next cycle.
+func (e *Engine) importedBySonarr(ctx context.Context, c *sonarr.Client, j *store.Job) (int, bool, error) {
+	if j.Release == "" || len(j.OldFileIDs) == 0 {
+		return 0, false, nil
+	}
+	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
+	if err != nil {
+		return 0, false, err
+	}
+	files, err := c.EpisodeFiles(ctx, j.SeriesID)
+	if err != nil {
+		return 0, false, err
+	}
+	group := map[int]string{} // file id -> Sonarr's release group
+	for _, f := range files {
+		group[f.ID] = f.ReleaseGroup
+	}
+	want, _, _ := coverage(j, eps)
+	if len(want) == 0 {
+		return 0, false, nil
+	}
+	old := map[int]bool{}
+	for _, id := range j.OldFileIDs {
+		old[id] = true
+	}
+	byEp := map[int]int{}
+	for _, ep := range eps {
+		byEp[ep.EpisodeNumber] = ep.EpisodeFileID
+	}
+	for _, n := range want {
+		id := byEp[n]
+		if id == 0 || old[id] || !groupMatches(j.Release, group[id]) {
+			return 0, false, nil
+		}
+	}
+	return len(want), true, nil
 }
 
 // aired reports whether an episode has already aired (specials, season 0, are not waited for).

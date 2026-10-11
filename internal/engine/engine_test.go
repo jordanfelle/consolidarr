@@ -47,6 +47,7 @@ type fakeSonarr struct {
 	filesAfter    []sonarr.EpisodeFile
 	existing      map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
 	cmdStatus     string
+	failFiles     bool // GET /episodefile answers 500
 	srv           *httptest.Server
 }
 
@@ -128,6 +129,10 @@ func newFake(packEps []int) *fakeSonarr {
 		js(w, map[string]any{"id": 42, "status": f.cmdStatus})
 	})
 	mux.HandleFunc("GET /api/v3/episodefile", func(w http.ResponseWriter, r *http.Request) {
+		if f.failFiles {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
 		if f.filesAfter != nil { // a test that scripts the post-import state
 			js(w, f.filesAfter)
 			return
@@ -315,6 +320,128 @@ func TestVanishedDownloadIsLostNotDeleted(t *testing.T) {
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "lost" || len(v.fake.deleted) != 0 {
 		t.Fatalf("got %s deleted=%v", got.Status, v.fake.deleted)
+	}
+}
+
+func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
+	grab := func(t *testing.T, oldIDs []int) (*env, store.Job) {
+		v := setup(t, []int{1, 2, 3})
+		j := v.job(t, time.Now().Add(-time.Hour))
+		ids, _ := json.Marshal(oldIDs)
+		if oldIDs == nil {
+			ids = []byte("[]")
+		}
+		_, _ = v.st.Exec(`update jobs set release=?, old_file_ids=? where id=?`, "Show S03 1080p WEB x265-NOXXUS", string(ids), j.ID)
+		j, _ = v.st.Job(j.ID)
+		v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+		v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+		return v, j
+	}
+	run := func(v *env, j store.Job) store.Job {
+		v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+		return v.status(t, j.ID)
+	}
+	v, j := grab(t, []int{11, 12, 13})
+	if got := run(v, j); got.Status != "done" || len(v.fake.deleted) != 0 {
+		t.Fatalf("got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+	// new files from a different release group are someone else's upgrade, not this pack
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.filesAfter[1].ReleaseGroup = "OTHER"
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("a mixed-group season must stay lost, got %s", got.Status)
+	}
+	// a partial replacement is still lost, never done
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.seasonEps = map[int]int{1: 91, 2: 12, 3: 13}
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("partial replacement must stay lost, got %s", got.Status)
+	}
+	// no recorded old files: every file would look new, so claim nothing
+	v, j = grab(t, nil)
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("empty OldFileIDs must stay lost, got %s", got.Status)
+	}
+	// hyphenated groups and trailing site tags still match
+	v, j = grab(t, []int{11, 12, 13})
+	_, _ = v.st.Exec(`update jobs set release=? where id=?`, "Show S03 1080p WEB-DL H.264-D-Z0N3[rartv]", j.ID)
+	for i := range v.fake.filesAfter {
+		v.fake.filesAfter[i].ReleaseGroup = "D-Z0N3"
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "done" {
+		t.Fatalf("hyphenated group with a site tag should match, got %s %q", got.Status, got.Message)
+	}
+	// a quality token is never a group
+	v, j = grab(t, []int{11, 12, 13})
+	_, _ = v.st.Exec(`update jobs set release=? where id=?`, "Show S03 1080p WEB-DL", j.ID)
+	for i := range v.fake.filesAfter {
+		v.fake.filesAfter[i].ReleaseGroup = "DL"
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("WEB-DL must not parse as group DL, got %s", got.Status)
+	}
+	// a Sonarr error is not evidence either way: leave the job to be re-checked next cycle
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.srv.Close()
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("a Sonarr error must not write a terminal state, got %s", got.Status)
+	}
+	// a failure of the second call (episode files) is handled the same, and a later good cycle recovers
+	v, j = grab(t, []int{11, 12, 13})
+	good := v.fake.filesAfter
+	v.fake.filesAfter = nil
+	v.fake.failFiles = true
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("an episodefile error must not write a terminal state, got %s", got.Status)
+	}
+	v.fake.failFiles, v.fake.filesAfter = false, good
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "done" {
+		t.Fatalf("the next cycle should recover to done, got %s %q", got.Status, got.Message)
+	}
+	// error, a pass that is not an error, then another error: the timer restarted, so one blip never ends the job
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.failFiles = true
+	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-25*time.Hour).Unix(), j.ID)
+	j, _ = v.st.Job(j.ID)
+	run(v, j)
+	v.e.mu.Lock()
+	v.e.errSince[j.ID] = time.Now().Add(-25 * time.Hour) // stale timer from the first error
+	v.e.mu.Unlock()
+	q := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: j.Release, DownloadID: "X", Size: 100, SizeLeft: 50, Status: "downloading"}}
+	j.DownloadID = "X"
+	_ = v.st.UpdateJob(j)
+	j, _ = v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, q) // reappears in the queue: not an error
+	v.e.mu.Lock()
+	_, stale := v.e.errSince[j.ID]
+	v.e.mu.Unlock()
+	if stale {
+		t.Fatal("a pass that is not an error must clear the timer")
+	}
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("a fresh blip after a clean pass must not end the job, got %s", got.Status)
+	}
+	// errors that persist for a day end as lost instead of hanging forever
+	v, j = grab(t, []int{11, 12, 13})
+	v.fake.failFiles = true
+	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-25*time.Hour).Unix(), j.ID)
+	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("one blip on an old job must not end it, got %s", got.Status)
+	}
+	v.e.mu.Lock()
+	first, recorded := v.e.errSince[j.ID]
+	v.e.errSince[j.ID] = time.Now().Add(-25 * time.Hour)
+	v.e.mu.Unlock()
+	if !recorded || first.IsZero() {
+		t.Fatal("the first error must be recorded")
+	}
+	if got := run(v, j); got.Status != "lost" {
+		t.Fatalf("a day of errors in a row should fall through to lost, got %s", got.Status)
 	}
 }
 

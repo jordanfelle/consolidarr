@@ -27,12 +27,13 @@ type Engine struct {
 
 	mu       sync.Mutex
 	scanning map[int64]bool
+	errSince map[int64]time.Time // job id -> when Sonarr first failed the "did Sonarr import it" check, in a row
 	runNow   chan struct{}
 	Healthy  map[int64]string // instance id -> "" (ok) or reason
 }
 
 func New(st *store.Store) *Engine {
-	return &Engine{St: st, scanning: map[int64]bool{}, runNow: make(chan struct{}, 1), Healthy: map[int64]string{}}
+	return &Engine{St: st, scanning: map[int64]bool{}, errSince: map[int64]time.Time{}, runNow: make(chan struct{}, 1), Healthy: map[int64]string{}}
 }
 
 func client(i store.Instance) *sonarr.Client { return sonarr.New(i.URL, i.APIKey) }
@@ -487,6 +488,24 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 	return true
 }
 
+// errorsPersisted records a failed Sonarr check for the job and reports whether it has now been failing for a day.
+func (e *Engine) errorsPersisted(id int64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	first, ok := e.errSince[id]
+	if !ok {
+		e.errSince[id] = time.Now()
+		return false
+	}
+	return time.Since(first) >= 24*time.Hour
+}
+
+func (e *Engine) clearErr(id int64) {
+	e.mu.Lock()
+	delete(e.errSince, id)
+	e.mu.Unlock()
+}
+
 // ---- job lifecycle ----
 
 func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) {
@@ -515,6 +534,14 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	}
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	// The error timer counts consecutive failed checks: any pass through advance that is not such a failure resets it.
+	// (It is in memory only, so a restart restarts the day; that fails safe by leaving the job alone longer.)
+	keepErr := false
+	defer func() {
+		if !keepErr {
+			e.clearErr(j.ID)
+		}
+	}()
 	switch j.Status {
 	case "done", "failed", "lost":
 		return
@@ -549,6 +576,19 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	mine := ownedItems(queue, &j)
 	if len(mine) == 0 {
 		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
+			got, ok, ierr := e.importedBySonarr(ctx, c, &j)
+			if ierr != nil && !e.errorsPersisted(j.ID) {
+				keepErr = true
+				return // Sonarr hiccup: look again next cycle rather than writing a terminal state; a day of errors in a row falls through to lost
+			}
+			if ok {
+				j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
+				e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
+				e.St.Event("info", fmt.Sprintf("done %s: %s", label, j.Message))
+				_ = e.St.UpdateJob(j)
+				e.rescanSeries(ctx, inst, j.SeriesID)
+				return
+			}
 			j.Status = "lost"
 			j.Message = "no longer in Sonarr's queue; old files untouched"
 			e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 24*time.Hour, "lost")
