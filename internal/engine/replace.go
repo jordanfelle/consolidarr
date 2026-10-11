@@ -392,11 +392,12 @@ func coverage(j *store.Job, eps []sonarr.Episode) (want []int, covered map[int]b
 var trailingTag = regexp.MustCompile(`\[[^\]]*\]$`)
 
 // groupMatches reports whether a Sonarr file's release group is the group at the end of the grabbed release title
+// (a group that is only the tail of a longer hyphenated group still matches; the worst case is a "done" with nothing deleted)
 // ("...H.264-D-Z0N3", "...-NTb[rartv]"). Quality tokens that follow a hyphen ("WEB-DL") are never a group.
 func groupMatches(title, group string) bool {
 	g := strings.ToLower(strings.TrimSpace(group))
 	switch g {
-	case "", "dl", "rip", "hd", "hdtv":
+	case "", "dl", "rip", "hd", "hdtv", "dtv", "ray", "r", "res", "hdr":
 		return false
 	}
 	t := strings.ToLower(strings.TrimSpace(title))

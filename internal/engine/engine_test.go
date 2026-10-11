@@ -406,8 +406,14 @@ func TestVanishedDownloadSonarrAlreadyImportedIsDone(t *testing.T) {
 	v.fake.failFiles = true
 	_, _ = v.st.Exec(`update jobs set created=? where id=?`, time.Now().Add(-25*time.Hour).Unix(), j.ID)
 	j, _ = v.st.Job(j.ID)
+	if got := run(v, j); got.Status != "downloading" {
+		t.Fatalf("one blip on an old job must not end it, got %s", got.Status)
+	}
+	v.e.mu.Lock()
+	v.e.errSince[j.ID] = time.Now().Add(-25 * time.Hour)
+	v.e.mu.Unlock()
 	if got := run(v, j); got.Status != "lost" {
-		t.Fatalf("a day of errors should fall through to lost, got %s", got.Status)
+		t.Fatalf("a day of errors in a row should fall through to lost, got %s", got.Status)
 	}
 }
 
