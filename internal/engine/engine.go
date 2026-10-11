@@ -493,11 +493,13 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 // job (reconcile) can retry; the rescan is best-effort (the scheduled scan corrects a stale season table anyway).
 func (e *Engine) markImportedBySonarr(ctx context.Context, inst store.Instance, j *store.Job, got int) error {
 	j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
+	// Skip first: a crash between the two leaves a still-lost job whose season is not regrabbed for 30 days
+	// (conservative), never a done job that could be queued again.
+	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
 	if err := e.St.UpdateJob(*j); err != nil {
 		e.St.Event("error", fmt.Sprintf("could not mark %s S%02d done: %v", j.Title, j.Season, err))
 		return err
 	}
-	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
 	e.St.Event("info", fmt.Sprintf("done %s S%02d: %s", j.Title, j.Season, j.Message))
 	e.rescanSeries(ctx, inst, j.SeriesID)
 	return nil
@@ -524,6 +526,9 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 		if !e.reconcileOne(ctx, inst, c, j0.ID) {
 			failed = append(failed, j0.ID) // keep judging the others; one bad series must not block them
 		}
+	}
+	if ctx.Err() != nil {
+		return // a shutdown mid-pass is not a failure: no try is burned and the marker stays unset
 	}
 	// Retries are counted per job, so one permanently broken job cannot use up another job's chances: the pass is
 	// finished once every job has either been judged or failed five times.

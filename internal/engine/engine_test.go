@@ -846,3 +846,31 @@ func TestReconcileLostRetriesThenGivesUpWithoutBlockingOthers(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileLostCountsTriesPerJobAndIgnoresShutdown(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	mk := func(series int) store.Job {
+		id, _ := v.st.AddJob(store.Job{InstID: 1, SeriesID: series, Season: 3, Title: "Show", OldFileIDs: []int{11, 12, 13}, Release: "Show S03 1080p WEB x265-NOXXUS", Status: "lost"})
+		_, _ = v.st.Exec(`update jobs set status='lost', message=? where id=?`, "no longer in Sonarr's queue; old files untouched", id)
+		j, _ := v.st.Job(id)
+		return j
+	}
+	a, b := mk(1), mk(2)
+	v.fake.failFiles = true
+	key := "reconciled:vanished-lost:v1:1"
+	v.st.SetKV(fmt.Sprintf("%s:tries:%d", key, a.ID), "4") // a is one failure from exhausted, b is fresh
+	v.e.reconcileLost(context.Background(), v.inst, v.c)
+	if v.st.KV(key) != "" {
+		t.Fatal("job b still has tries left, so the pass must not finish just because job a ran out")
+	}
+	if got := v.st.KV(fmt.Sprintf("%s:tries:%d", key, b.ID)); got != "1" {
+		t.Fatalf("b must have exactly one try counted, got %q", got)
+	}
+	// a shutdown mid-pass burns no try and never finishes the pass
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	v.e.reconcileLost(ctx, v.inst, v.c)
+	if v.st.KV(key) != "" || v.st.KV(fmt.Sprintf("%s:tries:%d", key, b.ID)) != "1" {
+		t.Fatal("a cancelled context must not count tries or write the marker")
+	}
+}
