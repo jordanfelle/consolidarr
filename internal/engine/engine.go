@@ -489,12 +489,18 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 	return true
 }
 
-func (e *Engine) markImportedBySonarr(ctx context.Context, inst store.Instance, j *store.Job, got int) {
+// markImportedBySonarr ends the job as done. It returns the database error, if any, so a caller that must not lose the
+// job (reconcile) can retry; the rescan is best-effort (the scheduled scan corrects a stale season table anyway).
+func (e *Engine) markImportedBySonarr(ctx context.Context, inst store.Instance, j *store.Job, got int) error {
 	j.Status, j.Message = "done", fmt.Sprintf("Sonarr imported the pack itself (%d episodes); nothing was deleted by us", got)
+	if err := e.St.UpdateJob(*j); err != nil {
+		e.St.Event("error", fmt.Sprintf("could not mark %s S%02d done: %v", j.Title, j.Season, err))
+		return err
+	}
 	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
 	e.St.Event("info", fmt.Sprintf("done %s S%02d: %s", j.Title, j.Season, j.Message))
-	_ = e.St.UpdateJob(*j)
 	e.rescanSeries(ctx, inst, j.SeriesID)
+	return nil
 }
 
 // reconcileLost re-judges, once per instance, jobs an older build ended as "lost" because the pack left the queue:
@@ -507,23 +513,37 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 	}
 	jobs, err := e.St.VanishedLostJobs(inst.ID)
 	if err != nil {
+		e.St.Event("warn", fmt.Sprintf("%s: could not list lost jobs to re-check: %v (will retry)", inst.Name, err))
 		return
 	}
 	var failed []int64
 	for _, j0 := range jobs {
+		if ctx.Err() != nil {
+			return // shutting down: the marker is not written, so the next start finishes the pass
+		}
 		if !e.reconcileOne(ctx, inst, c, j0.ID) {
 			failed = append(failed, j0.ID) // keep judging the others; one bad series must not block them
 		}
 	}
-	hadErr := len(failed) > 0
-	if hadErr { // retry on later cycles, but a permanently failing job cannot keep this running forever
-		triesKey := key + ":tries"
-		n, _ := strconv.Atoi(e.St.KV(triesKey))
-		e.St.SetKV(triesKey, strconv.Itoa(n+1))
-		if n+1 < 5 {
-			return
+	// Retries are counted per job, so one permanently broken job cannot use up another job's chances: the pass is
+	// finished once every job has either been judged or failed five times.
+	var exhausted []int64
+	retry := false
+	for _, id := range failed {
+		tk := fmt.Sprintf("%s:tries:%d", key, id)
+		n, _ := strconv.Atoi(e.St.KV(tk))
+		e.St.SetKV(tk, strconv.Itoa(n+1))
+		if n+1 >= 5 {
+			exhausted = append(exhausted, id)
+		} else {
+			retry = true
 		}
-		e.St.Event("warn", fmt.Sprintf("%s: gave up re-checking lost jobs %v after %d tries (Sonarr or the database kept failing); they stay lost. Delete kv keys %s and %s:tries to re-run them", inst.Name, failed, n+1, key, key))
+	}
+	if retry {
+		return
+	}
+	if len(exhausted) > 0 {
+		e.St.Event("warn", fmt.Sprintf("%s: gave up re-checking lost jobs %v after 5 tries (Sonarr or the database kept failing); they stay lost. Delete kv key %s and its :tries:<id> keys to re-run them", inst.Name, exhausted, key))
 	}
 	e.St.SetKV(key, "1")
 }
@@ -531,6 +551,9 @@ func (e *Engine) reconcileLost(ctx context.Context, inst store.Instance, c *sona
 // reconcileOne judges one lost job under its lock, against its current row. It returns false on a Sonarr error.
 func (e *Engine) reconcileOne(ctx context.Context, inst store.Instance, c *sonarr.Client, id int64) bool {
 	defer e.jobMu.lock(id)()
+	if ctx.Err() != nil {
+		return false
+	}
 	j, err := e.St.Job(id)
 	if errors.Is(err, store.ErrNotFound) {
 		return true
@@ -553,7 +576,7 @@ func (e *Engine) reconcileOne(ctx context.Context, inst store.Instance, c *sonar
 		return false
 	}
 	if ok {
-		e.markImportedBySonarr(ctx, inst, &j, got)
+		return e.markImportedBySonarr(ctx, inst, &j, got) == nil
 	}
 	return true
 }
@@ -652,7 +675,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 				return // Sonarr hiccup: look again next cycle rather than writing a terminal state; a day of errors in a row falls through to lost
 			}
 			if ok {
-				e.markImportedBySonarr(ctx, inst, &j, got)
+				_ = e.markImportedBySonarr(ctx, inst, &j, got) // on a database error the job is still unchanged and is judged again next cycle
 				return
 			}
 			j.Status = "lost"
