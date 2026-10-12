@@ -726,8 +726,8 @@ func TestBackedUpSonarrDefersDeletionThenProceeds(t *testing.T) {
 	// a big backlog of completed downloads
 	v.fake.cmds = nil
 	backlog := done(100, 0, "completed")
-	for i := 0; i < 150; i++ {
-		backlog = append(backlog, sonarr.QueueItem{SeriesID: 99, SeasonNumber: 1, Status: "completed", TrackedState: "importPending"})
+	for i := 0; i < maxImportBacklog+10; i++ { // distinct downloads: the gate counts downloads, not episode records
+		backlog = append(backlog, sonarr.QueueItem{SeriesID: 99, SeasonNumber: 1, DownloadID: fmt.Sprintf("bk%d", i), Status: "completed", TrackedState: "importPending"})
 	}
 	j = v.status(t, j.ID)
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, backlog)
