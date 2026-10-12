@@ -181,7 +181,10 @@ export default function Dashboard() {
                   <tr key={j.id}>
                     <td className="whitespace-nowrap">{j.title} S{pad(j.season)}</td>
                     <td className="max-w-[16rem] truncate text-muted" title={j.release}>{j.release}</td>
-                    <td><span className="pill">{j.status}{j.status === "downloading" ? ` ${j.progress}%` : ""}</span></td>
+                    <td>
+                      <span className="pill">{j.status}{j.status === "downloading" ? ` ${j.progress}%` : ""}</span>
+                      {j.status === "holding" && j.message && <div className="mt-1 max-w-xs text-xs text-muted">{j.message}</div>}
+                    </td>
                   </tr>
                 ))}
                 {jobs.data?.length === 0 && <tr><td colSpan={3} className="text-muted">Nothing in flight.</td></tr>}

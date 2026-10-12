@@ -21,29 +21,41 @@ export function niceTicks(max: number, count = 4): number[] {
   return out;
 }
 
-function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
-  const ref = useRef<HTMLDivElement | null>(null);
+function useWidth(): [(el: HTMLDivElement | null) => void, number] {
+  // A callback ref, not a useRef + effect on mount: the line charts first render an "empty" placeholder and only mount
+  // the measured wrapper once data arrives, and an effect that ran at mount found no element, never attached its
+  // observer, and left the chart at the fallback width inside a card three times wider.
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
   const [w, setW] = useState(0);
   // Measure synchronously before the first paint so a chart is never drawn at a guessed width (it would overflow a
   // phone-sized card), then keep following the container.
   useLayoutEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const set = () => setW(Math.max(240, Math.floor(el.clientWidth)));
     set();
     const ro = new ResizeObserver(set);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-  return [ref, w || 320];
+  }, [el]);
+  return [setEl, w || 320];
 }
 
+const DAY = 86400;
+/** A tick label: a time when the whole span is within a day, a date when it is long, both when it is in between. */
 const fmtTime = (t: number, span: number) => {
   const d = new Date(t * 1000);
-  return span <= 2 * 86400
-    ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    : d.toLocaleDateString([], { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (span <= DAY) return time;
+  if (span <= 3 * DAY) return `${date}, ${time}`;
+  return date;
 };
+
+/** How many x labels fit without touching: the widest label (plus a gap) decides, never more than 6. */
+function xTickCount(plotWidth: number, span: number): number {
+  const label = span <= DAY ? 64 : span <= 3 * DAY ? 118 : 56;
+  return Math.max(2, Math.min(6, Math.floor(plotWidth / (label + 24)) + 1));
+}
 
 // ---- container with the table twin ----------------------------------------------------------------------------
 
@@ -61,9 +73,12 @@ export function ChartCard({ title, subtitle, legend, table, children, className 
           {subtitle && <div className="mt-0.5 text-xs text-muted">{subtitle}</div>}
         </div>
         {table && (
-          <button className="btn btn-sm shrink-0" onClick={() => setAsTable(!asTable)} aria-pressed={asTable}>
-            {asTable ? "Chart" : "Table"}
-          </button>
+          <div role="group" aria-label="How to show this chart" className="inline-flex shrink-0 overflow-hidden rounded-md border border-line text-xs">
+            <button type="button" aria-pressed={!asTable} onClick={() => setAsTable(false)} title="Show the chart"
+              className={`px-2.5 py-1 ${!asTable ? "bg-accent/15 text-white" : "text-muted hover:text-white"}`}>Chart</button>
+            <button type="button" aria-pressed={asTable} onClick={() => setAsTable(true)} title="Show the numbers behind the chart as a table (also what a screen reader reads)"
+              className={`border-l border-line px-2.5 py-1 ${asTable ? "bg-accent/15 text-white" : "text-muted hover:text-white"}`}>Data</button>
+          </div>
         )}
       </figcaption>
       {asTable && table ? (
@@ -142,7 +157,8 @@ export function LineChart({ series, height = 220, format = commas, percent = fal
   const X = (t: number) => m.l + ((t - t0) / span) * w;
   const Y = (v: number) => m.t + h - (v / top) * h;
   const at = (s: Series, t: number) => s.points.find((p) => p.t === t) ?? [...s.points].reverse().find((p) => p.t <= t);
-  const xTicks = Array.from({ length: Math.min(5, ts.length) }, (_, i) => t0 + (span * i) / (Math.min(5, ts.length) - 1));
+  const nx = Math.min(xTickCount(w, span), ts.length);
+  const xTicks = Array.from({ length: nx }, (_, i) => t0 + (span * i) / (nx - 1));
   const single = series.length === 1;
 
   const move = (e: React.PointerEvent<SVGRectElement>) => {

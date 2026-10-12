@@ -13,6 +13,11 @@ const FILTERS: { id: string; label: string; match: (s: string) => boolean }[] = 
   { id: "bad", label: "Failed / lost", match: (s) => ["failed", "lost"].includes(s) },
 ];
 
+// "BroadcastheNet (Prowlarr)" -> "BroadcastheNet": the indexer name Sonarr reports carries the proxy it came through.
+const tracker = (indexer: string) => indexer.replace(/\s*\((?:Prowlarr|Jackett)\)\s*$/i, "") || "–";
+// A pack that was rejected is gone from the download client and blocklisted, so "Retry now" can only end as "lost".
+const wasRejected = (message: string) => /^(auto-)?rejected|pack rejected/i.test(message);
+
 export default function Jobs() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState("all");
@@ -47,12 +52,13 @@ export default function Jobs() {
       </div>
       <div className="card overflow-x-auto">
         <table className="w-full">
-          <thead><tr><th>Season</th><th>Release</th><th>Size</th><th>Status</th><th>Detail</th><th /></tr></thead>
+          <thead><tr><th>Season</th><th>Release</th><th>Tracker</th><th>Size</th><th>Status</th><th>Detail</th><th /></tr></thead>
           <tbody>
             {jobs.data?.filter((j) => FILTERS.find((f) => f.id === filter)!.match(j.status)).map((j) => (
               <tr key={j.id}>
                 <td className="whitespace-nowrap">{j.title} S{String(j.season).padStart(2, "0")}</td>
                 <td className="max-w-xs truncate text-muted" title={j.release}>{j.release}</td>
+                <td className="whitespace-nowrap" title={j.indexer}>{tracker(j.indexer)}</td>
                 <td className="whitespace-nowrap">{j.sizeGB.toFixed(1)} GB</td>
                 <td>
                   <span className={`pill ${tone[j.status] ?? ""}`}><span aria-hidden>{glyph[j.status] ?? "•"}</span>{j.status}{j.status === "downloading" ? ` ${j.progress}%` : ""}</span>
@@ -61,7 +67,7 @@ export default function Jobs() {
                 <td className="max-w-sm text-xs text-muted">{j.message}</td>
                 <td className="space-x-2 whitespace-nowrap text-right">
                   {j.status === "ready" && <button className="btn btn-primary" onClick={() => approve.mutate(j.id)}>Approve</button>}
-                  {["holding", "lost", "failed", "ready"].includes(j.status) && (
+                  {["holding", "lost", "failed", "ready"].includes(j.status) && !wasRejected(j.message) && (
                     <button className="btn" disabled={retry.isPending} onClick={() => retry.mutate(j.id)} title="Re-check this job now instead of waiting for the next cycle">Retry now</button>
                   )}
                   {["holding", "ready", "lost"].includes(j.status) && (
@@ -73,7 +79,7 @@ export default function Jobs() {
                 </td>
               </tr>
             ))}
-            {jobs.data && jobs.data.filter((j) => FILTERS.find((f) => f.id === filter)!.match(j.status)).length === 0 && <tr><td colSpan={6} className="text-muted">{jobs.data.length === 0 ? "No replacements yet." : "Nothing in this state."}</td></tr>}
+            {jobs.data && jobs.data.filter((j) => FILTERS.find((f) => f.id === filter)!.match(j.status)).length === 0 && <tr><td colSpan={7} className="text-muted">{jobs.data.length === 0 ? "No replacements yet." : "Nothing in this state."}</td></tr>}
           </tbody>
         </table>
       </div>
