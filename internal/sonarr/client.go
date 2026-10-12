@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -339,13 +341,31 @@ func (c *Client) Commands(ctx context.Context) ([]Command, error) {
 		return nil, err
 	}
 	out := make([]Command, 0, len(raw))
+	skipped := 0
 	for _, r := range raw {
 		var cmd Command
-		if json.Unmarshal(r, &cmd) == nil {
-			out = append(out, cmd)
+		if err := json.Unmarshal(r, &cmd); err != nil {
+			skipped++
+			continue
 		}
+		out = append(out, cmd)
+	}
+	if skipped > 0 {
+		logSkippedCommands(skipped, len(raw))
 	}
 	return out, nil
+}
+
+var lastSkipLog atomic.Int64
+
+// logSkippedCommands says (at most every ten minutes) that commands were left out of a listing, so a changed Sonarr
+// shape is noticed instead of silently swept away.
+func logSkippedCommands(skipped, total int) {
+	now := time.Now().Unix()
+	if last := lastSkipLog.Load(); now-last < 600 || !lastSkipLog.CompareAndSwap(last, now) {
+		return
+	}
+	log.Printf("sonarr: %d of %d commands in the command listing could not be decoded and were skipped (Sonarr changed a shape?)", skipped, total)
 }
 
 // RemoveQueue removes items from Sonarr's queue. removeFromClient also deletes the download (and its files in
