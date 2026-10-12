@@ -133,8 +133,9 @@ scripts/release.sh v1.2.3 --dry-run   # checks everything and lists what would s
 scripts/release.sh v1.2.3
 ```
 
-It refuses a version older than the newest stable release (that would move `:stable` backwards) unless you pass
-`--allow-older` for a backport, and it rejects any argument it does not know.
+It refuses a version older than the newest stable release (that would move `:stable` backwards; there are no backport
+releases, since it always tags `main`) and rejects any argument it does not know. CI independently refuses a tag that is
+not strict semver or not on `main`, before anything is published.
 
 Label PRs `bug`, `enhancement`, `dependencies` or `breaking` to have them grouped in the release notes
 (`.github/release.yml`); unlabelled PRs land under "Other changes". The UI shows the running version, linked to the tag.
