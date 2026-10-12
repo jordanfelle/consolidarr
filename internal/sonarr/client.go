@@ -213,9 +213,9 @@ type Command struct {
 // of numbers elsewhere), so nothing here may fail the decode of the whole listing: a field that is not the shape we
 // expect is simply absent.
 type CommandBody struct {
-	Path             string
-	DownloadClientID string
-	Files            []string // paths of the files a ManualImport command names
+	Path             string   `json:"path"`
+	DownloadClientID string   `json:"downloadClientId"`
+	Files            []string `json:"files"` // paths of the files a ManualImport command names
 }
 
 func (b *CommandBody) UnmarshalJSON(raw []byte) error {
