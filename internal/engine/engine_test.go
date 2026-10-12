@@ -53,6 +53,7 @@ type fakeSonarr struct {
 	scans         []map[string]any
 	scanStatus    string             // status new scans get in realistic mode (default completed)
 	items         []map[string]any   // when set, GET /manualimport answers exactly this
+	folderItems   []map[string]any   // when set, a folder-based GET /manualimport answers this instead
 	episodes      []map[string]any   // when set, GET /episode answers exactly this
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
 	srv           *httptest.Server
@@ -74,6 +75,10 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Lock()
 		f.manualQueries = append(f.manualQueries, r.URL.RawQuery)
 		f.mu.Unlock()
+		if f.folderItems != nil && r.URL.Query().Get("folder") != "" {
+			js(w, f.folderItems)
+			return
+		}
 		if f.items != nil {
 			js(w, f.items)
 			return
@@ -766,7 +771,7 @@ func TestApproveRespectsTheSameGate(t *testing.T) {
 	}
 }
 
-func TestVerificationListsTheDownloadFolderNeverTheLibrary(t *testing.T) {
+func TestVerificationListsTheDownloadNeverTheLibrary(t *testing.T) {
 	// Passing seriesId makes real Sonarr list the series' existing library files and ignore the folder,
 	// which silently turned "verify the pack" into "probe files you already have".
 	v := setup(t, []int{1, 2, 3})
@@ -779,8 +784,8 @@ func TestVerificationListsTheDownloadFolderNeverTheLibrary(t *testing.T) {
 		if strings.Contains(q, "seriesId") || strings.Contains(q, "seasonNumber") {
 			t.Errorf("manualimport must not be filtered by series: %s", q)
 		}
-		if !strings.Contains(q, "folder=") {
-			t.Errorf("manualimport must list the download's folder: %s", q)
+		if !strings.Contains(q, "downloadId=") && !strings.Contains(q, "folder=") {
+			t.Errorf("manualimport must list the download itself (by id or folder): %s", q)
 		}
 	}
 }

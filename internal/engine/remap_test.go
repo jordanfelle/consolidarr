@@ -250,3 +250,35 @@ func TestDownloadIdsWithColonsStillRejectAfterTheGrace(t *testing.T) {
 		t.Fatalf("want rejected, got %s %q", got.Status, got.Message)
 	}
 }
+
+func TestDownloadListingIdentifiesWhatAFolderListingCannot(t *testing.T) {
+	// Real case (The Pendragon Cycle): Sonarr's folder listing says "Unknown Series" for every file of a release it
+	// does not recognise by name, while the tracked download's own listing identifies the series.
+	v := setup(t, []int{1, 2, 3})
+	unknown := []map[string]any{}
+	for i := 1; i <= 3; i++ {
+		unknown = append(unknown, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 0, "series": map[string]int{"id": 0},
+			"episodes": []map[string]int{}, "rejections": []map[string]string{{"reason": "Unknown Series"}}})
+	}
+	v.fake.folderItems = unknown
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("a pack the download's own listing identifies must verify: %s %q", got.Status, got.Message)
+	}
+}
+
+func TestFolderListingIsTheFallbackWhenTheDownloadListingIdentifiesNothing(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.items = []map[string]any{{"path": "/dl/pack/x.mkv", "seasonNumber": 0, "series": map[string]int{"id": 0}, "episodes": []map[string]int{}, "rejections": []map[string]string{{"reason": "Unknown Series"}}}}
+	good := []map[string]any{}
+	for n := 1; n <= 3; n++ {
+		good = append(good, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]int{{"episodeNumber": n}}, "rejections": []map[string]string{}})
+	}
+	v.fake.folderItems = good
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("the folder listing must be used when the download listing identifies nothing: %s %q", got.Status, got.Message)
+	}
+}
