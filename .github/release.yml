@@ -1,0 +1,13 @@
+# Groups the generated release notes (GitHub reads this when a release is created with --generate-notes).
+changelog:
+  categories:
+    - title: Breaking changes
+      labels: [breaking]
+    - title: Features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]

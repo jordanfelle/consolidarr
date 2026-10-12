@@ -91,10 +91,16 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository }}
+          # main        -> :main, :latest (every merge; what a "track main" deployment follows)
+          # v1.2.3 tag  -> :1.2.3, :1.2, :1 and :stable (the newest non-prerelease). The action skips the moving
+          #                :MAJOR.MINOR and :MAJOR tags for prereleases, and :MAJOR while MAJOR is 0.
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=stable,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
       # The UI shows this and links it to the exact commit (or the release for a tag).
       - id: ver
         run: |
@@ -109,3 +115,28 @@ jobs:
           build-args: VERSION=${{ steps.ver.outputs.v }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # A v* tag publishes the image above, then this creates the GitHub Release (notes are generated from the merged PRs
+  # since the previous tag, grouped by .github/release.yml). A tag with a "-" (v1.0.0-rc.1) is marked a prerelease.
+  # Uses only the gh CLI preinstalled on the runner, so no extra action to pin.
+  release:
+    needs: [image]
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-26.04 # pinned: ubuntu-latest moves to 26 on 2026-10-19; bump deliberately
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "release $TAG already exists; nothing to do"
+            exit 0
+          fi
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          img="ghcr.io/${REPO,,}"
+          gh release create "$TAG" --repo "$REPO" "${flags[@]}" --notes "Image: \`${img}:${TAG#v}\`
+          "
