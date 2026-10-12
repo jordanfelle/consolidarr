@@ -115,7 +115,8 @@ paginate with `limit`/`offset`; creating things returns `201`; long operations (
 ## Releases
 
 Versions follow [semver](https://semver.org). Every merge to `main` publishes `ghcr.io/jordanfelle/consolidarr:main` and
-`:latest` (for a deployment that tracks main); a `v*` tag publishes a pinned image and a GitHub Release:
+`:latest` (for a deployment that tracks main; a tag never moves `:latest`); a `v*` tag publishes a pinned image and a
+GitHub Release. A tag must be strict semver and on `main`, or the image job fails before publishing anything:
 
 | Tag pushed | Image tags | Release |
 |---|---|---|
@@ -131,6 +132,9 @@ To cut one, from an up-to-date, clean `main` whose CI is green:
 scripts/release.sh v1.2.3 --dry-run   # checks everything and lists what would ship
 scripts/release.sh v1.2.3
 ```
+
+It refuses a version older than the newest stable release (that would move `:stable` backwards) unless you pass
+`--allow-older` for a backport, and it rejects any argument it does not know.
 
 Label PRs `bug`, `enhancement`, `dependencies` or `breaking` to have them grouped in the release notes
 (`.github/release.yml`); unlabelled PRs land under "Other changes". The UI shows the running version, linked to the tag.

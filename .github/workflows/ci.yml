@@ -36,6 +36,18 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: ${{ github.ref_type == 'tag' && 0 || 1 }} # a tag build needs history to prove it is on main
+      # A release tag must be strict semver and sit on main: anything else would publish :stable (and a Release) from a
+      # stray tag or an unreviewed commit.
+      - if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          [[ "$TAG" =~ $re ]] || { echo "::error::tag $TAG is not vMAJOR.MINOR.PATCH[-prerelease]"; exit 1; }
+          git fetch -q origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::tag $TAG is not on main"; exit 1; }
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version: "1.27" }
       - run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -92,13 +104,17 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           # main        -> :main, :latest (every merge; what a "track main" deployment follows)
-          # v1.2.3 tag  -> :1.2.3, :1.2, :1 and :stable (the newest non-prerelease). The action skips the moving
-          #                :MAJOR.MINOR and :MAJOR tags for prereleases, and :MAJOR while MAJOR is 0.
+          # v1.2.3 tag  -> :1.2.3, :1.2, :1 and :stable (the newest non-prerelease); NEVER :latest. flavor latest=false
+          #                stops the action adding :latest to a release build, which would let a tag (or a re-run of
+          #                an old one) move a main-tracking deployment backwards. The action skips :MAJOR.MINOR and
+          #                :MAJOR for prereleases; :MAJOR for 0.x is switched off explicitly below.
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=stable,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
       # The UI shows this and links it to the exact commit (or the release for a tag).

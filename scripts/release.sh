@@ -4,11 +4,21 @@
 # the CI workflow, which publishes ghcr.io/<repo>:1.2.3 (+ :1.2, :1, :stable) and creates the GitHub Release.
 set -euo pipefail
 
+usage() { echo "usage: $0 vMAJOR.MINOR.PATCH[-prerelease] [--dry-run] [--allow-older]   e.g. v1.2.3 or v1.0.0-rc.1" >&2; exit 2; }
 tag="${1:-}"
 dry=0
-[ "${2:-}" = "--dry-run" ] && dry=1
-if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "usage: $0 vMAJOR.MINOR.PATCH[-prerelease] [--dry-run]   e.g. v1.2.3 or v1.0.0-rc.1" >&2
+older=0
+[ -n "$tag" ] || usage
+shift
+for a in "$@"; do
+  case "$a" in
+    --dry-run) dry=1 ;;
+    --allow-older) older=1 ;; # a backport release (v1.1.5 after v1.2.0)
+    *) echo "unknown argument: $a" >&2; usage ;; # a mistyped --dry-run must never cut a real release
+  esac
+done
+if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "not a valid version: $tag (want vMAJOR.MINOR.PATCH[-prerelease], no leading zeros)" >&2
   exit 2
 fi
 
@@ -24,8 +34,16 @@ status=$(gh run list --branch main --workflow CI --commit "$sha" --limit 1 --jso
 [ "$status" = "completed success" ] || { echo "CI for ${sha:0:7} is not green yet (got: ${status:-none}); wait for it" >&2; exit 1; }
 
 prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+# Releasing something older than the newest stable tag would move :stable (and GitHub's "Latest") backwards.
+newest=$(git tag -l 'v*' | grep -Ev -- '-' | sort -V | tail -1 || true)
+if [ -n "$newest" ] && [ "$older" = 0 ] && [[ "$tag" != *-* ]] && [ "$(printf '%s\n%s\n' "$newest" "$tag" | sort -V | tail -1)" != "$tag" ]; then
+  echo "$tag is older than the newest release $newest; releasing it would move :stable backwards (use --allow-older for a backport)" >&2
+  exit 1
+fi
 echo "releasing $tag at ${sha:0:7}${prev:+ (previous: $prev)}"
-git log --oneline "${prev:+$prev..}HEAD" | head -30
+range=HEAD
+[ -z "$prev" ] || range="$prev..HEAD"
+git log --oneline -30 "$range"
 if [ "$dry" = 1 ]; then echo "dry run: nothing tagged"; exit 0; fi
 
 git tag -a "$tag" -m "$tag"
