@@ -282,3 +282,30 @@ func TestFolderListingIsTheFallbackWhenTheDownloadListingIdentifiesNothing(t *te
 		t.Fatalf("the folder listing must be used when the download listing identifies nothing: %s %q", got.Status, got.Message)
 	}
 }
+
+func TestAFailingDownloadListingFallsBackToTheFolder(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	v.fake.failByID = true
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "importing" {
+		t.Fatalf("the folder listing is the fallback when the download listing fails: %s %q", got.Status, got.Message)
+	}
+	if len(v.fake.manualQueries) < 2 {
+		t.Fatalf("expected the id listing and then the folder listing, got %v", v.fake.manualQueries)
+	}
+}
+
+func TestADownloadListingForAnotherSeriesIsNeverTreatedAsThisPack(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	other := []map[string]any{}
+	for n := 1; n <= 3; n++ {
+		other = append(other, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 3, "series": map[string]int{"id": 99}, "episodes": []map[string]int{{"episodeNumber": n}}, "rejections": []map[string]string{}})
+	}
+	v.fake.items = other
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.deleted) != 0 || v.fake.imports != 0 {
+		t.Fatalf("files attributed to another series must hold and touch nothing: %s %q", got.Status, got.Message)
+	}
+}

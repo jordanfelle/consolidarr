@@ -54,6 +54,7 @@ type fakeSonarr struct {
 	scanStatus    string             // status new scans get in realistic mode (default completed)
 	items         []map[string]any   // when set, GET /manualimport answers exactly this
 	folderItems   []map[string]any   // when set, a folder-based GET /manualimport answers this instead
+	failByID      bool               // GET /manualimport?downloadId=... answers 500
 	episodes      []map[string]any   // when set, GET /episode answers exactly this
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
 	srv           *httptest.Server
@@ -75,6 +76,10 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Lock()
 		f.manualQueries = append(f.manualQueries, r.URL.RawQuery)
 		f.mu.Unlock()
+		if f.failByID && r.URL.Query().Get("downloadId") != "" {
+			http.Error(w, "boom", 500)
+			return
+		}
 		if f.folderItems != nil && r.URL.Query().Get("folder") != "" {
 			js(w, f.folderItems)
 			return
