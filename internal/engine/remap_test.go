@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,11 +105,12 @@ func TestStaleDeterministicHoldIsRejectedAndSeasonSkipped(t *testing.T) {
 	v, j := heldMissing(t)
 	set := live()
 	set.HoldRejectHours = 3
-	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
-	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.removed) != 0 {
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed")) // binds the download
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed")) // starts the clock
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.removed) != 0 || v.st.KV(holdKey(j.ID)) == "" {
 		t.Fatalf("the first sighting only starts the clock: %s", got.Status)
 	}
-	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-4*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdMissing)+":"+strconv.FormatInt(time.Now().Add(-4*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	got := v.status(t, j.ID)
 	if got.Status != "failed" || len(v.fake.removed) != 1 || len(v.fake.deleted) != 0 || v.fake.imports != 0 {
@@ -123,13 +125,13 @@ func TestHoldIsNotRejectedBeforeItsGraceOrWhenDisabled(t *testing.T) {
 	v, j := heldMissing(t)
 	set := live()
 	set.HoldRejectHours = 3
-	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-2*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdMissing)+":"+strconv.FormatInt(time.Now().Add(-2*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.status(t, j.ID).Status != "holding" {
 		t.Fatal("inside the grace period")
 	}
 	set.HoldRejectHours = 0
-	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdMissing)+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.status(t, j.ID).Status != "holding" || len(v.fake.removed) != 0 {
 		t.Fatal("0 means never")
@@ -142,7 +144,7 @@ func TestWaitingHoldsAreNeverAutoRejected(t *testing.T) {
 	j := v.job(t, time.Time{})
 	set := live()
 	set.HoldRejectHours = 1
-	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-50*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdMissing)+":"+strconv.FormatInt(time.Now().Add(-50*time.Hour).Unix(), 10))
 	v.fake.itemPath = "/elsewhere/x.mkv" // outside the download folder: a hold that is not a "this pack is wrong" kind
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.removed) != 0 {
@@ -155,7 +157,7 @@ func TestHoldClockRestartsWhenTheReasonChanges(t *testing.T) {
 	set := live()
 	set.HoldRejectHours = 3
 	// An old clock for a different reason (a probe problem, since fixed) must not count towards this one.
-	v.st.SetKV(holdKey(j.ID), holdProbe+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdProbe)+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.status(t, j.ID).Status != "holding" || len(v.fake.removed) != 0 {
 		t.Fatal("a different reason starts a fresh clock")
@@ -181,7 +183,7 @@ func TestRetryClearsTheHoldClock(t *testing.T) {
 	v, j := heldMissing(t)
 	set := live()
 	set.HoldRejectHours = 3
-	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdScope(j, holdMissing)+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
 	v.fake.failFiles = true // makes the verification unable to decide ("retry")
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.st.KV(holdKey(j.ID)) != "" {
@@ -207,3 +209,6 @@ func TestAPackThatMerelyLacksAnEpisodeIsNotSearchedForStandIns(t *testing.T) {
 		t.Fatalf("episode 8's file must never replace episode 1: %s %q", got.Status, got.Message)
 	}
 }
+
+// holdScope is the clock scope once the job is bound to the queue's download "d" (the first pass binds it).
+func holdScope(_ store.Job, kind string) string { return kind + "|" + strings.ToLower("d") }

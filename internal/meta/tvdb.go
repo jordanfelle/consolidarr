@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -69,7 +68,7 @@ func (t *TVDB) login(ctx context.Context) (string, error) {
 // Alts retries once with a fresh login when TVDB says the token is no longer good (revoked or expired early).
 func (t *TVDB) Alts(ctx context.Context, tvdbID int) ([]order.Alt, error) {
 	out, err := t.alts(ctx, tvdbID)
-	if err != nil && strings.Contains(err.Error(), "HTTP 401") {
+	if err != nil && isStatus(err, 401) {
 		t.mu.Lock()
 		t.token = ""
 		t.mu.Unlock()
@@ -104,10 +103,10 @@ func (t *TVDB) alts(ctx context.Context, tvdbID int) ([]order.Alt, error) {
 			}
 			u := fmt.Sprintf("%s/series/%d/episodes/%s?page=%d", t.base(), tvdbID, url.PathEscape(kind), page)
 			if err := getJSON(ctx, u, hdr, &r); err != nil {
-				if err.Error() == "HTTP 404" { // most series have no such ordering
+				if isStatus(err, 404) { // most series have no such ordering
 					break
 				}
-				return nil, fmt.Errorf("%s: %v", kind, err)
+				return nil, fmt.Errorf("%s: %w", kind, err)
 			}
 			for _, e := range r.Data.Episodes {
 				alt.Eps = append(alt.Eps, order.AltEp{Season: e.SeasonNumber, Number: e.Number, Title: e.Name, TvdbID: e.ID, AirDate: e.Aired})

@@ -7,6 +7,7 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,6 +98,16 @@ func (l *Lookup) cached(src string, id int, fetch func() ([]order.Alt, error)) (
 	return alts, err
 }
 
+// HTTPError is a non-200 answer. It carries only the status: the URL may hold an API key.
+type HTTPError struct{ Status int }
+
+func (e *HTTPError) Error() string { return fmt.Sprintf("HTTP %d", e.Status) }
+
+func isStatus(err error, code int) bool {
+	var he *HTTPError
+	return errors.As(err, &he) && he.Status == code
+}
+
 var httpc = &http.Client{Timeout: 30 * time.Second}
 
 // getJSON fetches a URL and decodes the JSON body; the body is capped so a bad endpoint cannot exhaust memory.
@@ -114,7 +125,7 @@ func getJSON(ctx context.Context, u string, header map[string]string, out any) e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return &HTTPError{Status: resp.StatusCode}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(out)
 }

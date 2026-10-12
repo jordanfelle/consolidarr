@@ -294,7 +294,7 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 					// A mapped import deleted nothing and its mapping is only as good as the files it named: verify the
 					// pack again from scratch instead of resuming on a stale mapping.
 					// Deleted stays: some episodes may already have been swapped, so the job stays protected from rejection.
-					cur.Status, cur.Mapping, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, 0
+					cur.Status, cur.Mapping, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, time.Now().Unix()
 				} else if cur.Deleted > 0 {
 					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
 					e.St.SetKV(fmt.Sprintf("reimport:%d", id), "0")                             // a revived job gets its automatic re-asks back

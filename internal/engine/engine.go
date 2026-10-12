@@ -766,7 +766,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 	}
 	if left > 0 || !done {
-		e.St.SetKV(holdKey(j.ID), "") // downloading again (a re-check, a re-grab): a later hold starts a fresh clock
+		e.clearHold(j.ID) // downloading again (a re-check, a re-grab): a later hold starts a fresh clock
 		prog := int(100 - 100*left/maxf(size, 1))
 		switch {
 		case j.Status != "downloading" || j.Progress != prog || j.DownloadID == "":
@@ -938,6 +938,13 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job)
 	return nil
 }
 
+// clearHold resets a job's hold clock, writing only when there is one to reset.
+func (e *Engine) clearHold(id int64) {
+	if e.St.KV(holdKey(id)) != "" {
+		e.St.SetKV(holdKey(id), "")
+	}
+}
+
 func holdKey(id int64) string { return fmt.Sprintf("holdSince:%d", id) }
 
 // holdExpired records when a job first held for a reason that cannot fix itself and reports whether it has been held
@@ -954,12 +961,14 @@ func (e *Engine) holdExpired(j *store.Job, boundID, kind string, set store.Setti
 	if kind == holdProbe {
 		grace *= 3
 	}
+	// The clock belongs to one reason on one download: a different reason, or a re-grabbed download, starts afresh.
+	scope := kind + "|" + strings.ToLower(boundID)
 	var since int64
-	if k, ts, ok := strings.Cut(e.St.KV(k), ":"); ok && k == kind {
+	if sc, ts, ok := strings.Cut(e.St.KV(k), ":"); ok && sc == scope {
 		since, _ = strconv.ParseInt(ts, 10, 64)
 	}
 	if since == 0 {
-		e.St.SetKV(holdKey(j.ID), kind+":"+strconv.FormatInt(time.Now().Unix(), 10))
+		e.St.SetKV(holdKey(j.ID), scope+":"+strconv.FormatInt(time.Now().Unix(), 10))
 		return false
 	}
 	return time.Since(time.Unix(since, 0)) > grace
