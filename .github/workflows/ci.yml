@@ -23,7 +23,8 @@ jobs:
         working-directory: web
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test -race -count=1 ./...
+      # -shuffle=on: tests must not depend on each other's order (a failure prints the seed to replay it)
+      - run: go test -race -count=1 -shuffle=on ./...
 
   test-postgres:
     runs-on: ubuntu-26.04 # pinned: ubuntu-latest moves to 26 on 2026-10-19; bump deliberately
@@ -101,7 +102,8 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository }}
-          # main        -> :main, :latest (every merge; what a "track main" deployment follows)
+          # main        -> :main, :latest (every merge; what a "track main" deployment follows) and an immutable
+          #                :sha-<short> per commit, so a bad deploy can be rolled back to the exact previous build
           # v1.2.3 tag  -> :1.2.3, :1.2, :1 and :stable (the newest non-prerelease); NEVER :latest. flavor latest=false
           #                stops the action adding :latest to a release build, which would let a tag (or a re-run of
           #                an old one) move a main-tracking deployment backwards. The action skips :MAJOR.MINOR and
@@ -114,6 +116,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short,enable={{is_default_branch}}
             type=raw,value=stable,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
       # The UI shows this and links it to the exact commit (or the release for a tag).
       - id: ver

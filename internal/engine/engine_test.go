@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -224,7 +225,9 @@ func newFake(packEps []int) *fakeSonarr {
 			return
 		}
 		if f.cmds == nil {
-			js(w, []any{})
+			// By default the fake serves what a real Sonarr serves (recorded payloads plus every known command shape),
+			// not an empty list: one odd command in the real listing once held every replacement in production.
+			js(w, realisticCommandListing())
 			return
 		}
 		js(w, f.cmds)
@@ -955,4 +958,30 @@ func TestReconcileLostCountsTriesPerJobAndIgnoresShutdown(t *testing.T) {
 	if v.st.KV(key) != "" || v.st.KV(fmt.Sprintf("%s:tries:%d", key, b.ID)) != "1" {
 		t.Fatal("a cancelled context must not count tries or write the marker")
 	}
+}
+
+// realisticCommandListing is the recorded real listing plus the hand-written exotic shapes (internal/sonarr/testdata),
+// with timestamps moved to now so the age-based checks (a command "running for 10+ minutes") see a healthy Sonarr.
+func realisticCommandListing() []map[string]any {
+	var all []map[string]any
+	for _, name := range []string{"command.json", "command_exotic.json"} {
+		b, err := os.ReadFile("../sonarr/testdata/" + name)
+		if err != nil {
+			panic(err)
+		}
+		var part []map[string]any
+		if err := json.Unmarshal(b, &part); err != nil {
+			panic(err)
+		}
+		all = append(all, part...)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, c := range all {
+		for _, k := range []string{"queued", "started", "ended", "stateChangeTime", "lastExecutionTime", "lastStartTime"} {
+			if v, ok := c[k]; ok && v != nil {
+				c[k] = now
+			}
+		}
+	}
+	return all
 }

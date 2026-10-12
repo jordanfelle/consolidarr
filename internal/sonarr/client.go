@@ -330,10 +330,22 @@ func (c *Client) ManualImportFolder(ctx context.Context, folder string) (out []M
 	return
 }
 
-// Commands lists Sonarr's recent commands, including queued and running ones.
-func (c *Client) Commands(ctx context.Context) (out []Command, err error) {
-	err = c.do(ctx, "GET", "/command", nil, &out, 30*time.Second)
-	return
+// Commands lists Sonarr's recent commands, including queued and running ones. The listing mixes every kind of command,
+// so one entry that does not decode (a field of an unexpected type) is skipped rather than failing the whole list: the
+// callers only look for the import commands they started, and an unreadable list would hold every replacement.
+func (c *Client) Commands(ctx context.Context) ([]Command, error) {
+	var raw []json.RawMessage
+	if err := c.do(ctx, "GET", "/command", nil, &raw, 30*time.Second); err != nil {
+		return nil, err
+	}
+	out := make([]Command, 0, len(raw))
+	for _, r := range raw {
+		var cmd Command
+		if json.Unmarshal(r, &cmd) == nil {
+			out = append(out, cmd)
+		}
+	}
+	return out, nil
 }
 
 // RemoveQueue removes items from Sonarr's queue. removeFromClient also deletes the download (and its files in

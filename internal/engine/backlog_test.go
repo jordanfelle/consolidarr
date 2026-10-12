@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +93,28 @@ func TestBacklogIgnoresStatusTitles(t *testing.T) {
 		StatusMessages: []sm{{Title: "Free.Samples.S01E01.mkv", Messages: []string{"Waiting to import"}}}}}
 	if got, _ := v.e.importBacklog(q, j); got != 1 {
 		t.Fatalf("a draining download whose file name says 'Samples' still counts, got %d", got)
+	}
+}
+
+// An unreadable command queue holds every replacement on the instance; the event log must say so (once), not only
+// each job's own message.
+func TestUnreadableCommandQueueIsLoggedOnceAsAnEvent(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Time{})
+	v.fake.srv.Close() // every call now fails
+	for i := 0; i < 3; i++ {
+		if msg := v.e.pipelineBlock(t.Context(), v.inst, v.c, nil, j); msg == "" {
+			t.Fatal("must be blocked while Sonarr is unreachable")
+		}
+	}
+	evs, _ := v.st.Events(50)
+	n := 0
+	for _, e := range evs {
+		if e.Level == "warn" && strings.Contains(e.Msg, "command queue cannot be read") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly one warn event, got %d", n)
 	}
 }

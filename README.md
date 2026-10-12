@@ -126,6 +126,10 @@ GitHub Release. A tag must be strict semver and on `main`, or the image job fail
 (For `0.x` the `:0.1` tag is published but `:0` is not.) `:stable` always points at the newest non-prerelease, so a
 deployment that wants released builds only can follow it instead of `:latest`.
 
+Every merge to `main` also gets an immutable `:sha-<short>` tag (the short commit id). To roll a bad deploy back, pin
+the compose image to the previous good one (`image: ghcr.io/jordanfelle/consolidarr:sha-3e6463b`), recreate, and fix
+forward; unpin when the fix has merged.
+
 To cut one, from an up-to-date, clean `main` whose CI is green:
 
 ```sh
@@ -141,6 +145,11 @@ Label PRs `bug`, `enhancement`, `dependencies` or `breaking` to have them groupe
 (`.github/release.yml`); unlabelled PRs land under "Other changes". The UI shows the running version, linked to the tag.
 
 ## Development
+
+Tests that involve Sonarr use **recorded real responses** (`internal/sonarr/testdata`, see its README) plus the known
+command shapes, never only a hand-made fake: a fake returns the shapes its author thought of, and the one that took
+production down was not among them. When a Sonarr response is part of a bug, add the real payload and a test that decodes
+it. `go test ./...` runs with `-shuffle=on` in CI.
 
 ```
 make web      # build the UI into web/dist
