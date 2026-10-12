@@ -303,6 +303,12 @@ func TestADownloadListingForAnotherSeriesIsNeverTreatedAsThisPack(t *testing.T) 
 		other = append(other, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 3, "series": map[string]int{"id": 99}, "episodes": []map[string]int{{"episodeNumber": n}}, "rejections": []map[string]string{}})
 	}
 	v.fake.items = other
+	// ...and the folder parse says it is THIS series: it must not override what Sonarr will actually import.
+	mine := []map[string]any{}
+	for n := 1; n <= 3; n++ {
+		mine = append(mine, map[string]any{"path": "/dl/pack/e.mkv", "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]int{{"episodeNumber": n}}, "rejections": []map[string]string{}})
+	}
+	v.fake.folderItems = mine
 	j := v.job(t, time.Time{})
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
 	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.deleted) != 0 || v.fake.imports != 0 {
