@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/order"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
@@ -106,13 +107,44 @@ func startImport(ctx context.Context, c *sonarr.Client, j *store.Job, path, down
 	}
 	var items []sonarr.ManualImportItem
 	var err error
-	if path != "" {
-		items, err = c.ManualImportFolder(ctx, path)
-	} else {
+	if downloadID != "" { // the same listing Sonarr's own import would use, so the paths are the ones it knows
 		items, err = c.ManualImport(ctx, downloadID)
+	} else {
+		items, err = c.ManualImportFolder(ctx, path)
 	}
 	if err != nil {
 		return 0, err
 	}
-	return c.ImportMapped(ctx, j.SeriesID, j.Mapping, items)
+	return c.ImportMapped(ctx, j.SeriesID, downloadID, j.Mapping, items)
 }
+
+// findMappedImportCommand is findImportCommand for a mapped job: a ManualImport command that names one of the
+// mapped files and is still queued/running, or was queued after this attempt began.
+func findMappedImportCommand(cmds []sonarr.Command, mapping map[string][]int, importAt int64) int {
+	for i := len(cmds) - 1; i >= 0; i-- {
+		c := cmds[i]
+		if c.Name != "ManualImport" || c.ID == 0 {
+			continue
+		}
+		hit := false
+		for _, f := range c.Body.Files {
+			_, in := mapping[f.Path]
+			hit = hit || in
+		}
+		if !hit {
+			continue
+		}
+		switch strings.ToLower(c.Status) {
+		case "queued", "started":
+			return c.ID
+		}
+		if t, err := time.Parse(time.RFC3339Nano, c.Queued); err == nil && importAt > 0 && t.Unix() >= importAt-5 {
+			return c.ID
+		}
+	}
+	return 0
+}
+
+// mappedImportGiveUp is how long a mapped import may fail to even start (its files moved, Sonarr refuses it) before
+// the job ends as failed. Nothing was deleted, so ending it is safe; waiting forever would hold up every other season.
+const mappedImportGiveUp = 30 * time.Minute

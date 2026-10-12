@@ -208,6 +208,9 @@ type Command struct {
 	Body    struct {
 		Path             string `json:"path"`
 		DownloadClientID string `json:"downloadClientId"`
+		Files            []struct {
+			Path string `json:"path"`
+		} `json:"files"`
 	} `json:"body"`
 }
 
@@ -343,8 +346,10 @@ func (c *Client) SeriesIDs(ctx context.Context, seriesID int) (out SeriesIDs, er
 
 // ImportMapped imports pack files onto exactly the episodes given (path -> episode ids), which Sonarr's own
 // reading of the file names would not pick. items are Sonarr's own listing of the download, used to carry over
-// its quality/language/group reading of each file. A file that is in the mapping but not in the listing is an error.
-func (c *Client) ImportMapped(ctx context.Context, seriesID int, mapping map[string][]int, items []ManualImportItem) (id int, err error) {
+// its quality/language/group reading of each file. downloadId is always the job's own download (a folder listing
+// carries none), so Sonarr treats the files as that tracked download and copies or hardlinks them as it would
+// itself. A file that is in the mapping but not in the listing is an error.
+func (c *Client) ImportMapped(ctx context.Context, seriesID int, downloadID string, mapping map[string][]int, items []ManualImportItem) (id int, err error) {
 	byPath := map[string]ManualImportItem{}
 	for _, it := range items {
 		byPath[it.Path] = it
@@ -356,7 +361,7 @@ func (c *Client) ImportMapped(ctx context.Context, seriesID int, mapping map[str
 			return 0, fmt.Errorf("%s is no longer in the download", path)
 		}
 		files = append(files, map[string]any{"path": path, "seriesId": seriesID, "episodeIds": eps, "releaseGroup": it.ReleaseGroup,
-			"quality": it.Quality, "languages": it.Languages, "indexerFlags": it.IndexerFlags, "releaseType": it.ReleaseType, "downloadId": it.DownloadID})
+			"quality": it.Quality, "languages": it.Languages, "indexerFlags": it.IndexerFlags, "releaseType": it.ReleaseType, "downloadId": downloadID})
 	}
 	var cmd Command
 	err = c.do(ctx, "POST", "/command", map[string]any{"name": "ManualImport", "files": files, "importMode": "auto"}, &cmd, 2*time.Minute)

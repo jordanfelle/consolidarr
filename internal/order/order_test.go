@@ -115,3 +115,35 @@ func TestAltOrderIsNotTrustedWithoutTitles(t *testing.T) {
 		t.Fatal("numbers alone are not evidence")
 	}
 }
+
+func TestPrefixTitlesAndTagWordsAreNotEvidence(t *testing.T) {
+	eps := []Ep{{ID: 1, Season: 1, Number: 1, Title: "Home"}, {ID: 2, Season: 1, Number: 2, Title: "Home Is Where the Heart Is (2)"}, {ID: 3, Season: 1, Number: 3, Title: "Web"}, {ID: 4, Season: 1, Number: 4, Title: "Monster"}}
+	for _, name := range []string{
+		"Show.S01E02.Home.Is.Where.the.Heart.Is.Part.2.1080p",
+		"Show.S01E04.1080p.WEB.h264-GRP",
+	} {
+		if e, ok := TitleOf(f(name), eps); ok && (e.ID == 1 || e.ID == 3) {
+			t.Fatalf("%s must not match %q", name, e.Title)
+		}
+	}
+	if c := Conflicts([]File{f("Show.S01E02.Home.Is.Where.the.Heart.Is.Part.2.1080p", 2), f("Show.S01E04.1080p.WEB.h264-GRP", 4)}, eps); len(c) != 0 {
+		t.Fatalf("correctly mapped files must never be conflicts: %v", c)
+	}
+	if _, ok := TitleOf(NewFile("/dl/[Grp] Monster - 02 [1080p].mkv", nil), eps); ok {
+		t.Fatal("a series name followed by an episode number is not an episode title")
+	}
+}
+
+func TestExtrasMultiEpisodeAndNotNeededFilesAreNeverPlaced(t *testing.T) {
+	eps := []Ep{{ID: 1, Season: 1, Number: 1, Title: "Home"}, {ID: 2, Season: 1, Number: 2, Title: "Away"}}
+	need := map[int]bool{1: true}
+	// The pack lacks "Home" itself but has an episode that merely starts with its title, plus a multi-episode file.
+	if _, why := Resolve([]File{f("Show.S01E02.Home.Is.Where.the.Heart.Is.Part.2.mkv"), f("Show.S01E01E02.Home.1080p.WEB.mkv")}, eps, need, nil); why == "" {
+		t.Fatal("must refuse: nothing in the pack is identified as Home")
+	}
+	// A file for an episode that has no file today is left alone, never imported.
+	p, why := Resolve([]File{f("Show.S01E01.Home.1080p.WEB.mkv"), f("Show.S01E02.Away.1080p.WEB.mkv")}, eps, need, nil)
+	if why != "" || len(p.Files) != 1 || len(p.Spare) != 1 {
+		t.Fatalf("only the episode you have is replaced: %+v %q", p, why)
+	}
+}

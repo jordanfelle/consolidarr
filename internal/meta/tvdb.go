@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,7 +66,19 @@ func (t *TVDB) login(ctx context.Context) (string, error) {
 	return t.token, nil
 }
 
+// Alts retries once with a fresh login when TVDB says the token is no longer good (revoked or expired early).
 func (t *TVDB) Alts(ctx context.Context, tvdbID int) ([]order.Alt, error) {
+	out, err := t.alts(ctx, tvdbID)
+	if err != nil && strings.Contains(err.Error(), "HTTP 401") {
+		t.mu.Lock()
+		t.token = ""
+		t.mu.Unlock()
+		return t.alts(ctx, tvdbID)
+	}
+	return out, err
+}
+
+func (t *TVDB) alts(ctx context.Context, tvdbID int) ([]order.Alt, error) {
 	tok, err := t.login(ctx)
 	if err != nil {
 		return nil, err

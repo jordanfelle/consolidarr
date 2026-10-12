@@ -24,12 +24,19 @@ type Lookup struct {
 	TMDB *TMDB
 
 	mu    sync.Mutex
-	cache map[[2]int]cached
+	cache map[cacheKey]cached
+}
+
+type cacheKey struct {
+	src string
+	id  int
 }
 
 type cached struct {
 	at   time.Time
+	ttl  time.Duration
 	alts []order.Alt
+	err  error
 }
 
 const cacheFor = 24 * time.Hour
@@ -38,44 +45,56 @@ const cacheFor = 24 * time.Hour
 func (l *Lookup) Configured() bool { return l != nil && (l.TVDB != nil || l.TMDB != nil) }
 
 // Alts is safe to call on a nil Lookup. A source that fails is skipped (its error is returned beside what the
-// other sources found) so one outage never blocks a replacement.
+// other sources found) so one outage never blocks a replacement. Each source is cached on its own, failures
+// briefly too, so one broken key does not make every cycle re-fetch the healthy source.
 func (l *Lookup) Alts(ctx context.Context, tvdbID, tmdbID int) ([]order.Alt, error) {
 	if !l.Configured() {
 		return nil, nil
 	}
-	key := [2]int{tvdbID, tmdbID}
-	l.mu.Lock()
-	if c, ok := l.cache[key]; ok && time.Since(c.at) < cacheFor {
-		l.mu.Unlock()
-		return c.alts, nil
-	}
-	l.mu.Unlock()
 	var out []order.Alt
 	var errs []string
 	if l.TVDB != nil && tvdbID != 0 {
-		if a, err := l.TVDB.Alts(ctx, tvdbID); err != nil {
+		a, err := l.cached("tvdb", tvdbID, func() ([]order.Alt, error) { return l.TVDB.Alts(ctx, tvdbID) })
+		out = append(out, a...)
+		if err != nil {
 			errs = append(errs, "tvdb: "+err.Error())
-		} else {
-			out = append(out, a...)
 		}
 	}
 	if l.TMDB != nil && tmdbID != 0 {
-		if a, err := l.TMDB.Alts(ctx, tmdbID); err != nil {
+		a, err := l.cached("tmdb", tmdbID, func() ([]order.Alt, error) { return l.TMDB.Alts(ctx, tmdbID) })
+		out = append(out, a...)
+		if err != nil {
 			errs = append(errs, "tmdb: "+err.Error())
-		} else {
-			out = append(out, a...)
 		}
 	}
-	if len(errs) == 0 { // a partial answer is not cached: try the failed source again next time
-		l.mu.Lock()
-		if l.cache == nil {
-			l.cache = map[[2]int]cached{}
-		}
-		l.cache[key] = cached{time.Now(), out}
+	if len(errs) > 0 {
+		return out, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return out, nil
+}
+
+const failureCacheFor = 10 * time.Minute
+
+func (l *Lookup) cached(src string, id int, fetch func() ([]order.Alt, error)) ([]order.Alt, error) {
+	key := cacheKey{src, id}
+	l.mu.Lock()
+	if c, ok := l.cache[key]; ok && time.Since(c.at) < c.ttl {
 		l.mu.Unlock()
-		return out, nil
+		return c.alts, c.err
 	}
-	return out, fmt.Errorf("%s", strings.Join(errs, "; "))
+	l.mu.Unlock()
+	alts, err := fetch()
+	ttl := cacheFor
+	if err != nil {
+		ttl = failureCacheFor
+	}
+	l.mu.Lock()
+	if l.cache == nil {
+		l.cache = map[cacheKey]cached{}
+	}
+	l.cache[key] = cached{time.Now(), ttl, alts, err}
+	l.mu.Unlock()
+	return alts, err
 }
 
 var httpc = &http.Client{Timeout: 30 * time.Second}

@@ -32,10 +32,14 @@ type File struct {
 	Season    int   // from SxxExx in the name; 0 when there is none
 	Number    int   // from SxxExx in the name
 	SonarrEps []int // episode ids Sonarr itself mapped the file to
+	Multi     bool  // a multi-episode file ("S01E01E02"): it cannot stand in for a single episode
 	rest      []string
 }
 
 var sxe = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]?E(\d{1,3})`)
+
+// multiEp matches the extra episodes of "S01E01E02", "S01E01-E02" and "S01E01-02".
+var multiEp = regexp.MustCompile(`(?i)^(?:[ ._-]?(?:E|-E|-)\d{1,3})+`)
 
 // maxTitleOffset is how many words may precede the title in a file name ("2e66a-Take My Siblings Please").
 const maxTitleOffset = 2
@@ -48,7 +52,9 @@ func NewFile(path string, sonarrEps []int) File {
 		fmt.Sscanf(base[m[2]:m[3]], "%d", &f.Season)
 		fmt.Sscanf(base[m[4]:m[5]], "%d", &f.Number)
 		base = base[m[1]:]
+		f.Multi = multiEp.MatchString(base)
 	}
+	f.Multi = f.Multi || len(sonarrEps) > 1
 	f.rest = words(base)
 	return f
 }
@@ -71,15 +77,58 @@ func usableTitle(t string) []string {
 	return w
 }
 
+// boundary words end a title: the quality, source, codec, audio and streaming-service tags that follow it in a
+// release name. A title only matches when the next word is one of these (or the name ends), so "Home" is not the
+// start of "Home Is Where the Heart Is", and a title made only of such words ("Web") is no evidence at all.
+var boundary = func() map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(`web webdl webrip hdtv pdtv dsr dvdrip dvd bluray bdrip brrip remux hdrip hddvd uhd hdr hdr10 dv sdr
+		x264 x265 h264 h265 hevc avc av1 xvid divx vp9 aac aacl ac3 eac3 ddp dd dts dtshd truehd flac opus atmos mp3 mp4 mkv avi
+		proper repack real internal limited extended uncut unrated multi dual subbed dubbed nf amzn hmax hbomax max dsnp disney hulu atvp pcok pmtp
+		cr crunchyroll funi sho stan itv bbc cbs nbc abc fox cw hbo ifc amc ctv sbs paramount peacock apple netflix amazon sling red redux
+		sdtv dl rip bdmv cc retail`) {
+		m[w] = true
+	}
+	return m
+}()
+
+var resolution = regexp.MustCompile(`^\d{3,4}[pi]$|^[248]k$`)
+
+func isBoundary(w string) bool {
+	return boundary[w] || resolution.MatchString(w) || (len(w) == 4 && w[0] == '2' && (w[1] == '0' || w[1] == '1') && isDigits(w))
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
 // titleAt reports whether the title appears in the file's words, starting no later than maxTitleOffset.
 func titleAt(rest, title []string) bool {
+	allTags := true
+	for _, w := range title {
+		allTags = allTags && isBoundary(w)
+	}
+	if allTags {
+		return false
+	}
 	for off := 0; off <= maxTitleOffset && off+len(title) <= len(rest); off++ {
 		ok := true
+		for i := 0; i < off && ok; i++ {
+			ok = !isBoundary(rest[i]) // a tag before the "title" means the title is not here
+		}
 		for i, w := range title {
 			if rest[off+i] != w {
 				ok = false
 				break
 			}
+		}
+		if end := off + len(title); ok && end < len(rest) && !isBoundary(rest[end]) {
+			ok = false
 		}
 		if ok {
 			return true
@@ -91,6 +140,9 @@ func titleAt(rest, title []string) bool {
 // TitleOf returns the single episode whose title is in the file name (the longest title wins: "Pilot Part 2" beats
 // "Pilot"). ok is false when no title matches or the best match is shared by several episodes.
 func TitleOf(f File, eps []Ep) (ep Ep, ok bool) {
+	if f.Multi {
+		return Ep{}, false
+	}
 	best, n := 0, 0
 	for _, e := range eps {
 		t := usableTitle(e.Title)
@@ -184,6 +236,10 @@ func place(files []File, eps []Ep, need map[int]bool, pick func(File) (Ep, bool)
 			p.Spare = append(p.Spare, f.Path)
 			continue
 		}
+		if !need[ep.ID] { // only episodes you have a file for are replaced; anything else is left for Sonarr's own rules
+			p.Spare = append(p.Spare, f.Path)
+			continue
+		}
 		if prev, taken := owner[ep.ID]; taken {
 			dup = append(dup, fmt.Sprintf("%s and %s are both %q", filepath.Base(prev), filepath.Base(f.Path), ep.Title))
 			continue
@@ -198,7 +254,11 @@ func place(files []File, eps []Ep, need map[int]bool, pick func(File) (Ep, bool)
 	var missing []string
 	for _, e := range eps {
 		if need[e.ID] && owner[e.ID] == "" {
-			missing = append(missing, fmt.Sprintf("S%02dE%02d %q", e.Season, e.Number, e.Title))
+			m := fmt.Sprintf("S%02dE%02d", e.Season, e.Number)
+			if e.Title != "" {
+				m += fmt.Sprintf(" %q", e.Title)
+			}
+			missing = append(missing, m)
 		}
 	}
 	if len(missing) > 0 {

@@ -108,7 +108,7 @@ func TestStaleDeterministicHoldIsRejectedAndSeasonSkipped(t *testing.T) {
 	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.removed) != 0 {
 		t.Fatalf("the first sighting only starts the clock: %s", got.Status)
 	}
-	v.st.SetKV(holdKey(j.ID), strconv.FormatInt(time.Now().Add(-4*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-4*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	got := v.status(t, j.ID)
 	if got.Status != "failed" || len(v.fake.removed) != 1 || len(v.fake.deleted) != 0 || v.fake.imports != 0 {
@@ -123,13 +123,13 @@ func TestHoldIsNotRejectedBeforeItsGraceOrWhenDisabled(t *testing.T) {
 	v, j := heldMissing(t)
 	set := live()
 	set.HoldRejectHours = 3
-	v.st.SetKV(holdKey(j.ID), strconv.FormatInt(time.Now().Add(-2*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-2*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.status(t, j.ID).Status != "holding" {
 		t.Fatal("inside the grace period")
 	}
 	set.HoldRejectHours = 0
-	v.st.SetKV(holdKey(j.ID), strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if v.status(t, j.ID).Status != "holding" || len(v.fake.removed) != 0 {
 		t.Fatal("0 means never")
@@ -142,10 +142,49 @@ func TestWaitingHoldsAreNeverAutoRejected(t *testing.T) {
 	j := v.job(t, time.Time{})
 	set := live()
 	set.HoldRejectHours = 1
-	v.st.SetKV(holdKey(j.ID), strconv.FormatInt(time.Now().Add(-50*time.Hour).Unix(), 10))
+	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-50*time.Hour).Unix(), 10))
 	v.fake.itemPath = "/elsewhere/x.mkv" // outside the download folder: a hold that is not a "this pack is wrong" kind
 	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.removed) != 0 {
 		t.Fatalf("an unclassified hold must wait for a human: %s", got.Status)
+	}
+}
+
+func TestHoldClockRestartsWhenTheReasonChanges(t *testing.T) {
+	v, j := heldMissing(t)
+	set := live()
+	set.HoldRejectHours = 3
+	// An old clock for a different reason (a probe problem, since fixed) must not count towards this one.
+	v.st.SetKV(holdKey(j.ID), holdProbe+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
+	if v.status(t, j.ID).Status != "holding" || len(v.fake.removed) != 0 {
+		t.Fatal("a different reason starts a fresh clock")
+	}
+}
+
+func TestSampleAndExtrasFilesAreNeverStandInsForAnEpisode(t *testing.T) {
+	v := setup(t, nil)
+	shiftedPack(v)
+	// The real "Gamma" is missing from the pack; only a sample and an extra carry that title.
+	v.fake.items = v.fake.items[:2]
+	v.fake.items = append(v.fake.items,
+		map[string]any{"path": "/dl/pack/Sample/show.s03e03.gamma-sample.mkv", "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]any{{"id": 24, "episodeNumber": 4}}, "rejections": []map[string]string{{"reason": "Sample"}}},
+		map[string]any{"path": "/dl/pack/Extras/Gamma.mkv", "seasonNumber": 3, "series": map[string]int{"id": 1}, "episodes": []map[string]any{}, "rejections": []map[string]string{}})
+	j := v.job(t, time.Time{})
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "holding" || len(v.fake.mappedImports) != 0 || len(v.fake.deleted) != 0 {
+		t.Fatalf("a sample or extra must never be imported as an episode: %s %q", got.Status, got.Message)
+	}
+}
+
+func TestRetryClearsTheHoldClock(t *testing.T) {
+	v, j := heldMissing(t)
+	set := live()
+	set.HoldRejectHours = 3
+	v.st.SetKV(holdKey(j.ID), holdMissing+":"+strconv.FormatInt(time.Now().Add(-90*time.Hour).Unix(), 10))
+	v.fake.failFiles = true // makes the verification unable to decide ("retry")
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
+	if v.st.KV(holdKey(j.ID)) != "" {
+		t.Fatal("a check that could not be made must restart the run of identical holds")
 	}
 }

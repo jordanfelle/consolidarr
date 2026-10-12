@@ -290,7 +290,11 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 		func() {
 			defer e.jobMu.lock(id)() // deferred so a panic cannot leave the job locked forever
 			if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
-				if cur.Deleted > 0 {
+				if cur.Deleted > 0 && len(cur.Mapping) > 0 {
+					// A mapped import deleted nothing and its mapping is only as good as the files it named: verify the
+					// pack again from scratch instead of resuming on a stale mapping.
+					cur.Status, cur.Mapping, cur.Deleted, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, 0, 0
+				} else if cur.Deleted > 0 {
 					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
 					e.St.SetKV(fmt.Sprintf("reimport:%d", id), "0")                             // a revived job gets its automatic re-asks back
 				} else {
@@ -356,6 +360,9 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 	j, err := e.St.Job(jobID)
 	if err != nil {
 		return store.Job{}, err
+	}
+	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
+		return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
 	}
 	inst, err := e.St.Instance(j.InstID)
 	if err != nil {

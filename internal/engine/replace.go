@@ -108,6 +108,25 @@ func rejectionOK(it sonarr.ManualImportItem) bool {
 }
 
 // verify checks a finished download. It never changes anything.
+var extrasDir = regexp.MustCompile(`(?i)^(samples?|extras?|featurettes?|bonus|behind[ ._-]the[ ._-]scenes|trailers?|specials?|subs?|proof|scenes|deleted[ ._-]scenes)$`)
+
+// inExtras reports whether the file sits under a sample/extras-style folder inside the download folder.
+func inExtras(path, folder string) bool {
+	if folder == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(folder), filepath.Dir(path))
+	if err != nil || rel == "." {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if extrasDir.MatchString(part) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) verify(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j *store.Job, mine []sonarr.QueueItem) verdict {
 	v := e.verifyNow(ctx, inst, c, set, j, mine)
 	v.At = time.Now() // fresh as of when the checks finished, so only a real wait behind another season makes it stale
@@ -136,7 +155,9 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	var packFiles []order.File // every file of this series in the download, whatever season Sonarr put it in
 	byPath := map[string]sonarr.ManualImportItem{}
 	for _, it := range items {
-		if (it.Series.ID == 0 || it.Series.ID == j.SeriesID) && (folder == "" || insideFolder(it.Path, folder)) {
+		// Only files Sonarr itself would consider importing and that sit in the release proper: a sample, an unknown
+		// series, an unparseable file or anything under an extras folder is never a stand-in for one of your episodes.
+		if (it.Series.ID == 0 || it.Series.ID == j.SeriesID) && (folder == "" || insideFolder(it.Path, folder)) && rejectionOK(it) && !inExtras(it.Path, folder) {
 			var ids []int
 			for _, ep := range it.Episodes {
 				ids = append(ids, ep.ID)
@@ -384,6 +405,14 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 // the command id does not start a second scan. It matches by folder or download client id and only counts a command
 // that is still queued/running, or that was queued after this attempt began (importAt): an older command of the same
 // folder (an earlier attempt, a manual scan) must never be mistaken for the current one, or a re-ask would be swallowed.
+// findImportCommandFor picks the right search for the job: a mapped job's import is a ManualImport command.
+func findImportCommandFor(cmds []sonarr.Command, j *store.Job, path, downloadID string) int {
+	if len(j.Mapping) > 0 {
+		return findMappedImportCommand(cmds, j.Mapping, j.ImportAt)
+	}
+	return findImportCommand(cmds, path, downloadID, j.ImportAt)
+}
+
 func findImportCommand(cmds []sonarr.Command, path, downloadID string, importAt int64) int {
 	for i := len(cmds) - 1; i >= 0; i-- {
 		c := cmds[i]
@@ -483,7 +512,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		// instead of starting a second scan of the same download.
 		if cmds, cerr := c.Commands(ctx); cerr != nil {
 			return
-		} else if id := findImportCommand(cmds, mine[0].OutputPath, mine[0].DownloadID, j.ImportAt); id != 0 {
+		} else if id := findImportCommandFor(cmds, j, mine[0].OutputPath, mine[0].DownloadID); id != 0 {
 			j.ImportCmd, j.Message = id, "import already started (found after a restart)"
 			_ = e.St.UpdateJob(*j)
 			return
@@ -491,7 +520,15 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		id, err := startImport(ctx, c, j, mine[0].OutputPath, mine[0].DownloadID)
 		e.kill("fi-after-import-start")
 		if err != nil {
-			j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
+			if len(j.Mapping) > 0 {
+				if age > mappedImportGiveUp {
+					fail(fmt.Sprintf("the mapped import could not be started for %d minutes (%v); your files were not deleted. Retry now to verify the pack again", int(age.Minutes()), err))
+					return
+				}
+				j.Message = fmt.Sprintf("the import has not started yet (%v). It will be retried; your files are untouched", err)
+			} else {
+				j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
+			}
 			_ = e.St.UpdateJob(*j)
 			return
 		}

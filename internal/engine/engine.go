@@ -781,6 +781,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	v := e.verify(ctx, inst, c, set, &j, mine)
 	switch v.State {
 	case "retry":
+		e.St.SetKV(holdKey(j.ID), "") // a check we could not make breaks the run of identical holds
 		return
 	case "hold":
 		j.Status, j.Message = "holding", v.Message
@@ -796,6 +797,9 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		switch {
 		case set.DryRun || !set.AutoDelete:
 			j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", v.Probed)
+			if len(v.Mapping) > 0 {
+				j.Message += fmt.Sprintf(". The pack numbers episodes differently from Sonarr; approving imports it with %s", v.Message)
+			}
 		default:
 			e.replace(ctx, inst, c, &j, v, queue, "automatic")
 			return
@@ -934,20 +938,29 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job)
 
 func holdKey(id int64) string { return fmt.Sprintf("holdSince:%d", id) }
 
-// holdExpired records when a job first held for a reason that cannot fix itself and reports whether it has now been
-// held longer than Settings.HoldRejectHours. Any other outcome resets the clock.
+// holdExpired records when a job first held for a reason that cannot fix itself and reports whether it has been held
+// for that same reason longer than Settings.HoldRejectHours. Any other outcome resets the clock, so a pack is never
+// rejected on the strength of two different or non-consecutive problems. A probe failure waits three times as long:
+// an NFS stall looks the same as a genuinely undecodable file.
 func (e *Engine) holdExpired(j *store.Job, kind string, set store.Settings) bool {
 	k := holdKey(j.ID)
-	if set.HoldRejectHours <= 0 || !rejectable(kind) {
+	if set.HoldRejectHours <= 0 || !rejectable(kind) || j.DownloadID == "" {
 		e.St.SetKV(k, "")
 		return false
 	}
-	since, _ := strconv.ParseInt(e.St.KV(k), 10, 64)
+	grace := time.Duration(set.HoldRejectHours) * time.Hour
+	if kind == holdProbe {
+		grace *= 3
+	}
+	var since int64
+	if k, ts, ok := strings.Cut(e.St.KV(k), ":"); ok && k == kind {
+		since, _ = strconv.ParseInt(ts, 10, 64)
+	}
 	if since == 0 {
-		e.St.SetKV(k, strconv.FormatInt(time.Now().Unix(), 10))
+		e.St.SetKV(holdKey(j.ID), kind+":"+strconv.FormatInt(time.Now().Unix(), 10))
 		return false
 	}
-	return time.Since(time.Unix(since, 0)) > time.Duration(set.HoldRejectHours)*time.Hour
+	return time.Since(time.Unix(since, 0)) > grace
 }
 
 func maxf(a, b float64) float64 {
