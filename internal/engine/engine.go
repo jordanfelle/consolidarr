@@ -815,6 +815,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 const (
 	maxQueuedImports = 5                // DownloadedEpisodesScan commands already waiting
 	maxImportBacklog = 25               // distinct completed downloads (other than this one) that are genuinely about to import
+	maxBacklogFiles  = 300              // ... or that many episode records among them (20 big packs are a backlog too)
 	maxCommandAge    = 10 * time.Minute // a monitor/import command running longer than this looks stuck
 )
 
@@ -824,7 +825,7 @@ const (
 // never drain on their own: this season, packs other consolidarr jobs are holding (they wait for this very gate, so
 // counting them is a deadlock), and downloads Sonarr is refusing to import (not an upgrade, already imported, unknown
 // series ...), which sit in the queue until a human acts.
-func (e *Engine) importBacklog(queue []sonarr.QueueItem, j store.Job) int {
+func (e *Engine) importBacklog(queue []sonarr.QueueItem, j store.Job) (downloads, files int) {
 	ours := map[string]bool{}
 	if js, err := e.St.Jobs(true, 10000); err == nil {
 		for _, o := range js {
@@ -836,8 +837,8 @@ func (e *Engine) importBacklog(queue []sonarr.QueueItem, j store.Job) int {
 	stuck := map[string]bool{} // a download is stuck if any of its records says Sonarr will not import it
 	for _, q := range queue {
 		for _, sm := range q.StatusMessages {
-			for _, m := range append([]string{sm.Title}, sm.Messages...) {
-				if Classify(m) != KindOther {
+			for _, m := range sm.Messages { // messages only: the title is a file or release name ("Sample", "Unknown Series ...")
+				if neverDrains(m) {
 					stuck[strings.ToLower(q.DownloadID)] = true
 				}
 			}
@@ -850,8 +851,19 @@ func (e *Engine) importBacklog(queue []sonarr.QueueItem, j store.Job) int {
 			continue
 		}
 		pending[id] = true
+		files++
 	}
-	return len(pending)
+	return len(pending), files
+}
+
+// neverDrains reports whether a Sonarr status message means the download will sit in the queue until a human acts:
+// the kinds the Needs-attention page knows, plus the two "nothing here to import" messages Classify leaves as other.
+func neverDrains(msg string) bool {
+	if Classify(msg) != KindOther {
+		return true
+	}
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "not imported or missing from the release") || strings.Contains(m, "no files found are eligible for import")
 }
 
 // pipelineBlock returns why deleting this job's old files must wait, or "" when it is safe to go ahead:
@@ -887,8 +899,8 @@ func (e *Engine) pipelineBlock(ctx context.Context, inst store.Instance, c *sona
 	if queued > maxQueuedImports {
 		return fmt.Sprintf("Sonarr already has %d imports queued", queued)
 	}
-	if backlog := e.importBacklog(queue, j); backlog > maxImportBacklog {
-		return fmt.Sprintf("Sonarr has %d downloads waiting to import", backlog)
+	if downloads, files := e.importBacklog(queue, j); downloads > maxImportBacklog || files > maxBacklogFiles {
+		return fmt.Sprintf("Sonarr has %d downloads (%d files) waiting to import", downloads, files)
 	}
 	return ""
 }
