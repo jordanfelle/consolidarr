@@ -564,6 +564,7 @@ func (e *Engine) markImportedBySonarr(ctx context.Context, inst store.Instance, 
 	}
 	e.St.Event("info", fmt.Sprintf("done %s S%02d: %s", j.Title, j.Season, j.Message))
 	e.rescanSeries(ctx, inst, j.SeriesID)
+	e.RunNow() // Sonarr finished the season itself: let the jobs queued behind it go now
 	return nil
 }
 

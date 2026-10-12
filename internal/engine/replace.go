@@ -516,6 +516,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		_ = e.St.UpdateJob(*j)
 		e.St.Event("info", fmt.Sprintf("done %s: %d episodes imported", label, got))
 		e.rescanSeries(ctx, inst, j.SeriesID)
+		e.RunNow() // a season finished: the jobs waiting their turn behind it should not wait out the rest of the cycle
 		return
 	}
 	if j.ImportCmd == 0 { // the delete happened but the import was never started (or its start failed)
