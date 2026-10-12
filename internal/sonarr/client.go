@@ -198,20 +198,44 @@ type SeriesIDs struct {
 }
 
 type Command struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Result  string `json:"result"`
-	Message string `json:"message"`
-	Queued  string `json:"queued"`
-	Started string `json:"started"`
-	Body    struct {
-		Path             string `json:"path"`
-		DownloadClientID string `json:"downloadClientId"`
-		Files            []struct {
-			Path string `json:"path"`
-		} `json:"files"`
-	} `json:"body"`
+	ID      int         `json:"id"`
+	Name    string      `json:"name"`
+	Status  string      `json:"status"`
+	Result  string      `json:"result"`
+	Message string      `json:"message"`
+	Queued  string      `json:"queued"`
+	Started string      `json:"started"`
+	Body    CommandBody `json:"body"`
+}
+
+// CommandBody is the little we read of a command's body. Sonarr's command list mixes every kind of command, and the
+// same field name means different things in different ones ("files" is a list of objects in ManualImport but a list
+// of numbers elsewhere), so nothing here may fail the decode of the whole listing: a field that is not the shape we
+// expect is simply absent.
+type CommandBody struct {
+	Path             string
+	DownloadClientID string
+	Files            []string // paths of the files a ManualImport command names
+}
+
+func (b *CommandBody) UnmarshalJSON(raw []byte) error {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	_ = json.Unmarshal(m["path"], &b.Path)
+	_ = json.Unmarshal(m["downloadClientId"], &b.DownloadClientID)
+	var files []struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(m["files"], &files) == nil {
+		for _, f := range files {
+			if f.Path != "" {
+				b.Files = append(b.Files, f.Path)
+			}
+		}
+	}
+	return nil
 }
 
 type Health struct {

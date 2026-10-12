@@ -127,7 +127,7 @@ func findMappedImportCommand(cmds []sonarr.Command, mapping map[string][]int, im
 		}
 		hit := false
 		for _, f := range c.Body.Files {
-			_, in := mapping[f.Path]
+			_, in := mapping[f]
 			hit = hit || in
 		}
 		if !hit {
