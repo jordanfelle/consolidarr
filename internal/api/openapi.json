@@ -436,6 +436,17 @@
       "type": "boolean",
       "default": false,
       "description": "Delete old files even when ffprobe cannot read the downloaded files (not mounted). Off by default: such jobs are held with an explanation."
+     },
+     "remapOrders": {
+      "type": "boolean",
+      "default": true,
+      "description": "Import a pack whose episode order differs from Sonarr's (aired vs DVD order, a wrong scene mapping) when every file's title proves which episode it is. The import names the episodes explicitly and deletes nothing first."
+     },
+     "holdRejectHours": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 3,
+      "description": "Remove and blocklist a pack that has been held this long for a reason that cannot fix itself (it lacks episodes you have, has nothing importable, fails probing, or uses another order), so it stops occupying an in-flight slot. 0 = never."
      }
     }
    },

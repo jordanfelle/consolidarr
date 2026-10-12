@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
+	"github.com/jordanfelle/consolidarr/internal/meta"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
 
 type Engine struct {
-	St *store.Store
+	St   *store.Store
+	Meta *meta.Lookup // optional TVDB/TMDB lookups of alternative episode orders; nil = Sonarr's own titles only
 
 	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
 	instMu locks // one season per instance is deleted-and-imported at a time
@@ -782,7 +784,15 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	case "hold":
 		j.Status, j.Message = "holding", v.Message
+		if e.holdExpired(&j, v.Kind, set) {
+			if err := e.rejectBody(ctx, c, &j, false, 7*24*time.Hour, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {
+				e.St.Event("warn", label+": could not auto-reject the held pack: "+err.Error())
+				_ = e.St.UpdateJob(j)
+			}
+			return
+		}
 	default:
+		e.St.SetKV(holdKey(j.ID), "")
 		switch {
 		case set.DryRun || !set.AutoDelete:
 			j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", v.Probed)
@@ -920,6 +930,24 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job)
 		return fmt.Errorf("not now: %s", strings.TrimPrefix(j.Message, "waiting: "))
 	}
 	return nil
+}
+
+func holdKey(id int64) string { return fmt.Sprintf("holdSince:%d", id) }
+
+// holdExpired records when a job first held for a reason that cannot fix itself and reports whether it has now been
+// held longer than Settings.HoldRejectHours. Any other outcome resets the clock.
+func (e *Engine) holdExpired(j *store.Job, kind string, set store.Settings) bool {
+	k := holdKey(j.ID)
+	if set.HoldRejectHours <= 0 || !rejectable(kind) {
+		e.St.SetKV(k, "")
+		return false
+	}
+	since, _ := strconv.ParseInt(e.St.KV(k), 10, 64)
+	if since == 0 {
+		e.St.SetKV(k, strconv.FormatInt(time.Now().Unix(), 10))
+		return false
+	}
+	return time.Since(time.Unix(since, 0)) > time.Duration(set.HoldRejectHours)*time.Hour
 }
 
 func maxf(a, b float64) float64 {

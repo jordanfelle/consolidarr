@@ -113,17 +113,24 @@ type Job struct {
 	Expected    int     `json:"expected"`    // how many episodes the pack must supply for the season to count as replaced
 	ExpectedEps []int   `json:"expectedEps"` // exactly which episode numbers; done means each has a new file
 	ImportAt    int64   `json:"importAt"`    // when the current import attempt started (resets on retry)
+	// Mapping is set when the pack's episode order differs from Sonarr's and the file titles prove which episode each
+	// file is: pack file path -> Sonarr episode ids. The import then names the episodes itself, and nothing is deleted
+	// first (Sonarr replaces each episode's file as it imports; a failed import leaves your files as they were).
+	Mapping map[string][]int `json:"mapping,omitempty"`
 }
 
-const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected,expected_eps,import_at`
+const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected,expected_eps,import_at,mapping`
 
 func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
-	var old, eps string
+	var old, eps, mapping string
 	err := sc.Scan(&j.ID, &j.InstID, &j.SeriesID, &j.Season, &j.Title, &old, &j.Release, &j.Indexer, &j.SizeGB,
-		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected, &eps, &j.ImportAt)
+		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected, &eps, &j.ImportAt, &mapping)
 	_ = json.Unmarshal([]byte(old), &j.OldFileIDs)
 	_ = json.Unmarshal([]byte(eps), &j.ExpectedEps)
+	if mapping != "" {
+		_ = json.Unmarshal([]byte(mapping), &j.Mapping)
+	}
 	return j, err
 }
 
@@ -230,8 +237,13 @@ func (s *Store) UpdateJob(j Job) error {
 	if j.ExpectedEps == nil {
 		eps = []byte("[]")
 	}
-	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,deleted=?,download_id=?,expected=?,expected_eps=?,import_at=?,updated=? where id=?`,
-		j.Status, j.Message, j.Progress, j.ImportCmd, j.Deleted, j.DownloadID, j.Expected, string(eps), j.ImportAt, time.Now().Unix(), j.ID)
+	mapping := ""
+	if len(j.Mapping) > 0 {
+		b, _ := json.Marshal(j.Mapping)
+		mapping = string(b)
+	}
+	_, err := s.Exec(`update jobs set status=?,message=?,progress=?,import_cmd=?,deleted=?,download_id=?,expected=?,expected_eps=?,import_at=?,mapping=?,updated=? where id=?`,
+		j.Status, j.Message, j.Progress, j.ImportCmd, j.Deleted, j.DownloadID, j.Expected, string(eps), j.ImportAt, mapping, time.Now().Unix(), j.ID)
 	return err
 }
 

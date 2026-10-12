@@ -19,6 +19,7 @@ export type Job = {
 export type Settings = {
   schedulerEnabled: boolean; dryRun: boolean; autoDelete: boolean; allowUnverified: boolean; maxInflight: number; maxPackGB: number;
   minFiles: number; includeAnime: boolean; cycleMinutes: number; scanHours: number; lastResortIndexers: string[];
+  remapOrders: boolean; holdRejectHours: number;
 };
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
 export type Once = { active: boolean; limit: number; started: number; began: number; finished: number };

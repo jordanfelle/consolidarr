@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jordanfelle/consolidarr/internal/order"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
@@ -37,6 +38,8 @@ func (l *locks) lock(id int64) func() {
 type verdict struct {
 	State       string // "ok": safe to replace; "hold": a check failed; "retry": transient, leave the job alone
 	Message     string
+	Kind        string           // why a hold happened (the hold* constants); only some kinds can never fix themselves
+	Mapping     map[string][]int // pack file -> episode ids, when the pack's order differs from Sonarr's (see order)
 	Items       []sonarr.QueueItem
 	DownloadID  string
 	OutputPath  string
@@ -130,7 +133,21 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	packEps := map[int]bool{}
 	var bad []string
 	var outside, used, rejected int
+	var packFiles []order.File // every file of this series in the download, whatever season Sonarr put it in
+	byPath := map[string]sonarr.ManualImportItem{}
 	for _, it := range items {
+		if (it.Series.ID == 0 || it.Series.ID == j.SeriesID) && (folder == "" || insideFolder(it.Path, folder)) {
+			var ids []int
+			for _, ep := range it.Episodes {
+				ids = append(ids, ep.ID)
+			}
+			// Files named for another season (a multi-season pack) are not this season's business: a title that
+			// recurs in two seasons must not look like a clash.
+			if f := order.NewFile(it.Path, ids); f.Season == 0 || f.Season == j.Season || it.SeasonNumber == j.Season {
+				packFiles = append(packFiles, f)
+				byPath[it.Path] = it
+			}
+		}
 		if it.SeasonNumber != j.Season || (it.Series.ID != 0 && it.Series.ID != j.SeriesID) {
 			continue
 		}
@@ -196,16 +213,44 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	}
 	sort.Ints(v.ExpectedEps)
 	v.Expected = len(v.ExpectedEps)
-	hold := func(msg string) verdict { v.State, v.Message = "hold", msg; return v }
+	hold := func(kind, msg string) verdict { v.State, v.Kind, v.Message = "hold", kind, msg; return v }
+	// Does the pack's numbering disagree with Sonarr's? A file whose name carries an episode's title but that Sonarr
+	// mapped elsewhere means a different ordering (aired/DVD/absolute, or a wrong scene mapping): importing it the
+	// normal way would file episodes under the wrong names, even when the counts happen to add up.
+	ordEps := orderEps(eps)
+	conflicts := order.Conflicts(packFiles, ordEps)
+	var remapWhy string
+	if (len(conflicts) > 0 || len(missing) > 0 || used == 0) && set.RemapOrders && len(eps) > 0 && unmapped == 0 && outside == 0 {
+		need := map[int]bool{}
+		for _, ep := range eps {
+			if liveSet[ep.EpisodeFileID] {
+				need[ep.ID] = true
+			}
+		}
+		plan, why := e.planRemap(ctx, c, j, packFiles, ordEps, need)
+		if why == "" {
+			return e.remapVerdict(inst, set, v, plan, byPath)
+		}
+		remapWhy = why
+	}
+	orderHold := func() verdict {
+		msg := "the pack's episode numbering disagrees with Sonarr's: " + strings.Join(conflicts[:min(len(conflicts), 2)], "; ")
+		if remapWhy != "" {
+			msg += ". It could not be matched by title either (" + remapWhy + ")"
+		}
+		return hold(holdOrder, msg)
+	}
 	switch {
 	case len(bad) > 0:
-		return hold("failed probe: " + strings.Join(bad[:min(len(bad), 2)], "; "))
+		return hold(holdProbe, "failed probe: "+strings.Join(bad[:min(len(bad), 2)], "; "))
 	case outside > 0:
-		return hold(fmt.Sprintf("%d files are outside the download folder %s; not touching your files", outside, folder))
+		return hold(holdOther, fmt.Sprintf("%d files are outside the download folder %s; not touching your files", outside, folder))
+	case used == 0 && len(conflicts) > 0:
+		return orderHold()
 	case used == 0:
-		return hold("no importable files found in the download folder")
+		return hold(holdEmpty, "no importable files found in the download folder")
 	case len(eps) == 0:
-		return hold("Sonarr returned no episodes for this season, so coverage cannot be checked")
+		return hold(holdOther, "Sonarr returned no episodes for this season, so coverage cannot be checked")
 	case unmapped > 0:
 		var orphans []int
 		for _, id := range live {
@@ -213,17 +258,22 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 				orphans = append(orphans, id)
 			}
 		}
-		return hold(fmt.Sprintf("%d of your current files are not linked to any episode in Sonarr (file ids %v), so coverage cannot be confirmed; remove or relink them in Sonarr", unmapped, orphans[:min(len(orphans), 5)]))
+		return hold(holdOther, fmt.Sprintf("%d of your current files are not linked to any episode in Sonarr (file ids %v), so coverage cannot be confirmed; remove or relink them in Sonarr", unmapped, orphans[:min(len(orphans), 5)]))
+	case len(conflicts) > 0:
+		return orderHold()
 	case len(missing) > 0:
 		why := fmt.Sprintf("pack is missing episodes %v that you have today", missing)
 		if rejected > 0 {
 			why += fmt.Sprintf(" (%d pack files would not import: sample, unknown or unparseable)", rejected)
 		}
-		return hold(why)
+		if remapWhy != "" {
+			why += "; matching by title did not help (" + remapWhy + ")"
+		}
+		return hold(holdMissing, why)
 	case len(v.ExpectedEps) == 0:
-		return hold("could not work out which episodes this pack must supply (none of its files will import); nothing was changed")
+		return hold(holdOther, "could not work out which episodes this pack must supply (none of its files will import); nothing was changed")
 	case v.Unreach != "" && !set.AllowUnverified:
-		return hold(fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", v.Unreach))
+		return hold(holdOther, fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", v.Unreach))
 	}
 	v.State = "ok"
 	return v
@@ -262,11 +312,17 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		_ = e.St.UpdateJob(*j)
 		return
 	}
-	ids, err := liveOld(ctx, c, j.SeriesID, j.OldFileIDs)
-	if err != nil {
-		j.Status, j.Message = "holding", "could not read your current files: "+err.Error()
-		_ = e.St.UpdateJob(*j)
-		return
+	// A mapped import names the episodes itself and deletes nothing: Sonarr swaps each episode's file as it imports,
+	// so an import that fails leaves your files exactly as they were.
+	mapped := len(v.Mapping) > 0
+	var ids []int
+	if !mapped {
+		var err error
+		if ids, err = liveOld(ctx, c, j.SeriesID, j.OldFileIDs); err != nil {
+			j.Status, j.Message = "holding", "could not read your current files: "+err.Error()
+			_ = e.St.UpdateJob(*j)
+			return
+		}
 	}
 	e.inflight.Add(1) // counted before the draining check so a shutdown's WaitIdle cannot miss us
 	defer e.inflight.Add(-1)
@@ -276,8 +332,11 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	e.kill("before-record")
 	prev := *j
 	now := time.Now().Unix()
-	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0
+	j.Status, j.Deleted, j.ImportAt, j.DownloadID, j.Expected, j.ExpectedEps, j.ImportCmd, j.Mapping = "importing", now, now, v.DownloadID, v.Expected, v.ExpectedEps, 0, v.Mapping
 	j.Message = fmt.Sprintf("deleting %d old files, then importing", len(ids))
+	if mapped {
+		j.Message = fmt.Sprintf("importing %d files onto the episodes their titles identify", len(v.Mapping))
+	}
 	if err := e.St.UpdateJob(*j); err != nil { // the write-ahead record: without it a crash after the delete loses the job
 		*j = prev
 		e.St.Event("error", fmt.Sprintf("%s: could not record the replacement, so nothing was deleted: %v", label, err))
@@ -298,16 +357,22 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 	}
 	e.kill("after-delete")
-	id, err := c.ImportDownload(ctx, v.OutputPath, v.DownloadID)
+	id, err := startImport(ctx, c, j, v.OutputPath, v.DownloadID)
 	e.kill("after-import-start")
 	if err != nil {
 		j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
+		if mapped {
+			j.Message = fmt.Sprintf("the import has not started yet (%v). It will be retried; your files are untouched", err)
+		}
 		_ = e.St.UpdateJob(*j)
 		e.St.Event("error", label+": "+j.Message)
 		return
 	}
 	j.ImportCmd = id
 	j.Message = fmt.Sprintf("old files deleted, import running (%d files probed)", v.Probed)
+	if mapped {
+		j.Message = fmt.Sprintf("import running with %s (%d files probed); your files are swapped one episode at a time", v.Message, v.Probed)
+	}
 	if v.Unreach != "" {
 		j.Message += "; some files could not be probed (allowed in Settings)"
 	}
@@ -406,7 +471,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		defer unlockInst()
 		if left, lerr := liveOld(ctx, c, j.SeriesID, j.OldFileIDs); lerr != nil {
 			return
-		} else if len(left) > 0 {
+		} else if len(left) > 0 && len(j.Mapping) == 0 { // a mapped import deletes nothing itself
 			if derr := c.DeleteEpisodeFiles(ctx, left); derr != nil {
 				j.Message = fmt.Sprintf("finishing the interrupted delete failed (%v). It will be retried", derr)
 				_ = e.St.UpdateJob(*j)
@@ -423,7 +488,7 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 			_ = e.St.UpdateJob(*j)
 			return
 		}
-		id, err := c.ImportDownload(ctx, mine[0].OutputPath, mine[0].DownloadID)
+		id, err := startImport(ctx, c, j, mine[0].OutputPath, mine[0].DownloadID)
 		e.kill("fi-after-import-start")
 		if err != nil {
 			j.Message = fmt.Sprintf("old files deleted; the import has not started yet (%v). It will be retried", err)
@@ -449,6 +514,10 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 				e.St.Event("warn", label+": "+j.Message)
 				return
 			}
+		}
+		if len(j.Mapping) > 0 {
+			fail(fmt.Sprintf("the mapped import finished but only %d of %d episodes have a new file. Episodes Sonarr did not replace still have your old file; use Needs attention to retry or adopt the pack", got, len(want)))
+			return
 		}
 		fail(fmt.Sprintf("the import finished but only %d of %d episodes have files. Your old files were already replaced; use Needs attention to retry or adopt the pack", got, len(want)))
 	case !finished && age > importHardStop:

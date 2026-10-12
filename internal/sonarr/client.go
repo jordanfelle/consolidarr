@@ -128,6 +128,9 @@ type Episode struct {
 	EpisodeFileID int    `json:"episodeFileId"`
 	Monitored     bool   `json:"monitored"`
 	AirDateUTC    string `json:"airDateUtc"`
+	AirDate       string `json:"airDate"`
+	Title         string `json:"title"`
+	TvdbID        int    `json:"tvdbId"`
 }
 
 type Release struct {
@@ -171,11 +174,27 @@ type ManualImportItem struct {
 	} `json:"series"`
 	SeasonNumber int `json:"seasonNumber"`
 	Episodes     []struct {
-		EpisodeNumber int `json:"episodeNumber"`
+		ID            int    `json:"id"`
+		SeasonNumber  int    `json:"seasonNumber"`
+		EpisodeNumber int    `json:"episodeNumber"`
+		Title         string `json:"title"`
 	} `json:"episodes"`
 	Rejections []struct {
 		Reason string `json:"reason"`
 	} `json:"rejections"`
+	// What a ManualImport command needs to repeat Sonarr's own reading of the file (quality, language, group).
+	ReleaseGroup string          `json:"releaseGroup"`
+	Quality      json.RawMessage `json:"quality"`
+	Languages    json.RawMessage `json:"languages"`
+	IndexerFlags int             `json:"indexerFlags"`
+	ReleaseType  string          `json:"releaseType"`
+	DownloadID   string          `json:"downloadId"`
+}
+
+// SeriesIDs are the ids an alternative-order lookup needs.
+type SeriesIDs struct {
+	TvdbID int `json:"tvdbId"`
+	TmdbID int `json:"tmdbId"`
 }
 
 type Command struct {
@@ -313,6 +332,34 @@ func (c *Client) ImportDownload(ctx context.Context, path, downloadID string) (i
 	var cmd Command
 	err = c.do(ctx, "POST", "/command", map[string]any{"name": "DownloadedEpisodesScan", "path": path,
 		"downloadClientId": downloadID, "importMode": "auto"}, &cmd, 2*time.Minute)
+	return cmd.ID, err
+}
+
+// SeriesIDs reads the external ids of one series.
+func (c *Client) SeriesIDs(ctx context.Context, seriesID int) (out SeriesIDs, err error) {
+	err = c.do(ctx, "GET", fmt.Sprintf("/series/%d", seriesID), nil, &out, 30*time.Second)
+	return
+}
+
+// ImportMapped imports pack files onto exactly the episodes given (path -> episode ids), which Sonarr's own
+// reading of the file names would not pick. items are Sonarr's own listing of the download, used to carry over
+// its quality/language/group reading of each file. A file that is in the mapping but not in the listing is an error.
+func (c *Client) ImportMapped(ctx context.Context, seriesID int, mapping map[string][]int, items []ManualImportItem) (id int, err error) {
+	byPath := map[string]ManualImportItem{}
+	for _, it := range items {
+		byPath[it.Path] = it
+	}
+	var files []map[string]any
+	for path, eps := range mapping {
+		it, ok := byPath[path]
+		if !ok {
+			return 0, fmt.Errorf("%s is no longer in the download", path)
+		}
+		files = append(files, map[string]any{"path": path, "seriesId": seriesID, "episodeIds": eps, "releaseGroup": it.ReleaseGroup,
+			"quality": it.Quality, "languages": it.Languages, "indexerFlags": it.IndexerFlags, "releaseType": it.ReleaseType, "downloadId": it.DownloadID})
+	}
+	var cmd Command
+	err = c.do(ctx, "POST", "/command", map[string]any{"name": "ManualImport", "files": files, "importMode": "auto"}, &cmd, 2*time.Minute)
 	return cmd.ID, err
 }
 

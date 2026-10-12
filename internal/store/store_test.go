@@ -225,8 +225,8 @@ func TestAnExistingDatabaseIsMigratedInPlace(t *testing.T) {
 		t.Fatalf("the new columns must be writable: %v", err)
 	}
 	st.DB.Close()
-	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "5" {
-		t.Fatalf("reopening must be a no-op at version 5, got version %q err=%v", st2.KV("schema_version"), err)
+	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "6" {
+		t.Fatalf("reopening must be a no-op at version 6, got version %q err=%v", st2.KV("schema_version"), err)
 	}
 }
 
@@ -242,8 +242,8 @@ func TestMigrationsSurviveACrashBetweenTheAlterAndTheVersionBump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-running migrations over existing columns must not fail: %v", err)
 	}
-	if v := st2.KV("schema_version"); v != "5" {
-		t.Fatalf("version must catch up to 5, got %q", v)
+	if v := st2.KV("schema_version"); v != "6" {
+		t.Fatalf("version must catch up to 6, got %q", v)
 	}
 }
 

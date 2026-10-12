@@ -122,6 +122,7 @@ var migrations = []migration{
 	{"jobs", "expected", `alter table jobs add column expected bigint not null default 0`},          // how many episodes the pack must supply
 	{"jobs", "expected_eps", `alter table jobs add column expected_eps text not null default '[]'`}, // exactly which episode numbers
 	{"jobs", "import_at", `alter table jobs add column import_at bigint not null default 0`},        // when the current import attempt started
+	{"jobs", "mapping", `alter table jobs add column mapping text not null default ''`},             // pack file -> episode ids, when the pack's order differs from Sonarr's
 }
 
 func (s *Store) hasColumn(table, column string) (bool, error) {
@@ -206,11 +207,13 @@ type Settings struct {
 	CycleMinutes     int      `json:"cycleMinutes"`
 	ScanHours        int      `json:"scanHours"`
 	LastResort       []string `json:"lastResortIndexers"`
+	RemapOrders      bool     `json:"remapOrders"`     // import a pack whose episode order differs from Sonarr's when its file titles prove the mapping
+	HoldRejectHours  int      `json:"holdRejectHours"` // reject a pack held for a reason that cannot fix itself after this long (0 = never)
 }
 
 func DefaultSettings() Settings {
 	return Settings{DryRun: true, AutoDelete: true, MaxInflight: 4, MaxPackGB: 60, MinFiles: 3,
-		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}}
+		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}, RemapOrders: true, HoldRejectHours: 3}
 }
 
 func (s *Store) Settings() Settings {
