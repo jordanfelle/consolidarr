@@ -59,6 +59,24 @@ consolidarr still checks episode coverage but cannot probe the files, and says s
 Nothing is deleted before step 6, and step 6 only runs when every check passes. Jobs that fail a check show as **holding**
 with the reason. With *Dry run* on (the default), the scheduler only logs what it would grab.
 
+### Packs numbered in a different order
+
+Sonarr numbers a season one way (usually aired order); a pack may number it another (DVD order, a wrong XEM scene
+mapping, production codes). Importing such a pack normally files episodes under the wrong names, even when the counts
+add up, so every verification compares each file's title with the episode Sonarr would give it. If they disagree:
+
+1. If every episode you have today is identified exactly once by the titles in the file names (against Sonarr's titles,
+   then against TVDB/TMDB orderings when keys are set), the pack is imported with an **explicit file-to-episode
+   mapping**. Nothing is deleted first: Sonarr swaps each episode's file as it imports, so a failed import leaves your
+   files as they were. Turn this off with *Import packs numbered in a different order* in Settings.
+2. Otherwise the job is held with the disagreement spelled out.
+
+Numbers alone are never evidence, and a title shared by two episodes (or a placeholder like "TBA") is ignored.
+
+A pack held for a reason that cannot fix itself (it lacks episodes you have, has nothing importable, fails probing, or
+is in another order that titles cannot settle) is removed and blocklisted after *Reject a stuck pack after (hours)*
+(default 3) and the season is skipped for a week, so it stops occupying an in-flight slot.
+
 ## Configuration
 
 | Variable | Default | |
@@ -72,6 +90,8 @@ with the reason. With *Dry run* on (the default), the scheduler only logs what i
 | `CONSOLIDARR_ALLOWED_IPS` | any | comma-separated client IPs/CIDRs (`10.0.0.0/24, 192.168.1.5, fd00::/8`) allowed to reach the UI and API; everyone else gets a bare 403. A malformed entry stops startup. IPv4 and IPv6 are matched separately (a `/0` admits that whole family and logs a warning); `::ffff:a.b.c.d/N` prefixes are treated as their IPv4 range. `/healthz` from the loopback is always answered for container healthchecks |
 | `CONSOLIDARR_TRUSTED_PROXIES` | none | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is believed when applying `CONSOLIDARR_ALLOWED_IPS` (walked from the right; a header from any other peer is ignored). Only valid together with `CONSOLIDARR_ALLOWED_IPS`. The proxy must **append** to `X-Forwarded-For` (not pass the client's header through); entries may carry a port (`1.2.3.4:5678`, `[::1]:443`). The login rate limit then counts per real client instead of per proxy |
 | `CONSOLIDARR_TRUSTED_ORIGINS` | none | extra origins accepted for browser writes, for a proxy that rewrites the Host header (otherwise writes get 403). With login disabled, dotted host names are refused unless listed in `CONSOLIDARR_ALLOWED_HOSTS`; IPs, `localhost` and single-label names always work |
+| `CONSOLIDARR_TVDB_KEY` / `CONSOLIDARR_TVDB_PIN` | off | optional TheTVDB v4 key (and PIN for a subscriber key): lets consolidarr check a pack against TVDB's DVD/absolute/alternate orderings (see below) |
+| `CONSOLIDARR_TMDB_KEY` | off | optional TMDB v3 key: same, using TMDB episode groups |
 
 Everything else (scheduler, size cap, in-flight limit, last-resort indexers, anime) is in the UI under **Settings**.
 

@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
+	"github.com/jordanfelle/consolidarr/internal/meta"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
 
 type Engine struct {
-	St *store.Store
+	St   *store.Store
+	Meta *meta.Lookup // optional TVDB/TMDB lookups of alternative episode orders; nil = Sonarr's own titles only
 
 	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
 	instMu locks // one season per instance is deleted-and-imported at a time
@@ -695,6 +697,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	}
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	boundID := j.DownloadID // what the job itself recorded, before ownedItems below may bind a guessed download
 	// The error timer counts consecutive failed checks: any pass through advance that is not such a failure resets it.
 	// (It is in memory only, so a restart restarts the day; that fails safe by leaving the job alone longer.)
 	keepErr := false
@@ -763,6 +766,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 	}
 	if left > 0 || !done {
+		e.clearHold(j.ID) // downloading again (a re-check, a re-grab): a later hold starts a fresh clock
 		prog := int(100 - 100*left/maxf(size, 1))
 		switch {
 		case j.Status != "downloading" || j.Progress != prog || j.DownloadID == "":
@@ -779,13 +783,25 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	v := e.verify(ctx, inst, c, set, &j, mine)
 	switch v.State {
 	case "retry":
+		e.St.SetKV(holdKey(j.ID), "") // a check we could not make breaks the run of identical holds
 		return
 	case "hold":
 		j.Status, j.Message = "holding", v.Message
+		if e.holdExpired(&j, boundID, v.Kind, set) {
+			if err := e.rejectBody(ctx, c, &j, false, 7*24*time.Hour, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {
+				e.St.Event("warn", label+": could not auto-reject the held pack: "+err.Error())
+				_ = e.St.UpdateJob(j)
+			}
+			return
+		}
 	default:
+		e.St.SetKV(holdKey(j.ID), "")
 		switch {
 		case set.DryRun || !set.AutoDelete:
 			j.Status, j.Message = "ready", fmt.Sprintf("verified %d files and episode coverage; waiting for manual approval or dry run is on", v.Probed)
+			if len(v.Mapping) > 0 {
+				j.Message += fmt.Sprintf(". The pack numbers episodes differently from Sonarr; approving imports it with %s", v.Message)
+			}
 		default:
 			e.replace(ctx, inst, c, &j, v, queue, "automatic")
 			return
@@ -920,6 +936,45 @@ func (e *Engine) Approve(ctx context.Context, inst store.Instance, j0 store.Job)
 		return fmt.Errorf("not now: %s", strings.TrimPrefix(j.Message, "waiting: "))
 	}
 	return nil
+}
+
+// clearHold resets a job's hold clock, writing only when there is one to reset.
+func (e *Engine) clearHold(id int64) {
+	if e.St.KV(holdKey(id)) != "" {
+		e.St.SetKV(holdKey(id), "")
+	}
+}
+
+func holdKey(id int64) string { return fmt.Sprintf("holdSince:%d", id) }
+
+// holdExpired records when a job first held for a reason that cannot fix itself and reports whether it has been held
+// for that same reason longer than Settings.HoldRejectHours. Any other outcome resets the clock, so a pack is never
+// rejected on the strength of two different or non-consecutive problems. A probe failure waits three times as long:
+// an NFS stall looks the same as a genuinely undecodable file.
+func (e *Engine) holdExpired(j *store.Job, boundID, kind string, set store.Settings) bool {
+	k := holdKey(j.ID)
+	if set.HoldRejectHours <= 0 || !rejectable(kind) || boundID == "" {
+		e.St.SetKV(k, "")
+		return false
+	}
+	grace := time.Duration(set.HoldRejectHours) * time.Hour
+	if kind == holdProbe {
+		grace *= 3
+	}
+	// The clock belongs to one reason on one download: a different reason, or a re-grabbed download, starts afresh.
+	scope := kind + "|" + strings.ToLower(boundID)
+	var since int64
+	if v := e.St.KV(k); strings.LastIndex(v, ":") > 0 { // the timestamp is after the last colon; a download id may contain one
+		i := strings.LastIndex(v, ":")
+		if v[:i] == scope {
+			since, _ = strconv.ParseInt(v[i+1:], 10, 64)
+		}
+	}
+	if since == 0 {
+		e.St.SetKV(holdKey(j.ID), scope+":"+strconv.FormatInt(time.Now().Unix(), 10))
+		return false
+	}
+	return time.Since(time.Unix(since, 0)) > grace
 }
 
 func maxf(a, b float64) float64 {

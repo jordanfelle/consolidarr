@@ -16,6 +16,7 @@ import (
 
 	"github.com/jordanfelle/consolidarr/internal/api"
 	"github.com/jordanfelle/consolidarr/internal/engine"
+	"github.com/jordanfelle/consolidarr/internal/meta"
 	"github.com/jordanfelle/consolidarr/internal/store"
 	"github.com/jordanfelle/consolidarr/web"
 )
@@ -48,6 +49,7 @@ func main() {
 		log.Fatalf("database: %v", err)
 	}
 	eng := engine.New(st)
+	eng.Meta = metaFromEnv()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	engDone := make(chan struct{})
@@ -123,4 +125,22 @@ func transient(err error) bool {
 		}
 	}
 	return false
+}
+
+// metaFromEnv builds the optional TVDB/TMDB lookups of alternative episode orders. Keys come from the environment
+// (never the settings API, which anyone on the LAN can read). With neither set, only Sonarr's own titles are used.
+func metaFromEnv() *meta.Lookup {
+	l := &meta.Lookup{}
+	if k := strings.TrimSpace(os.Getenv("CONSOLIDARR_TVDB_KEY")); k != "" {
+		l.TVDB = &meta.TVDB{Key: k, Pin: strings.TrimSpace(os.Getenv("CONSOLIDARR_TVDB_PIN"))}
+		log.Printf("alternative episode orders: TVDB lookups on")
+	}
+	if k := strings.TrimSpace(os.Getenv("CONSOLIDARR_TMDB_KEY")); k != "" {
+		l.TMDB = &meta.TMDB{Key: k}
+		log.Printf("alternative episode orders: TMDB lookups on")
+	}
+	if !l.Configured() {
+		return nil
+	}
+	return l
 }

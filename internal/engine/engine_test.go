@@ -51,7 +51,10 @@ type fakeSonarr struct {
 	realistic     bool // model Sonarr honestly: a delete removes files, an import is rejected while old files remain, scans are listed
 	rejected      int  // imports Sonarr refused because old files were still present
 	scans         []map[string]any
-	scanStatus    string // status new scans get in realistic mode (default completed)
+	scanStatus    string             // status new scans get in realistic mode (default completed)
+	items         []map[string]any   // when set, GET /manualimport answers exactly this
+	episodes      []map[string]any   // when set, GET /episode answers exactly this
+	mappedImports [][]map[string]any // the "files" of every ManualImport command
 	srv           *httptest.Server
 }
 
@@ -71,6 +74,10 @@ func newFake(packEps []int) *fakeSonarr {
 		f.mu.Lock()
 		f.manualQueries = append(f.manualQueries, r.URL.RawQuery)
 		f.mu.Unlock()
+		if f.items != nil {
+			js(w, f.items)
+			return
+		}
 		var items []map[string]any
 		for _, e := range f.packEps {
 			rej := []map[string]string{}
@@ -85,6 +92,10 @@ func newFake(packEps []int) *fakeSonarr {
 	mux.HandleFunc("GET /api/v3/episode", func(w http.ResponseWriter, r *http.Request) {
 		if f.noEpisodes {
 			js(w, []any{})
+			return
+		}
+		if f.episodes != nil {
+			js(w, f.episodes)
 			return
 		}
 		var eps []map[string]any
@@ -117,14 +128,18 @@ func newFake(packEps []int) *fakeSonarr {
 	})
 	mux.HandleFunc("POST /api/v3/command", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
-			Name         string `json:"name"`
-			SeriesID     int    `json:"seriesId"`
-			SeasonNumber int    `json:"seasonNumber"`
-			Path         string `json:"path"`
-			ClientID     string `json:"downloadClientId"`
+			Name         string           `json:"name"`
+			SeriesID     int              `json:"seriesId"`
+			SeasonNumber int              `json:"seasonNumber"`
+			Path         string           `json:"path"`
+			ClientID     string           `json:"downloadClientId"`
+			Files        []map[string]any `json:"files"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
+		if b.Name == "ManualImport" {
+			f.mappedImports = append(f.mappedImports, b.Files)
+		}
 		if b.Name != "SeasonSearch" && f.failImport > 0 {
 			f.failImport--
 			f.mu.Unlock()

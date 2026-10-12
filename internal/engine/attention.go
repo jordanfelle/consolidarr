@@ -290,7 +290,12 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 		func() {
 			defer e.jobMu.lock(id)() // deferred so a panic cannot leave the job locked forever
 			if cur, err := e.St.Job(id); err == nil && (cur.Status == "lost" || cur.Status == "failed") {
-				if cur.Deleted > 0 {
+				if cur.Deleted > 0 && len(cur.Mapping) > 0 {
+					// A mapped import deleted nothing and its mapping is only as good as the files it named: verify the
+					// pack again from scratch instead of resuming on a stale mapping.
+					// Deleted stays: some episodes may already have been swapped, so the job stays protected from rejection.
+					cur.Status, cur.Mapping, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, time.Now().Unix()
+				} else if cur.Deleted > 0 {
 					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
 					e.St.SetKV(fmt.Sprintf("reimport:%d", id), "0")                             // a revived job gets its automatic re-asks back
 				} else {
@@ -360,38 +365,52 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
 		return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
 	}
-	if j.Deleted > 0 {
-		return j, fmt.Errorf("your old files were already deleted, so this pack is the only copy of the season; use Retry or Adopt instead of rejecting it")
-	}
 	inst, err := e.St.Instance(j.InstID)
 	if err != nil {
 		return j, err
 	}
-	c := client(inst)
+	msg := "pack rejected and blocklisted; your files were not touched"
+	if research {
+		msg += "; searching for another"
+	}
+	return j, e.rejectBody(ctx, client(inst), &j, research, time.Hour, msg) // an hour lets a re-search settle
+}
+
+// rejectBody discards a job's pack (removed from the queue and the download client, release blocklisted) and ends the
+// job as failed with msg. The caller holds the job's lock. The season is skipped for skip so the same pack is not
+// grabbed straight back. It refuses when old files were already deleted: then the pack is the only copy.
+func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job, research bool, skip time.Duration, msg string) error {
+	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
+		return fmt.Errorf("job is %s; nothing to reject", j.Status)
+	}
+	if j.Deleted > 0 && len(j.Mapping) > 0 {
+		return fmt.Errorf("an import onto your episodes was already started, so this pack may be the only copy of some of them; use Retry or Adopt instead of rejecting it")
+	}
+	if j.Deleted > 0 {
+		return fmt.Errorf("your old files were already deleted, so this pack is the only copy of the season; use Retry or Adopt instead of rejecting it")
+	}
 	queue, err := c.Queue(ctx, time.Minute)
 	if err != nil {
-		return j, err
+		return err
 	}
 	var ids []int
-	for _, q := range ownedItems(queue, &j) { // this job's own download, not every grab for the season
+	for _, q := range ownedItems(queue, j) { // this job's own download, not every grab for the season
 		ids = append(ids, q.ID)
 	}
 	if len(ids) > 0 {
 		if err := c.RemoveQueue(ctx, ids, true, true); err != nil {
-			return j, err
+			return err
 		}
 	}
 	if research {
 		if _, err := c.SeasonSearch(ctx, j.SeriesID, j.Season); err != nil {
-			return j, err
+			return err
 		}
 	}
-	j.Status, j.Message = "failed", "pack rejected and blocklisted; your files were not touched"
-	if research {
-		j.Message += "; searching for another"
-	}
-	_ = e.St.UpdateJob(j)
-	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), time.Hour, "rejected") // let the search settle
-	e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v)", j.Title, j.Season, research))
-	return j, nil
+	j.Status, j.Message = "failed", msg
+	_ = e.St.UpdateJob(*j)
+	e.St.SetKV(holdKey(j.ID), "")
+	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), skip, "rejected")
+	e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v): %s", j.Title, j.Season, research, msg))
+	return nil
 }

@@ -201,6 +201,7 @@ export default function SettingsPage() {
             <Toggle label="Dry run" hint="Log what would be grabbed instead of grabbing it. Start here." v={s.dryRun} on={(b) => setS({ ...s, dryRun: b })} />
             <Toggle label="Delete old files automatically once verified" hint="Off = verified jobs wait on the Replacements page for you to approve." v={s.autoDelete} on={(b) => setS({ ...s, autoDelete: b })} />
             <Toggle label="Allow deleting when files can't be verified" hint="Off (recommended): if ffprobe can't read the downloaded files, the job is held and nothing is deleted. Turn on only if you can't mount the download directory." v={s.allowUnverified} on={(b) => setS({ ...s, allowUnverified: b })} />
+            <Toggle label="Import packs numbered in a different order" hint="Some packs number episodes differently from Sonarr (aired vs DVD order, a wrong scene mapping). When every file's title proves which episode it is, import it onto those episodes explicitly. Nothing is deleted first; your file for each episode is swapped as it imports." v={s.remapOrders} on={(b) => setS({ ...s, remapOrders: b })} />
             <Toggle label="Include anime" v={s.includeAnime} on={(b) => setS({ ...s, includeAnime: b })} />
             <div className="grid gap-3 md:grid-cols-3">
               <div><label className="label">Max packs in flight</label><input className="input" type="number" value={s.maxInflight} onChange={num("maxInflight")} /></div>
@@ -209,6 +210,8 @@ export default function SettingsPage() {
                 <label className="mt-1 flex items-center gap-2 text-xs text-muted">
                   <input type="checkbox" checked={s.maxPackGB === 0} onChange={(e) => setS({ ...s, maxPackGB: e.target.checked ? 0 : 60 })} /> No size limit
                 </label></div>
+              <div><label className="label">Reject a stuck pack after (hours)</label><input className="input" type="number" min={0} value={s.holdRejectHours} onChange={num("holdRejectHours")} />
+                <div className="mt-1 text-xs text-muted">A pack held because it lacks your episodes, has nothing importable, fails probing or uses another order is removed and blocklisted after this long, freeing its slot. 0 = never.</div></div>
               <div><label className="label">Min files in a season</label><input className="input" type="number" value={s.minFiles} onChange={num("minFiles")} /></div>
               <div><label className="label">Cycle (minutes)</label><input className="input" type="number" value={s.cycleMinutes} onChange={num("cycleMinutes")} /></div>
               <div><label className="label">Rescan every (hours)</label><input className="input" type="number" value={s.scanHours} onChange={num("scanHours")} /></div>
