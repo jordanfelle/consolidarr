@@ -4,7 +4,7 @@
   "commandName": "Downloaded Episodes Scan",
   "body": {
    "path": "/downloads/completed/btn/The.Kardashians.S07.1080p.DSNP.WEB-DL.DDP5.1.H.264-NTb",
-   "downloadClientId": "38E38B666729FE1B74061DB85C59D2F02BCCB91A",
+   "downloadClientId": "17D20FFDA073BC843E57EBBEA50406C289CED33A",
    "importMode": "auto",
    "requiresDiskAccess": true,
    "isLongRunning": true,
@@ -317,7 +317,7 @@
   "commandName": "Downloaded Episodes Scan",
   "body": {
    "path": "/downloads/completed/btn/Strip.Law.S01.1080p.WEB-DL.DDPA5.1.H.264-ETHEL",
-   "downloadClientId": "AB0CEE038DDA5A7430F316515AC4BA088CE29A82",
+   "downloadClientId": "2CFB071471B3677FB3A58693C9872B8C4A16F9BA",
    "importMode": "auto",
    "requiresDiskAccess": true,
    "isLongRunning": true,

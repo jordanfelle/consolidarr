@@ -889,7 +889,9 @@ func (e *Engine) pipelineBlock(ctx context.Context, inst store.Instance, c *sona
 	}
 	cmds, err := c.Commands(ctx)
 	if err != nil {
-		e.warnOften("cmdqueue:"+strconv.FormatInt(inst.ID, 10), fmt.Sprintf("%s: replacements are held because Sonarr's command queue cannot be read: %v", inst.Name, err))
+		if ctx.Err() == nil { // a shutdown cancelling the call is not an outage worth a half-hour of silence
+			e.warnOften("cmdqueue:"+strconv.FormatInt(inst.ID, 10), fmt.Sprintf("%s: replacements are held because Sonarr's command queue cannot be read: %v", inst.Name, err))
+		}
 		return "cannot read Sonarr's command queue: " + err.Error()
 	}
 	queued := 0

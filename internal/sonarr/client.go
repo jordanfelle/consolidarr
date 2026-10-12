@@ -333,8 +333,8 @@ func (c *Client) ManualImportFolder(ctx context.Context, folder string) (out []M
 }
 
 // Commands lists Sonarr's recent commands, including queued and running ones. The listing mixes every kind of command,
-// so one entry that does not decode (a field of an unexpected type) is skipped rather than failing the whole list: the
-// callers only look for the import commands they started, and an unreadable list would hold every replacement.
+// so an entry of a kind we never act on that does not decode (a field of an unexpected type) is skipped rather than
+// failing the whole list, which would hold every replacement. An unreadable entry of a kind we DO act on fails the call.
 func (c *Client) Commands(ctx context.Context) ([]Command, error) {
 	var raw []json.RawMessage
 	if err := c.do(ctx, "GET", "/command", nil, &raw, 30*time.Second); err != nil {
@@ -344,16 +344,36 @@ func (c *Client) Commands(ctx context.Context) ([]Command, error) {
 	skipped := 0
 	for _, r := range raw {
 		var cmd Command
-		if err := json.Unmarshal(r, &cmd); err != nil {
-			skipped++
+		err := json.Unmarshal(r, &cmd)
+		if err == nil {
+			out = append(out, cmd)
 			continue
 		}
-		out = append(out, cmd)
+		// An entry we cannot read is only harmless if it is a kind of command we never act on. The gates that run
+		// before old files are deleted look at the import and monitor commands, so an unreadable one of those (or one
+		// whose name we cannot even read) must make the whole listing unreadable: fail closed, never "nothing there".
+		var head struct {
+			Name json.RawMessage `json:"name"`
+		}
+		var name string
+		_ = json.Unmarshal(r, &head)
+		if json.Unmarshal(head.Name, &name) != nil || criticalCommands[name] {
+			return nil, fmt.Errorf("sonarr: a %q command in the command listing could not be decoded: %w", name, err)
+		}
+		skipped++
+	}
+	if len(raw) > 0 && len(out) == 0 {
+		return nil, fmt.Errorf("sonarr: none of the %d commands in the command listing could be decoded", len(raw))
 	}
 	if skipped > 0 {
 		logSkippedCommands(skipped, len(raw))
 	}
 	return out, nil
+}
+
+// criticalCommands are the commands the engine's safety checks and restart adoption read.
+var criticalCommands = map[string]bool{
+	"DownloadedEpisodesScan": true, "ManualImport": true, "ProcessMonitoredDownloads": true, "RefreshMonitoredDownloads": true,
 }
 
 var lastSkipLog atomic.Int64

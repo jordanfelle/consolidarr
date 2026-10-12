@@ -148,7 +148,8 @@ Label PRs `bug`, `enhancement`, `dependencies` or `breaking` to have them groupe
 
 Tests that involve Sonarr use **recorded real responses** (`internal/sonarr/testdata`, see its README) plus the known
 command shapes, never only a hand-made fake: a fake returns the shapes its author thought of, and the one that took
-production down was not among them. When a Sonarr response is part of a bug, add the real payload and a test that decodes
+production down was not among them. The decoding contract is pinned in the `sonarr` package tests; the engine tests'
+fake serves the same listing so the engine sees realistic data too. When a Sonarr response is part of a bug, add the real payload and a test that decodes
 it. `go test ./...` runs with `-shuffle=on` in CI.
 
 ```

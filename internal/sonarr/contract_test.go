@@ -119,8 +119,22 @@ func TestAnySingleFieldOfAnyCommandMayHaveTheWrongTypeWithoutLosingTheListing(t 
 			current = b
 			mu.Unlock()
 			got, err := c.Commands(context.Background())
-			if err != nil || len(got) < n-1 {
-				t.Fatalf("%s entry %d field %v = %s: err=%v, kept %d of %d", file, i, path, v, err, len(got), n)
+			name, _ := list[i]["name"].(string)
+			switch {
+			case len(path) > 1:
+				// a problem in a body must never cost us an entry (bodies decode tolerantly)
+				if err != nil || len(got) != n {
+					t.Fatalf("%s %s body %v = %s: err=%v, kept %d of %d", file, name, path, v, err, len(got), n)
+				}
+			case criticalCommands[name] || path[0] == "name":
+				// an unreadable entry we act on must fail the call (fail closed), or be kept; never silently vanish
+				if err == nil && len(got) != n {
+					t.Fatalf("%s %s field %v = %s was silently dropped (kept %d of %d)", file, name, path, v, len(got), n)
+				}
+			default:
+				if err != nil || len(got) < n-1 {
+					t.Fatalf("%s %s field %v = %s: err=%v, kept %d of %d", file, name, path, v, err, len(got), n)
+				}
 			}
 		}
 		for i, c := range list {
@@ -166,5 +180,23 @@ func TestQueueRefusesAnUndecodableRecordInsteadOfDroppingIt(t *testing.T) {
 	b := []byte(`{"totalRecords":1,"records":[{"id":"not a number","seriesId":1}]}`)
 	if _, err := serve(t, map[string][]byte{"/queue": b}).Queue(context.Background(), 0); err == nil {
 		t.Fatal("a queue record of the wrong shape must be an error, never skipped")
+	}
+}
+
+// The gate that runs before old files are deleted reads the import and monitor commands. If one of those cannot be
+// read, Commands must say so (the job is then held) instead of returning a list without it ("nothing is running").
+func TestAnUnreadableImportCommandFailsTheListingClosed(t *testing.T) {
+	body := []byte(`[{"id":1,"name":"RssSync","status":"completed","body":{}},
+	 {"id":2,"name":"DownloadedEpisodesScan","status":"started","started":"2026-10-12T08:00:00Z","message":5,"body":{"path":"/dl/x"}}]`)
+	if _, err := serve(t, map[string][]byte{"/command": body}).Commands(context.Background()); err == nil {
+		t.Fatal("an unreadable DownloadedEpisodesScan must fail the listing, not vanish from it")
+	}
+	body = []byte(`[{"id":1,"name":"RssSync","status":"completed","message":5,"body":{}},{"id":2,"name":"Backup","status":"completed"}]`)
+	got, err := serve(t, map[string][]byte{"/command": body}).Commands(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("an unreadable command we never act on is skipped: %d, %v", len(got), err)
+	}
+	if _, err := serve(t, map[string][]byte{"/command": []byte(`[{"id":1,"name":7},{"id":2,"name":8}]`)}).Commands(context.Background()); err == nil {
+		t.Fatal("a listing where nothing decodes must be an error")
 	}
 }

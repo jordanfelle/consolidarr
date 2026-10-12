@@ -50,7 +50,7 @@
    "trackedDownloadStatus": "ok",
    "trackedDownloadState": "downloading",
    "statusMessages": [],
-   "downloadId": "838EBAFD28BAA93508DB6D8861667E17F9B4CE71",
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
@@ -460,7 +460,7 @@
      ]
     }
    ],
-   "downloadId": "DE86E5537FFA215C749FBED9ABBCE60E36126CBB",
+   "downloadId": "A544AF123662C61AE0664B4D41457639D24ED7F1",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
@@ -528,7 +528,7 @@
      ]
     }
    ],
-   "downloadId": "A5F72BC151C2D68758B0FD2AA0980DE35F00A7E9",
+   "downloadId": "6CD8D9C318182EA01857331F7CEE7BC8B0740384",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
@@ -584,7 +584,7 @@
    "trackedDownloadStatus": "ok",
    "trackedDownloadState": "downloading",
    "statusMessages": [],
-   "downloadId": "838EBAFD28BAA93508DB6D8861667E17F9B4CE71",
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
@@ -638,7 +638,7 @@
    "trackedDownloadStatus": "ok",
    "trackedDownloadState": "downloading",
    "statusMessages": [],
-   "downloadId": "838EBAFD28BAA93508DB6D8861667E17F9B4CE71",
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
@@ -692,7 +692,7 @@
    "trackedDownloadStatus": "ok",
    "trackedDownloadState": "downloading",
    "statusMessages": [],
-   "downloadId": "838EBAFD28BAA93508DB6D8861667E17F9B4CE71",
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
    "protocol": "torrent",
    "downloadClient": "qBittorrent",
    "downloadClientHasPostImportCategory": true,
