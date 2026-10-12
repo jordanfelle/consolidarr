@@ -819,6 +819,17 @@ const (
 	maxCommandAge    = 10 * time.Minute // a monitor/import command running longer than this looks stuck
 )
 
+// warnOften records a warning event at most once per half hour per key. A condition that holds every job on an instance
+// used to show only as each job's own message; the event log (and anything watching it) now says it once.
+func (e *Engine) warnOften(key, msg string) {
+	k := "warned:" + key
+	if last, _ := strconv.ParseInt(e.St.KV(k), 10, 64); time.Since(time.Unix(last, 0)) < 30*time.Minute {
+		return
+	}
+	e.St.SetKV(k, strconv.FormatInt(time.Now().Unix(), 10))
+	e.St.Event("warn", msg)
+}
+
 // importBacklog counts the completed downloads Sonarr is really about to import, which is what decides whether
 // deleting a season's files now would leave it empty for long. It counts DOWNLOADS, not queue records (a season pack
 // is one record per episode: 23 downloads were being reported as "311 waiting"), and leaves out the ones that will
@@ -878,6 +889,9 @@ func (e *Engine) pipelineBlock(ctx context.Context, inst store.Instance, c *sona
 	}
 	cmds, err := c.Commands(ctx)
 	if err != nil {
+		if ctx.Err() == nil { // a shutdown cancelling the call is not an outage worth a half-hour of silence
+			e.warnOften("cmdqueue:"+strconv.FormatInt(inst.ID, 10), fmt.Sprintf("%s: replacements are held because Sonarr's command queue cannot be read: %v", inst.Name, err))
+		}
 		return "cannot read Sonarr's command queue: " + err.Error()
 	}
 	queued := 0

@@ -1,0 +1,705 @@
+{
+ "page": 1,
+ "pageSize": 500,
+ "sortKey": "timeleft",
+ "sortDirection": "descending",
+ "totalRecords": 6,
+ "records": [
+  {
+   "seriesId": 2543,
+   "episodeId": 155040,
+   "seasonNumber": 14,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 207,
+     "name": "1080p WEB-DL"
+    },
+    {
+     "id": 304,
+     "name": "1080p WEB-DL (h264)"
+    },
+    {
+     "id": 271,
+     "name": "Season Pack"
+    }
+   ],
+   "customFormatScore": 5,
+   "size": 23313830552,
+   "title": "The.Great.British.Bake.Off.S14.1080p.WEB.h264-EDITH",
+   "added": "2026-10-12T20:48:17Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcastheNet (Prowlarr)",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "id": 1279813496
+  },
+  {
+   "seriesId": 988,
+   "episodeId": 64024,
+   "seasonNumber": 3,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 207,
+     "name": "1080p WEB-DL"
+    },
+    {
+     "id": 304,
+     "name": "1080p WEB-DL (h264)"
+    },
+    {
+     "id": 266,
+     "name": "AMZN"
+    },
+    {
+     "id": 206,
+     "name": "Dolby Digital +"
+    },
+    {
+     "id": 271,
+     "name": "Season Pack"
+    }
+   ],
+   "customFormatScore": 5,
+   "size": 12545793000,
+   "title": "We.Bare.Bears.S04.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash",
+   "estimatedCompletionTime": "2026-10-12T20:50:28Z",
+   "added": "2026-10-10T13:15:55Z",
+   "status": "completed",
+   "trackedDownloadStatus": "warning",
+   "trackedDownloadState": "importBlocked",
+   "statusMessages": [
+    {
+     "title": "One or more episodes expected in this release were not imported or missing from the release",
+     "messages": []
+    },
+    {
+     "title": "We.Bare.Bears.S03E40.Bro.Brawl.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:49:39",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S03E41.Bearz.II.Men.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S03E42.Hurricane.Hal.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E04.Vacation.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E05.Beehive.1080p.AMZN.WEB-DL.DDP5.1.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E06.The.Park.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E07.I.Am.Ice.Bear.REPACK.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Repack1, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AV1] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E08.Baby.Bears.Cant.Jump.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:50:22",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E09.Go.Fish.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:42:00",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E10.Teachers.Pet.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:42:09",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E11.Googs.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:42:51",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E12.Paperboyz.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:43:09",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E13.Bear.Squad.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:43:23",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E14.Lil.Squid.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:43:39",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E15.I.Butler.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:43:50",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E16.Family.Troubles.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:02",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E17.Best.Bears.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:13",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E18.Crowbar.Jones-Origins.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:23",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E19.Hot.Sauce.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:33",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E20.Mom.App.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:44",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E21.The.Limo.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:44:53",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E22.More.Everyones.Tube.1080p.AMZN.WEB-DL.DDP2.0.H.264-NTb.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:45:04",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack, WEB-DL Tier 1] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack, WEB-DL Tier 1] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E23.Money.Man.1080p.AMZN.WEB-DL.DDP2.0.H.264-NTb.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:45:13",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack, WEB-DL Tier 1] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack, WEB-DL Tier 1] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E24.Rescue.Ranger.1080p.AMZN.WEB-DL.AAC2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:45:31",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AMZN, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AAC, AMZN, AV1, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E25.El.Oso.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:45:42",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E26.Charlies.Halloween.Thing.2.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:46:00",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E27.Escandalosos.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E28.Pizza Band.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E29.Adopted.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E30.Wingmen.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E31.Braces.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E32.Christmas.Movies.1080p.AMZN.WEB-DL.DD+2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E33.Imaginary.Friend.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:46:12",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E34.The.Mall.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:46:25",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E35.Tunnels.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E36.Ramen.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:46:37",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E37.The.Gym.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:46:50",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E38.Bubble.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:47:03",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E39.Baby.Orphan.Ninja.Bears.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:47:14",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E40.Fire.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:47:28",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E41.Ranger.Norm.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:47:44",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E42.Shmorby.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E43.Snake.Babies.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:47:54",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E44.Sandcastle.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:48:09",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E45.Bros.in.the.City.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:48:24",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E46.Cousin.Jon.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:48:38",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E47.Lord.of.the.Poppies.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:48:50",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E48.The.Mummys.Curse.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:49:03",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E49.Band.of.Outsiders.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:49:53",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E50.Tabes.and.Charlie.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +] (9)"
+     ]
+    },
+    {
+     "title": "We.Bare.Bears.S04E51.Pandas.Birthday.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash.mkv",
+     "messages": [
+      "Episode file already imported at 10/10/2026 09:50:09",
+      "Not a Custom Format upgrade for existing episode file(s). New: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, Dolby Digital +, Season Pack] (5) do not improve on Existing: [1080p WEB-DL, 1080p WEB-DL (h264), AMZN, AV1, Dolby Digital +, Season Pack] (14)"
+     ]
+    }
+   ],
+   "downloadId": "A544AF123662C61AE0664B4D41457639D24ED7F1",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcastheNet (Prowlarr)",
+   "outputPath": "/downloads/completed/btn/We.Bare.Bears.S04.1080p.AMZN.WEB-DL.DDP2.0.H.264-TVSmash",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "timeleft": "00:00:00",
+   "id": 276114935
+  },
+  {
+   "seriesId": 1337,
+   "episodeId": 269954,
+   "seasonNumber": 13,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 247,
+     "name": "720p WEB-DL"
+    },
+    {
+     "id": 266,
+     "name": "AMZN"
+    },
+    {
+     "id": 206,
+     "name": "Dolby Digital +"
+    },
+    {
+     "id": 216,
+     "name": "WEB-DL Tier 4"
+    }
+   ],
+   "customFormatScore": 0,
+   "size": 799737019,
+   "title": "Paw.Patrol.S13E09E10.Air.Rescue.Pups.Save.the.Mother.Tree.-.Pups.Save.the.Ice.Cream.Truck.720p.AMZN.WEB-DL.DDP5.1.H.264-LAZY",
+   "estimatedCompletionTime": "2026-10-12T20:50:28Z",
+   "added": "2026-10-08T21:25:46Z",
+   "status": "completed",
+   "trackedDownloadStatus": "warning",
+   "trackedDownloadState": "importPending",
+   "statusMessages": [
+    {
+     "title": "Paw.Patrol.S13E09E10.Air.Rescue.Pups.Save.the.Mother.Tree.-.Pups.Save.the.Ice.Cream.Truck.720p.AMZN.WEB-DL.DDP5.1.H.264-LAZY",
+     "messages": [
+      "Not an upgrade for existing episode file(s). Existing quality: WEBDL-1080p. New Quality WEBDL-720p."
+     ]
+    }
+   ],
+   "downloadId": "6CD8D9C318182EA01857331F7CEE7BC8B0740384",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcasTheNet",
+   "outputPath": "/downloads/completed/btn/Paw.Patrol.S13E09E10.Air.Rescue.Pups.Save.the.Mother.Tree.-.Pups.Save.the.Ice.Cream.Truck.720p.AMZN.WEB-DL.DDP5.1.H.264-LAZY/Paw.Patrol.S13E09E10.Air.Rescue.Pups.Save.the.Mother.Tree.-.Pups.Save.the.Ice.Cream.Truck.720p.AMZN.WEB-DL.DDP5.1.H.264-LAZY.mkv",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "timeleft": "00:00:00",
+   "id": 1501913094
+  },
+  {
+   "seriesId": 2543,
+   "episodeId": 155040,
+   "seasonNumber": 14,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 207,
+     "name": "1080p WEB-DL"
+    },
+    {
+     "id": 304,
+     "name": "1080p WEB-DL (h264)"
+    },
+    {
+     "id": 271,
+     "name": "Season Pack"
+    }
+   ],
+   "customFormatScore": 5,
+   "size": 23313830552,
+   "title": "The.Great.British.Bake.Off.S14.1080p.WEB.h264-EDITH",
+   "added": "2026-10-12T20:48:17Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcastheNet (Prowlarr)",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "id": 1279813496
+  },
+  {
+   "seriesId": 2543,
+   "episodeId": 155041,
+   "seasonNumber": 14,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 207,
+     "name": "1080p WEB-DL"
+    },
+    {
+     "id": 304,
+     "name": "1080p WEB-DL (h264)"
+    },
+    {
+     "id": 271,
+     "name": "Season Pack"
+    }
+   ],
+   "customFormatScore": 5,
+   "size": 23313830552,
+   "title": "The.Great.British.Bake.Off.S14.1080p.WEB.h264-EDITH",
+   "added": "2026-10-12T20:48:17Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcastheNet (Prowlarr)",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "id": 2126609637
+  },
+  {
+   "seriesId": 2543,
+   "episodeId": 155042,
+   "seasonNumber": 14,
+   "languages": [
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "web",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [
+    {
+     "id": 207,
+     "name": "1080p WEB-DL"
+    },
+    {
+     "id": 304,
+     "name": "1080p WEB-DL (h264)"
+    },
+    {
+     "id": 271,
+     "name": "Season Pack"
+    }
+   ],
+   "customFormatScore": 5,
+   "size": 23313830552,
+   "title": "The.Great.British.Bake.Off.S14.1080p.WEB.h264-EDITH",
+   "added": "2026-10-12T20:48:17Z",
+   "status": "downloading",
+   "trackedDownloadStatus": "ok",
+   "trackedDownloadState": "downloading",
+   "statusMessages": [],
+   "downloadId": "16B2F4289DADE3409AD6BCBAF44FD766F7889C26",
+   "protocol": "torrent",
+   "downloadClient": "qBittorrent",
+   "downloadClientHasPostImportCategory": true,
+   "indexer": "BroadcastheNet (Prowlarr)",
+   "episodeHasFile": true,
+   "sizeleft": 0,
+   "id": 94001259
+  }
+ ]
+}

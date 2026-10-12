@@ -1,0 +1,11 @@
+[
+ {"id":9001,"name":"RenameFiles","commandName":"Rename Files","status":"completed","result":"successful","queued":"2026-10-12T08:00:00Z","started":"2026-10-12T08:00:01Z","ended":"2026-10-12T08:00:03Z","trigger":"manual","priority":"normal","body":{"seriesId":4381,"files":[678249,678254,678264],"sendUpdatesToClient":true,"updateScheduledTask":true,"requiresDiskAccess":true,"isExclusive":false,"isTypeExclusive":false,"isLongRunning":false,"name":"RenameFiles","trigger":"manual"}},
+ {"id":9002,"name":"RenameSeries","status":"completed","result":"successful","queued":"2026-10-12T08:01:00Z","body":{"seriesIds":[4381,2817],"sendUpdatesToClient":true,"name":"RenameSeries"}},
+ {"id":9003,"name":"EpisodeSearch","status":"queued","queued":"2026-10-12T08:02:00Z","body":{"episodeIds":[279725,279726],"name":"EpisodeSearch"}},
+ {"id":9004,"name":"ManualImport","status":"started","queued":"2026-10-12T08:03:00Z","started":"2026-10-12T08:03:01Z","body":{"files":[{"path":"/downloads/completed/btn/Pack/ep1.mkv","seriesId":4381,"episodeIds":[279725],"quality":{"quality":{"id":3,"name":"WEBDL-1080p"}},"languages":[{"id":1,"name":"English"}],"downloadId":"ABC","indexerFlags":1,"releaseType":"seasonPack"}],"importMode":"auto","name":"ManualImport"}},
+ {"id":9005,"name":"DownloadedEpisodesScan","status":"queued","queued":"2026-10-12T08:04:00Z","body":{"path":"/downloads/completed/btn/Pack","downloadClientId":"ABC","importMode":"auto","name":"DownloadedEpisodesScan"}},
+ {"id":9006,"name":"Backup","status":"completed","result":"successful","message":"Completed","body":null},
+ {"id":9007,"name":"CheckHealth","status":"completed","result":"unknown","message":null,"queued":null,"started":null,"body":{}},
+ {"id":9008,"name":"SeasonSearch","status":"completed","queued":"2026-10-12T08:05:00Z","body":{"seriesId":4381,"seasonNumber":2,"name":"SeasonSearch"}},
+ {"id":9009,"name":"RefreshSeries","status":"started","queued":"2026-10-12T08:06:00Z","started":"2026-10-12T08:06:01Z","body":{"seriesIds":[],"isNewSeries":false,"name":"RefreshSeries"}}
+]
