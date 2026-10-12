@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -116,5 +117,29 @@ func TestUnreadableCommandQueueIsLoggedOnceAsAnEvent(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("want exactly one warn event, got %d", n)
+	}
+}
+
+// A season that just finished must wake the scheduler: the jobs waiting behind it ("one season at a time") used to sit
+// out the rest of the 3-minute cycle with a message about a season that was already done.
+func TestFinishingASeasonWakesTheScheduler(t *testing.T) {
+	v := setup(t, nil)
+	j := v.job(t, time.Time{})
+	j.Status, j.ImportCmd = "importing", 42
+	_ = v.st.UpdateJob(j)
+	v.fake.seasonEps = map[int]int{1: 99, 2: 98}
+	select {
+	case <-v.e.runNow:
+		t.Fatal("nothing should be pending before the season finishes")
+	default:
+	}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "done" {
+		t.Fatalf("want done, got %s %q", got.Status, got.Message)
+	}
+	select {
+	case <-v.e.runNow:
+	default:
+		t.Fatal("finishing a season must request an immediate cycle")
 	}
 }
