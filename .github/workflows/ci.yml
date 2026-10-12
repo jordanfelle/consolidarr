@@ -152,5 +152,7 @@ jobs:
           flags=(--verify-tag --generate-notes --title "$TAG")
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
           img="ghcr.io/${REPO,,}"
-          gh release create "$TAG" --repo "$REPO" "${flags[@]}" --notes "Image: \`${img}:${TAG#v}\`
-          "
+          # GitHub's API prepends a given body to the generated notes when generate_release_notes is set (what gh sends
+          # for --generate-notes), so the release keeps its grouped notes with this line on top.
+          notes="Image: \`${img}:${TAG#v}\`"
+          gh release create "$TAG" --repo "$REPO" "${flags[@]}" --notes "$notes"
