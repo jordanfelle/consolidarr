@@ -112,15 +112,17 @@ func rejectionOK(it sonarr.ManualImportItem) bool {
 // name it does not recognise comes back as "Unknown Series" and looks like it has nothing importable (a pack Sonarr
 // itself would import was held for hours for exactly that). The folder is the fallback when the download has no id
 // or its listing identifies nothing. Neither is filtered by series: that would list the library, not the download.
-func listPack(ctx context.Context, c *sonarr.Client, folder, downloadID string) ([]sonarr.ManualImportItem, error) {
+func listPack(ctx context.Context, c *sonarr.Client, seriesID int, folder, downloadID string) ([]sonarr.ManualImportItem, error) {
 	if downloadID != "" {
 		items, err := c.ManualImport(ctx, downloadID)
 		if err != nil && folder == "" {
 			return nil, err
 		}
+		// An id listing that fails falls back to the folder listing, which is what verification always used before;
+		// the folder cannot show anything the download does not contain, and the insideFolder checks still apply.
 		if err == nil {
 			for _, it := range items {
-				if it.Series.ID != 0 {
+				if it.Series.ID == seriesID { // identified as THIS series; another series' files do not count
 					return items, nil
 				}
 			}
@@ -167,7 +169,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	}
 	v := verdict{Items: mine, DownloadID: mine[0].DownloadID, OutputPath: mine[0].OutputPath, At: time.Now()}
 	folder := mine[0].OutputPath
-	items, err := listPack(ctx, c, folder, mine[0].DownloadID)
+	items, err := listPack(ctx, c, j.SeriesID, folder, mine[0].DownloadID)
 	if err != nil {
 		return verdict{State: "retry"}
 	}

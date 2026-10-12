@@ -785,6 +785,9 @@ func TestVerificationListsTheDownloadNeverTheLibrary(t *testing.T) {
 	if len(v.fake.manualQueries) == 0 {
 		t.Fatal("no manualimport request was made")
 	}
+	if !strings.Contains(v.fake.manualQueries[0], "downloadId=") {
+		t.Errorf("the download's own listing must be asked for first: %v", v.fake.manualQueries)
+	}
 	for _, q := range v.fake.manualQueries {
 		if strings.Contains(q, "seriesId") || strings.Contains(q, "seasonNumber") {
 			t.Errorf("manualimport must not be filtered by series: %s", q)
