@@ -697,6 +697,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	}
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
+	boundID := j.DownloadID // what the job itself recorded, before ownedItems below may bind a guessed download
 	// The error timer counts consecutive failed checks: any pass through advance that is not such a failure resets it.
 	// (It is in memory only, so a restart restarts the day; that fails safe by leaving the job alone longer.)
 	keepErr := false
@@ -765,6 +766,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 	}
 	if left > 0 || !done {
+		e.St.SetKV(holdKey(j.ID), "") // downloading again (a re-check, a re-grab): a later hold starts a fresh clock
 		prog := int(100 - 100*left/maxf(size, 1))
 		switch {
 		case j.Status != "downloading" || j.Progress != prog || j.DownloadID == "":
@@ -785,7 +787,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	case "hold":
 		j.Status, j.Message = "holding", v.Message
-		if e.holdExpired(&j, v.Kind, set) {
+		if e.holdExpired(&j, boundID, v.Kind, set) {
 			if err := e.rejectBody(ctx, c, &j, false, 7*24*time.Hour, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {
 				e.St.Event("warn", label+": could not auto-reject the held pack: "+err.Error())
 				_ = e.St.UpdateJob(j)
@@ -942,9 +944,9 @@ func holdKey(id int64) string { return fmt.Sprintf("holdSince:%d", id) }
 // for that same reason longer than Settings.HoldRejectHours. Any other outcome resets the clock, so a pack is never
 // rejected on the strength of two different or non-consecutive problems. A probe failure waits three times as long:
 // an NFS stall looks the same as a genuinely undecodable file.
-func (e *Engine) holdExpired(j *store.Job, kind string, set store.Settings) bool {
+func (e *Engine) holdExpired(j *store.Job, boundID, kind string, set store.Settings) bool {
 	k := holdKey(j.ID)
-	if set.HoldRejectHours <= 0 || !rejectable(kind) || j.DownloadID == "" {
+	if set.HoldRejectHours <= 0 || !rejectable(kind) || boundID == "" {
 		e.St.SetKV(k, "")
 		return false
 	}

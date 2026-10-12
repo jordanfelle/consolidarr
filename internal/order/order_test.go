@@ -147,3 +147,28 @@ func TestExtrasMultiEpisodeAndNotNeededFilesAreNeverPlaced(t *testing.T) {
 		t.Fatalf("only the episode you have is replaced: %+v %q", p, why)
 	}
 }
+
+func TestTailOfALongerTitleIsNotTheShorterTitle(t *testing.T) {
+	eps := []Ep{{ID: 3, Season: 1, Number: 3, Title: "Revenge"}, {ID: 8, Season: 1, Number: 8, Title: "Sweet Revenge (1)"}}
+	if _, why := Resolve([]File{f("Show.S01E08.Sweet.Revenge.720p.WEB", 8)}, eps, map[int]bool{3: true}, nil); why == "" {
+		t.Fatal("a file for another episode must not be placed on the one you have")
+	}
+	if c := Conflicts([]File{f("Show.S01E08.Sweet.Revenge.720p.WEB", 8)}, eps); len(c) != 0 {
+		t.Fatalf("not a conflict: %v", c)
+	}
+	// ordinary words that are also tags in some releases do not end a title
+	if _, ok := TitleOf(f("Show.S01E01.Code.Red.1080p.WEB"), []Ep{{ID: 1, Title: "Code"}}); ok {
+		t.Fatal("'Red' is a word, not a tag")
+	}
+}
+
+func TestFileFlagsNoSxEAndMulti(t *testing.T) {
+	if f("Show.S00E01.Unaired.Pilot.720p").HasSxE != true || f("Show.2x05.Halloween.avi").HasSxE {
+		t.Fatal("HasSxE must tell 'special' from 'no number'")
+	}
+	eps := []Ep{{ID: 1, Season: 1, Number: 1, Title: "Bee Story", TvdbID: 12}}
+	alt := []Alt{{Name: "DVD", Eps: []AltEp{{Season: 1, Number: 1, Title: "Bee Story", TvdbID: 12}}}}
+	if _, why := Resolve([]File{f("Show.S01E01E02.Bee.Story.720p.mkv", 1, 2)}, eps, map[int]bool{1: true}, alt); why == "" {
+		t.Fatal("a multi-episode file must not be placed through an alternative order either")
+	}
+}

@@ -40,24 +40,23 @@ func orderEps(eps []sonarr.Episode) []order.Ep {
 
 // planRemap tries to place every pack file by title: first against Sonarr's own titles, then, if TVDB/TMDB keys are
 // configured, against each alternative ordering those sources publish.
-func (e *Engine) planRemap(ctx context.Context, c *sonarr.Client, j *store.Job, files []order.File, eps []order.Ep, need map[int]bool) (order.Plan, string) {
+// lookupFailed is true when a TVDB/TMDB (or series id) lookup failed, so "no plan" may only mean "no evidence yet".
+func (e *Engine) planRemap(ctx context.Context, c *sonarr.Client, j *store.Job, files []order.File, eps []order.Ep, need map[int]bool) (p order.Plan, why string, lookupFailed bool) {
 	if p, why := order.Resolve(files, eps, need, nil); why == "" {
-		return p, ""
-	}
-	if !e.Meta.Configured() {
-		_, why := order.Resolve(files, eps, need, nil)
-		return order.Plan{}, why
+		return p, "", false
+	} else if !e.Meta.Configured() {
+		return order.Plan{}, why, false
 	}
 	ids, err := c.SeriesIDs(ctx, j.SeriesID)
 	if err != nil {
-		return order.Plan{}, "could not read the series ids from Sonarr: " + err.Error()
+		return order.Plan{}, "could not read the series ids from Sonarr: " + err.Error(), true
 	}
 	alts, aerr := e.Meta.Alts(ctx, ids.TvdbID, ids.TmdbID)
-	p, why := order.Resolve(files, eps, need, alts)
+	p, why = order.Resolve(files, eps, need, alts)
 	if why != "" && aerr != nil {
 		why += " (lookup problem: " + aerr.Error() + ")"
 	}
-	return p, why
+	return p, why, why != "" && aerr != nil
 }
 
 // remapVerdict turns a plan into a verdict. Every planned file is probed, since the ordinary loop only looked at the

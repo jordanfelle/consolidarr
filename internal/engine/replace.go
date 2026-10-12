@@ -164,7 +164,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 			}
 			// Files named for another season (a multi-season pack) are not this season's business: a title that
 			// recurs in two seasons must not look like a clash.
-			if f := order.NewFile(it.Path, ids); f.Season == 0 || f.Season == j.Season || it.SeasonNumber == j.Season {
+			if f := order.NewFile(it.Path, ids); (f.HasSxE && f.Season == j.Season) || (!f.HasSxE && it.SeasonNumber == j.Season) {
 				packFiles = append(packFiles, f)
 				byPath[it.Path] = it
 			}
@@ -241,23 +241,29 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	ordEps := orderEps(eps)
 	conflicts := order.Conflicts(packFiles, ordEps)
 	var remapWhy string
-	if (len(conflicts) > 0 || len(missing) > 0 || used == 0) && set.RemapOrders && len(eps) > 0 && unmapped == 0 && outside == 0 {
+	var remapUnsure bool // a TVDB/TMDB lookup failed: the verdict may be wrong, so it must not lead to a rejection
+	// Only a title that contradicts Sonarr's mapping starts a remap. A pack that merely lacks an episode does not:
+	// searching it for "any file that could be that episode" is how the wrong episode gets placed.
+	if len(conflicts) > 0 && set.RemapOrders && len(eps) > 0 && unmapped == 0 && outside == 0 {
 		need := map[int]bool{}
 		for _, ep := range eps {
 			if liveSet[ep.EpisodeFileID] {
 				need[ep.ID] = true
 			}
 		}
-		plan, why := e.planRemap(ctx, c, j, packFiles, ordEps, need)
+		plan, why, lookupFailed := e.planRemap(ctx, c, j, packFiles, ordEps, need)
 		if why == "" {
 			return e.remapVerdict(inst, set, v, plan, byPath)
 		}
-		remapWhy = why
+		remapWhy, remapUnsure = why, lookupFailed
 	}
 	orderHold := func() verdict {
 		msg := "the pack's episode numbering disagrees with Sonarr's: " + strings.Join(conflicts[:min(len(conflicts), 2)], "; ")
 		if remapWhy != "" {
 			msg += ". It could not be matched by title either (" + remapWhy + ")"
+		}
+		if remapUnsure {
+			return hold(holdOther, msg)
 		}
 		return hold(holdOrder, msg)
 	}
@@ -289,6 +295,9 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 		}
 		if remapWhy != "" {
 			why += "; matching by title did not help (" + remapWhy + ")"
+		}
+		if remapUnsure {
+			return hold(holdOther, why)
 		}
 		return hold(holdMissing, why)
 	case len(v.ExpectedEps) == 0:

@@ -293,7 +293,8 @@ func (e *Engine) AdvanceJob(ctx context.Context, id int64) (store.Job, error) {
 				if cur.Deleted > 0 && len(cur.Mapping) > 0 {
 					// A mapped import deleted nothing and its mapping is only as good as the files it named: verify the
 					// pack again from scratch instead of resuming on a stale mapping.
-					cur.Status, cur.Mapping, cur.Deleted, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, 0, 0
+					// Deleted stays: some episodes may already have been swapped, so the job stays protected from rejection.
+					cur.Status, cur.Mapping, cur.ImportCmd, cur.ImportAt = "downloading", nil, 0, 0
 				} else if cur.Deleted > 0 {
 					cur.Status, cur.ImportCmd, cur.ImportAt = "importing", 0, time.Now().Unix() // the old files are gone: resume the import, never start over
 					e.St.SetKV(fmt.Sprintf("reimport:%d", id), "0")                             // a revived job gets its automatic re-asks back
@@ -381,6 +382,9 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job, research bool, skip time.Duration, msg string) error {
 	if j.Status == "importing" || j.Status == "done" || j.Status == "reserving" {
 		return fmt.Errorf("job is %s; nothing to reject", j.Status)
+	}
+	if j.Deleted > 0 && len(j.Mapping) > 0 {
+		return fmt.Errorf("an import onto your episodes was already started, so this pack may be the only copy of some of them; use Retry or Adopt instead of rejecting it")
 	}
 	if j.Deleted > 0 {
 		return fmt.Errorf("your old files were already deleted, so this pack is the only copy of the season; use Retry or Adopt instead of rejecting it")

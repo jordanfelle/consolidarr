@@ -32,6 +32,7 @@ type File struct {
 	Season    int   // from SxxExx in the name; 0 when there is none
 	Number    int   // from SxxExx in the name
 	SonarrEps []int // episode ids Sonarr itself mapped the file to
+	HasSxE    bool  // the name carries an SxxExx (so Season 0 means specials, not "unknown")
 	Multi     bool  // a multi-episode file ("S01E01E02"): it cannot stand in for a single episode
 	rest      []string
 }
@@ -49,6 +50,7 @@ func NewFile(path string, sonarrEps []int) File {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	f := File{Path: path, SonarrEps: sonarrEps}
 	if m := sxe.FindStringSubmatchIndex(base); m != nil {
+		f.HasSxE = true
 		fmt.Sscanf(base[m[2]:m[3]], "%d", &f.Season)
 		fmt.Sscanf(base[m[4]:m[5]], "%d", &f.Number)
 		base = base[m[1]:]
@@ -83,10 +85,8 @@ func usableTitle(t string) []string {
 var boundary = func() map[string]bool {
 	m := map[string]bool{}
 	for _, w := range strings.Fields(`web webdl webrip hdtv pdtv dsr dvdrip dvd bluray bdrip brrip remux hdrip hddvd uhd hdr hdr10 dv sdr
-		x264 x265 h264 h265 hevc avc av1 xvid divx vp9 aac aacl ac3 eac3 ddp dd dts dtshd truehd flac opus atmos mp3 mp4 mkv avi
-		proper repack real internal limited extended uncut unrated multi dual subbed dubbed nf amzn hmax hbomax max dsnp disney hulu atvp pcok pmtp
-		cr crunchyroll funi sho stan itv bbc cbs nbc abc fox cw hbo ifc amc ctv sbs paramount peacock apple netflix amazon sling red redux
-		sdtv dl rip bdmv cc retail`) {
+		x264 x265 h264 h265 hevc avc av1 xvid divx vp9 aac ac3 eac3 ddp dd dts dtshd truehd flac opus atmos mp3 mp4 mkv avi
+		proper repack nf amzn hmax hbomax dsnp atvp pcok pmtp hulu crav crunchyroll funi sdtv dl bdmv`) {
 		m[w] = true
 	}
 	return m
@@ -96,6 +96,15 @@ var resolution = regexp.MustCompile(`^\d{3,4}[pi]$|^[248]k$`)
 
 func isBoundary(w string) bool {
 	return boundary[w] || resolution.MatchString(w) || (len(w) == 4 && w[0] == '2' && (w[1] == '0' || w[1] == '1') && isDigits(w))
+}
+
+func hasDigit(s string) bool {
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func isDigits(s string) bool {
@@ -119,7 +128,9 @@ func titleAt(rest, title []string) bool {
 	for off := 0; off <= maxTitleOffset && off+len(title) <= len(rest); off++ {
 		ok := true
 		for i := 0; i < off && ok; i++ {
-			ok = !isBoundary(rest[i]) // a tag before the "title" means the title is not here
+			// What precedes the title must be a production/episode code ("2e66a", "01"), not words: otherwise the
+			// tail of a longer title ("Sweet Revenge") would pass for a shorter one ("Revenge").
+			ok = hasDigit(rest[i]) && !isBoundary(rest[i])
 		}
 		for i, w := range title {
 			if rest[off+i] != w {
@@ -275,7 +286,7 @@ func place(files []File, eps []Ep, need map[int]bool, pick func(File) (Ep, bool)
 // file's title is that episode's title in the ordering, then maps it to Sonarr's episode by TVDB id, or by air date
 // plus title when the ordering carries no TVDB ids.
 func viaAlt(f File, a Alt, eps []Ep) (Ep, bool) {
-	if f.Number == 0 {
+	if f.Number == 0 || f.Multi {
 		return Ep{}, false
 	}
 	for _, x := range a.Eps {

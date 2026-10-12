@@ -188,3 +188,22 @@ func TestRetryClearsTheHoldClock(t *testing.T) {
 		t.Fatal("a check that could not be made must restart the run of identical holds")
 	}
 }
+
+func TestAPackThatMerelyLacksAnEpisodeIsNotSearchedForStandIns(t *testing.T) {
+	v := setup(t, nil)
+	v.fake.episodes = []map[string]any{
+		{"id": 21, "seasonNumber": 3, "episodeNumber": 1, "episodeFileId": 11, "title": "Revenge", "airDateUtc": airDate(false)},
+		{"id": 28, "seasonNumber": 3, "episodeNumber": 8, "episodeFileId": 0, "title": "Sweet Revenge (1)", "airDateUtc": airDate(false)},
+	}
+	v.fake.items = []map[string]any{{"path": "/dl/pack/Show.S03E08.Sweet.Revenge.720p.WEB.mkv", "seasonNumber": 3, "series": map[string]int{"id": 1},
+		"episodes": []map[string]any{{"id": 28, "episodeNumber": 8}}, "rejections": []map[string]string{}}}
+	id, err := v.st.AddJob(store.Job{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", OldFileIDs: []int{11}, Release: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, _ := v.st.Job(id)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, done(100, 0, "completed"))
+	if got := v.status(t, id); got.Status != "holding" || len(v.fake.mappedImports) != 0 || len(v.fake.deleted) != 0 {
+		t.Fatalf("episode 8's file must never replace episode 1: %s %q", got.Status, got.Message)
+	}
+}
