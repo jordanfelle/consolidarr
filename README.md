@@ -112,6 +112,34 @@ curl -H "Authorization: Bearer csl_..." http://localhost:7480/api/jobs?active=1
 Errors always look like `{"error": "...", "code": "not_found"}`; request bodies reject unknown fields; list endpoints
 paginate with `limit`/`offset`; creating things returns `201`; long operations (scans) return `202` and run in the background.
 
+## Releases
+
+Versions follow [semver](https://semver.org). Every merge to `main` publishes `ghcr.io/jordanfelle/consolidarr:main` and
+`:latest` (for a deployment that tracks main; a tag never moves `:latest`); a `v*` tag publishes a pinned image and a
+GitHub Release. A tag must be strict semver and on `main`, or the image job fails before publishing anything:
+
+| Tag pushed | Image tags | Release |
+|---|---|---|
+| `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:stable` | published, notes generated from the merged PRs |
+| `v1.3.0-rc.1` | `:1.3.0-rc.1` only | marked prerelease; `:stable` and `:1.x` do not move |
+
+(For `0.x` the `:0.1` tag is published but `:0` is not.) `:stable` always points at the newest non-prerelease, so a
+deployment that wants released builds only can follow it instead of `:latest`.
+
+To cut one, from an up-to-date, clean `main` whose CI is green:
+
+```sh
+scripts/release.sh v1.2.3 --dry-run   # checks everything and lists what would ship
+scripts/release.sh v1.2.3
+```
+
+It refuses a version older than the newest stable release (that would move `:stable` backwards; there are no backport
+releases, since it always tags `main`) and rejects any argument it does not know. CI independently refuses a tag that is
+not strict semver or not on `main`, before anything is published.
+
+Label PRs `bug`, `enhancement`, `dependencies` or `breaking` to have them grouped in the release notes
+(`.github/release.yml`); unlabelled PRs land under "Other changes". The UI shows the running version, linked to the tag.
+
 ## Development
 
 ```
