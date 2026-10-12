@@ -814,9 +814,57 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 // can actually be imported promptly; a backed-up import pipeline leaves seasons empty in your media server.
 const (
 	maxQueuedImports = 5                // DownloadedEpisodesScan commands already waiting
-	maxImportBacklog = 100              // completed downloads (other than this one) still awaiting import
+	maxImportBacklog = 25               // distinct completed downloads (other than this one) that are genuinely about to import
+	maxBacklogFiles  = 300              // ... or that many episode records among them (20 big packs are a backlog too)
 	maxCommandAge    = 10 * time.Minute // a monitor/import command running longer than this looks stuck
 )
+
+// importBacklog counts the completed downloads Sonarr is really about to import, which is what decides whether
+// deleting a season's files now would leave it empty for long. It counts DOWNLOADS, not queue records (a season pack
+// is one record per episode: 23 downloads were being reported as "311 waiting"), and leaves out the ones that will
+// never drain on their own: this season, packs other consolidarr jobs are holding (they wait for this very gate, so
+// counting them is a deadlock), and downloads Sonarr is refusing to import (not an upgrade, already imported, unknown
+// series ...), which sit in the queue until a human acts.
+func (e *Engine) importBacklog(queue []sonarr.QueueItem, j store.Job) (downloads, files int) {
+	ours := map[string]bool{}
+	if js, err := e.St.Jobs(true, 10000); err == nil {
+		for _, o := range js {
+			if o.DownloadID != "" {
+				ours[strings.ToLower(o.DownloadID)] = true
+			}
+		}
+	}
+	stuck := map[string]bool{} // a download is stuck if any of its records says Sonarr will not import it
+	for _, q := range queue {
+		for _, sm := range q.StatusMessages {
+			for _, m := range sm.Messages { // messages only: the title is a file or release name ("Sample", "Unknown Series ...")
+				if neverDrains(m) {
+					stuck[strings.ToLower(q.DownloadID)] = true
+				}
+			}
+		}
+	}
+	pending := map[string]bool{}
+	for _, q := range queue {
+		id := strings.ToLower(q.DownloadID)
+		if q.TrackedState != "importPending" || id == "" || ours[id] || stuck[id] || (q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season) {
+			continue
+		}
+		pending[id] = true
+		files++
+	}
+	return len(pending), files
+}
+
+// neverDrains reports whether a Sonarr status message means the download will sit in the queue until a human acts:
+// the kinds the Needs-attention page knows, plus the two "nothing here to import" messages Classify leaves as other.
+func neverDrains(msg string) bool {
+	if Classify(msg) != KindOther {
+		return true
+	}
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "not imported or missing from the release") || strings.Contains(m, "no files found are eligible for import")
+}
 
 // pipelineBlock returns why deleting this job's old files must wait, or "" when it is safe to go ahead:
 // another season is mid-import, Sonarr has a command that looks stuck, or its import queue is backed up.
@@ -851,14 +899,8 @@ func (e *Engine) pipelineBlock(ctx context.Context, inst store.Instance, c *sona
 	if queued > maxQueuedImports {
 		return fmt.Sprintf("Sonarr already has %d imports queued", queued)
 	}
-	backlog := 0
-	for _, q := range queue {
-		if q.TrackedState == "importPending" && !(q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season) {
-			backlog++
-		}
-	}
-	if backlog > maxImportBacklog {
-		return fmt.Sprintf("Sonarr has %d completed downloads waiting to import", backlog)
+	if downloads, files := e.importBacklog(queue, j); downloads > maxImportBacklog || files > maxBacklogFiles {
+		return fmt.Sprintf("Sonarr has %d downloads (%d files) waiting to import", downloads, files)
 	}
 	return ""
 }
