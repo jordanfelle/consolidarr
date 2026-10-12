@@ -964,8 +964,11 @@ func (e *Engine) holdExpired(j *store.Job, boundID, kind string, set store.Setti
 	// The clock belongs to one reason on one download: a different reason, or a re-grabbed download, starts afresh.
 	scope := kind + "|" + strings.ToLower(boundID)
 	var since int64
-	if sc, ts, ok := strings.Cut(e.St.KV(k), ":"); ok && sc == scope {
-		since, _ = strconv.ParseInt(ts, 10, 64)
+	if v := e.St.KV(k); strings.LastIndex(v, ":") > 0 { // the timestamp is after the last colon; a download id may contain one
+		i := strings.LastIndex(v, ":")
+		if v[:i] == scope {
+			since, _ = strconv.ParseInt(v[i+1:], 10, 64)
+		}
 	}
 	if since == 0 {
 		e.St.SetKV(holdKey(j.ID), scope+":"+strconv.FormatInt(time.Now().Unix(), 10))
