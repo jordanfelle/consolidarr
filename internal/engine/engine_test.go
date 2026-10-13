@@ -1213,6 +1213,7 @@ func TestReviveAsksForHistoryOnlyWhenItCanChangeTheAnswer(t *testing.T) {
 		t.Fatal("a history error must not revive")
 	}
 	v.fake.failHistory = false
+	v.st.SetKV(fmt.Sprintf("revive-miss:%d", j.ID), "") // the backoff has passed
 	run(v, renamed("ABC"))
 	if v.status(t, j.ID).Status != "downloading" {
 		t.Fatalf("the next pass must succeed, got %s", v.status(t, j.ID).Status)
@@ -1231,5 +1232,59 @@ func TestReviveAsksForHistoryOnlyWhenItCanChangeTheAnswer(t *testing.T) {
 	run(v, q)
 	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass {
 		t.Fatalf("expected the cap of %d history calls, got %d", maxHistoryPerPass, n)
+	}
+	// jobs that were looked up and did not match are left alone for a while, so the next pass reaches the rest instead
+	// of spending its budget on the same first ones
+	run(v, q)
+	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass+5 {
+		t.Fatalf("the second pass must ask about the remaining 5 seasons only, got %d calls in total", n)
+	}
+	run(v, q)
+	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass+5 {
+		t.Fatalf("a third pass inside the recheck window must ask nothing, got %d calls in total", n)
+	}
+}
+
+func TestReviveStampsErrorsBacksOffAndRechecksOnNewCandidates(t *testing.T) {
+	const rel = "Show.S03.1080p.WEB-DL-GRP"
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Now().Add(-3*time.Hour))
+	_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, updated=? where id=?`, "no longer in Sonarr's queue; old files untouched", rel, time.Now().Add(-time.Hour).Unix(), j.ID)
+	item := func(dl string) sonarr.QueueItem {
+		return sonarr.QueueItem{SeriesID: 1, SeasonNumber: 3, Title: "renamed-" + dl, DownloadID: dl, Status: "completed"}
+	}
+	run := func(q ...sonarr.QueueItem) { v.e.reviveLost(context.Background(), v.inst, v.c, q) }
+	calls := func() int { return int(v.fake.historyCalls.Load()) }
+	key := fmt.Sprintf("revive-miss:%d", j.ID)
+
+	// a failing lookup is stamped, so the same job is not retried every pass
+	v.fake.failHistory = true
+	run(item("D1"))
+	run(item("D1"))
+	if calls() != 1 {
+		t.Fatalf("an error must back off, got %d calls", calls())
+	}
+	// ... but a new download in the season is asked about at once
+	v.fake.failHistory = false
+	v.fake.history = []map[string]any{{"eventType": "grabbed", "sourceTitle": rel, "downloadId": "D2"}}
+	run(item("D1"), item("D2"))
+	if calls() != 2 || v.status(t, j.ID).Status != "downloading" {
+		t.Fatalf("a changed candidate set must be re-checked and revive: %d calls, %s", calls(), v.status(t, j.ID).Status)
+	}
+	if v.st.KV(key) != "" {
+		t.Fatalf("the stamp must be cleared on revive, got %q", v.st.KV(key))
+	}
+
+	// the stamp expires: a job is not left alone forever
+	v = setup(t, []int{1, 2, 3})
+	j = v.job(t, time.Now().Add(-3*time.Hour))
+	_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, updated=? where id=?`, "no longer in Sonarr's queue; old files untouched", rel, time.Now().Add(-time.Hour).Unix(), j.ID)
+	v.e.reviveLost(context.Background(), v.inst, v.c, []sonarr.QueueItem{item("D1")}) // miss: stamped
+	k := fmt.Sprintf("revive-miss:%d", j.ID)
+	_, set, _ := strings.Cut(v.st.KV(k), "|")
+	v.st.SetKV(k, strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)+"|"+set) // the window has passed
+	v.e.reviveLost(context.Background(), v.inst, v.c, []sonarr.QueueItem{item("D1")})
+	if n := int(v.fake.historyCalls.Load()); n != 2 {
+		t.Fatalf("an expired stamp must be looked up again, got %d calls", n)
 	}
 }
