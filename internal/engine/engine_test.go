@@ -985,3 +985,118 @@ func realisticCommandListing() []map[string]any {
 	}
 	return all
 }
+
+func TestLostJobIsRevivedWhenItsPackAppearsInTheQueue(t *testing.T) {
+	const rel = "Show.S03.1080p.WEB-DL.AAC2.0.x264-GRP"
+	lose := func(v *env, msg string, age time.Duration) store.Job {
+		j := v.job(t, time.Now().Add(-3*time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, updated=? where id=?`, msg, rel, time.Now().Add(-age).Unix(), j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	pack := func(title, dl string) []sonarr.QueueItem {
+		return []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: title, DownloadID: dl, Size: 5, SizeLeft: 0, Status: "completed"}}
+	}
+	vanished := "no longer in Sonarr's queue; old files untouched"
+
+	// the exact release turns up: the job resumes bound to that download, nothing deleted
+	v := setup(t, []int{1, 2, 3})
+	j := lose(v, vanished, time.Hour)
+	v.e.reviveLost(v.inst, pack(rel, "ABC"))
+	got := v.status(t, j.ID)
+	if got.Status != "downloading" || got.DownloadID != "ABC" || got.Message != "" || len(v.fake.deleted) != 0 {
+		t.Fatalf("got %s dl=%q msg=%q deleted=%v", got.Status, got.DownloadID, got.Message, v.fake.deleted)
+	}
+
+	for name, tc := range map[string]struct {
+		msg   string
+		age   time.Duration
+		queue []sonarr.QueueItem
+	}{
+		"a different release for the season is not ours": {vanished, time.Hour, pack("Show.S03.720p.HDTV-OTHER", "ABC")},
+		"another season is not ours":                     {vanished, time.Hour, []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 4, Title: rel, DownloadID: "ABC"}}},
+		"a lost job of another kind stays lost":          {"the grab never completed; nothing was downloaded or changed", time.Hour, pack(rel, "ABC")},
+		"too long ago stays lost":                        {vanished, reviveWindow + time.Hour, pack(rel, "ABC")},
+		"an item without a download id cannot be bound":  {vanished, time.Hour, pack(rel, "")},
+		"not in the queue stays lost":                    {vanished, time.Hour, nil},
+	} {
+		v := setup(t, []int{1, 2, 3})
+		j := lose(v, tc.msg, tc.age)
+		v.e.reviveLost(v.inst, tc.queue)
+		if got := v.status(t, j.ID); got.Status != "lost" {
+			t.Errorf("%s: got %s", name, got.Status)
+		}
+	}
+
+	// a download another job already owns is never adopted a second time, and two lost jobs cannot both take one
+	v = setup(t, []int{1, 2, 3})
+	a, b := lose(v, vanished, time.Hour), lose(v, vanished, time.Hour)
+	_, _ = v.st.Exec(`update jobs set season=4 where id=?`, b.ID) // distinct seasons so the unique-active index is not what stops it
+	v.e.reviveLost(v.inst, []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: rel, DownloadID: "abc"}, {SeriesID: 1, SeasonNumber: 4, Title: rel, DownloadID: "ABC"}})
+	if v.status(t, a.ID).Status != "downloading" || v.status(t, b.ID).Status != "lost" {
+		t.Fatalf("one download must end up with one job, got %s / %s", v.status(t, a.ID).Status, v.status(t, b.ID).Status)
+	}
+
+	// a season that already has a newer active job is left alone
+	v = setup(t, []int{1, 2, 3})
+	old := lose(v, vanished, time.Hour)
+	newer := v.job(t, time.Time{})
+	v.e.reviveLost(v.inst, pack(rel, "ABC"))
+	if v.status(t, old.ID).Status != "lost" || v.status(t, newer.ID).Status == "lost" {
+		t.Fatalf("old=%s newer=%s", v.status(t, old.ID).Status, v.status(t, newer.ID).Status)
+	}
+}
+
+func TestReviveHonoursOwnBindingNewerJobsAndIsWiredIntoTheCycle(t *testing.T) {
+	const rel = "Show.S03.1080p.WEB-DL.AAC2.0.x264-GRP"
+	vanished := "no longer in Sonarr's queue; old files untouched"
+	lose := func(v *env) store.Job {
+		j := v.job(t, time.Now().Add(-3*time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, updated=? where id=?`, vanished, rel, time.Now().Add(-time.Hour).Unix(), j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	pack := []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: rel, DownloadID: "ABC", Status: "completed"}}
+
+	// a job that was bound to its download before it went lost may take that same download back
+	v := setup(t, []int{1, 2, 3})
+	j := lose(v)
+	_, _ = v.st.Exec(`update jobs set download_id='ABC' where id=?`, j.ID)
+	v.e.reviveLost(v.inst, pack)
+	if got := v.status(t, j.ID); got.Status != "downloading" || got.DownloadID != "ABC" {
+		t.Fatalf("its own recorded download must not block it, got %s %q", got.Status, got.DownloadID)
+	}
+
+	// a later job of any status (here a finished one) has the last word on the season
+	v = setup(t, []int{1, 2, 3})
+	old := lose(v)
+	later := v.job(t, time.Time{})
+	_, _ = v.st.Exec(`update jobs set status='done' where id=?`, later.ID)
+	v.e.reviveLost(v.inst, pack)
+	if v.status(t, old.ID).Status != "lost" || v.status(t, later.ID).Status != "done" {
+		t.Fatalf("old=%s later=%s", v.status(t, old.ID).Status, v.status(t, later.ID).Status)
+	}
+
+	// two lost jobs for one season and release: only the latest is resumed
+	v = setup(t, []int{1, 2, 3})
+	a := lose(v)
+	_, _ = v.st.Exec(`update jobs set status='lost' where id=?`, a.ID)
+	b := lose(v)
+	v.e.reviveLost(v.inst, pack)
+	if v.status(t, a.ID).Status != "lost" || v.status(t, b.ID).Status != "downloading" {
+		t.Fatalf("older=%s newer=%s", v.status(t, a.ID).Status, v.status(t, b.ID).Status)
+	}
+
+	// through the real cycle: the queue is fetched, the job revives, the next pass runs it, and nothing is deleted
+	v = setup(t, []int{1, 2, 3})
+	j = lose(v)
+	v.fake.queueItems = []map[string]any{{"seriesId": 1, "seasonNumber": 3, "title": rel, "status": "completed", "downloadId": "ABC", "outputPath": "/dl/pack", "size": 5, "sizeleft": 0}}
+	v.e.advanceJobs(context.Background(), v.inst, v.c, store.DefaultSettings())
+	if got := v.status(t, j.ID); got.Status != "downloading" {
+		t.Fatalf("advanceJobs must revive it, got %s %q", got.Status, got.Message)
+	}
+	v.e.advanceJobs(context.Background(), v.inst, v.c, store.DefaultSettings()) // dry run: verifies, deletes nothing
+	if got := v.status(t, j.ID); got.Status == "lost" || got.Status == "failed" || len(v.fake.deleted) != 0 {
+		t.Fatalf("after revival got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}

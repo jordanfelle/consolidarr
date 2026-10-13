@@ -678,6 +678,7 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 	if qerr != nil {
 		return
 	}
+	e.reviveLost(inst, queue)
 	for _, j := range jobs {
 		if j.InstID != inst.ID {
 			continue
@@ -687,6 +688,75 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 		}
 		e.advance(ctx, inst, c, set, j, queue)
 	}
+}
+
+// reviveWindow is how long after a job was marked "lost" its pack may still turn up in Sonarr's queue and be taken
+// back. A pack can take longer to download than the 30 minutes a job is given to appear there (a 5 GB pack took
+// 95 minutes on a busy client, and Sonarr's own queue view can lag behind it), so "not in the queue yet" is not
+// proof the download is gone.
+const reviveWindow = 48 * time.Hour
+
+// reviveLost puts a job that ended "lost" because its download was not in Sonarr's queue back to "downloading"
+// when exactly that release (same series, season and title) shows up there afterwards. Nothing was deleted or
+// changed when the job was lost, so resuming is the same as if it had never given up: the normal flow verifies the
+// pack before any old file is touched. Left alone the finished pack sits in the queue unimported forever (Sonarr
+// does not import it over files it counts as just as good), holding disk and a seed slot.
+func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
+	lost, err := e.St.VanishedLostJobs(inst.ID)
+	if err != nil || len(lost) == 0 {
+		return
+	}
+	all, err := e.St.Jobs(false, 100000)
+	if err != nil {
+		return // cannot tell which downloads other jobs already own: do not guess a binding
+	}
+	owners := map[string]int64{} // download id -> the job that holds it
+	for _, o := range all {
+		if o.DownloadID != "" {
+			owners[strings.ToLower(o.DownloadID)] = o.ID
+		}
+	}
+	for _, j0 := range lost {
+		if j0.Release == "" || time.Since(time.Unix(j0.Updated, 0)) > reviveWindow {
+			continue
+		}
+		var hit *sonarr.QueueItem
+		for i := range queue {
+			q := &queue[i]
+			if q.SeriesID == j0.SeriesID && q.SeasonNumber == j0.Season && q.Title == j0.Release && q.DownloadID != "" {
+				if own, taken := owners[strings.ToLower(q.DownloadID)]; taken && own != j0.ID { // its own recorded download is fine
+					continue
+				}
+				hit = q
+				break
+			}
+		}
+		if hit == nil {
+			continue
+		}
+		if e.reviveOne(inst, j0.ID, hit.DownloadID) {
+			owners[strings.ToLower(hit.DownloadID)] = j0.ID
+		}
+	}
+}
+
+// reviveOne re-reads the job under its lock and revives it only if it is still the same kind of lost job. The
+// season must have no later job at all, and the database also refuses it when another job is active there.
+func (e *Engine) reviveOne(inst store.Instance, id int64, downloadID string) bool {
+	defer e.jobMu.lock(id)()
+	j, err := e.St.Job(id)
+	if err != nil || j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
+		return false // retried, adopted or otherwise moved on since the list was read
+	}
+	if newer, err := e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID); err != nil || newer {
+		return false // a later job has the last word on this season (as in reconcileOne)
+	}
+	j.Status, j.Message, j.DownloadID, j.Progress = "downloading", "", downloadID, 0
+	if err := e.St.UpdateJob(j); err != nil {
+		return false
+	}
+	e.St.Event("info", fmt.Sprintf("%s S%02d: the pack turned up in Sonarr's queue after being marked lost; resuming (old files still untouched)", j.Title, j.Season))
+	return true
 }
 
 func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j0 store.Job, queue []sonarr.QueueItem) {
