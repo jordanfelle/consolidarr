@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,8 +43,11 @@ type fakeSonarr struct {
 	cmds          []map[string]any // what GET /command reports
 	itemPath      string           // path manualimport reports for every file (default inside the download folder)
 	queueItems    []map[string]any // what GET /queue reports (default: empty)
-	manualQueries []string         // raw query of every manualimport request
-	packEps       []int            // episodes the finished download contains
+	history       []map[string]any // what GET /history/series reports (default: empty)
+	historyCalls  atomic.Int32
+	failHistory   bool
+	manualQueries []string // raw query of every manualimport request
+	packEps       []int    // episodes the finished download contains
 	seasonEps     map[int]int
 	filesAfter    []sonarr.EpisodeFile
 	existing      map[int]bool // when set, GET /episodefile lists these and bulk delete 500s on unknown ids
@@ -246,6 +250,18 @@ func newFake(packEps []int) *fakeSonarr {
 			return
 		}
 		js(w, map[string]any{"records": []any{}})
+	})
+	mux.HandleFunc("GET /api/v3/history/series", func(w http.ResponseWriter, r *http.Request) {
+		f.historyCalls.Add(1)
+		if f.failHistory {
+			http.Error(w, "boom", 500)
+			return
+		}
+		if f.history != nil {
+			js(w, f.history)
+			return
+		}
+		js(w, []any{})
 	})
 	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
 		js(w, []map[string]any{{"guid": "g1", "indexerId": 1, "indexer": "BTN", "title": "Show.S03.1080p.WEB-DL", "size": 20e9,
@@ -1002,7 +1018,7 @@ func TestLostJobIsRevivedWhenItsPackAppearsInTheQueue(t *testing.T) {
 	// the exact release turns up: the job resumes bound to that download, nothing deleted
 	v := setup(t, []int{1, 2, 3})
 	j := lose(v, vanished, time.Hour)
-	v.e.reviveLost(v.inst, pack(rel, "ABC"))
+	v.e.reviveLost(context.Background(), v.inst, v.c, pack(rel, "ABC"))
 	got := v.status(t, j.ID)
 	if got.Status != "downloading" || got.DownloadID != "ABC" || got.Message != "" || len(v.fake.deleted) != 0 {
 		t.Fatalf("got %s dl=%q msg=%q deleted=%v", got.Status, got.DownloadID, got.Message, v.fake.deleted)
@@ -1022,7 +1038,7 @@ func TestLostJobIsRevivedWhenItsPackAppearsInTheQueue(t *testing.T) {
 	} {
 		v := setup(t, []int{1, 2, 3})
 		j := lose(v, tc.msg, tc.age)
-		v.e.reviveLost(v.inst, tc.queue)
+		v.e.reviveLost(context.Background(), v.inst, v.c, tc.queue)
 		if got := v.status(t, j.ID); got.Status != "lost" {
 			t.Errorf("%s: got %s", name, got.Status)
 		}
@@ -1032,7 +1048,7 @@ func TestLostJobIsRevivedWhenItsPackAppearsInTheQueue(t *testing.T) {
 	v = setup(t, []int{1, 2, 3})
 	a, b := lose(v, vanished, time.Hour), lose(v, vanished, time.Hour)
 	_, _ = v.st.Exec(`update jobs set season=4 where id=?`, b.ID) // distinct seasons so the unique-active index is not what stops it
-	v.e.reviveLost(v.inst, []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: rel, DownloadID: "abc"}, {SeriesID: 1, SeasonNumber: 4, Title: rel, DownloadID: "ABC"}})
+	v.e.reviveLost(context.Background(), v.inst, v.c, []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: rel, DownloadID: "abc"}, {SeriesID: 1, SeasonNumber: 4, Title: rel, DownloadID: "ABC"}})
 	if v.status(t, a.ID).Status != "downloading" || v.status(t, b.ID).Status != "lost" {
 		t.Fatalf("one download must end up with one job, got %s / %s", v.status(t, a.ID).Status, v.status(t, b.ID).Status)
 	}
@@ -1041,7 +1057,7 @@ func TestLostJobIsRevivedWhenItsPackAppearsInTheQueue(t *testing.T) {
 	v = setup(t, []int{1, 2, 3})
 	old := lose(v, vanished, time.Hour)
 	newer := v.job(t, time.Time{})
-	v.e.reviveLost(v.inst, pack(rel, "ABC"))
+	v.e.reviveLost(context.Background(), v.inst, v.c, pack(rel, "ABC"))
 	if v.status(t, old.ID).Status != "lost" || v.status(t, newer.ID).Status == "lost" {
 		t.Fatalf("old=%s newer=%s", v.status(t, old.ID).Status, v.status(t, newer.ID).Status)
 	}
@@ -1062,7 +1078,7 @@ func TestReviveHonoursOwnBindingNewerJobsAndIsWiredIntoTheCycle(t *testing.T) {
 	v := setup(t, []int{1, 2, 3})
 	j := lose(v)
 	_, _ = v.st.Exec(`update jobs set download_id='ABC' where id=?`, j.ID)
-	v.e.reviveLost(v.inst, pack)
+	v.e.reviveLost(context.Background(), v.inst, v.c, pack)
 	if got := v.status(t, j.ID); got.Status != "downloading" || got.DownloadID != "ABC" {
 		t.Fatalf("its own recorded download must not block it, got %s %q", got.Status, got.DownloadID)
 	}
@@ -1072,7 +1088,7 @@ func TestReviveHonoursOwnBindingNewerJobsAndIsWiredIntoTheCycle(t *testing.T) {
 	old := lose(v)
 	later := v.job(t, time.Time{})
 	_, _ = v.st.Exec(`update jobs set status='done' where id=?`, later.ID)
-	v.e.reviveLost(v.inst, pack)
+	v.e.reviveLost(context.Background(), v.inst, v.c, pack)
 	if v.status(t, old.ID).Status != "lost" || v.status(t, later.ID).Status != "done" {
 		t.Fatalf("old=%s later=%s", v.status(t, old.ID).Status, v.status(t, later.ID).Status)
 	}
@@ -1082,7 +1098,7 @@ func TestReviveHonoursOwnBindingNewerJobsAndIsWiredIntoTheCycle(t *testing.T) {
 	a := lose(v)
 	_, _ = v.st.Exec(`update jobs set status='lost' where id=?`, a.ID)
 	b := lose(v)
-	v.e.reviveLost(v.inst, pack)
+	v.e.reviveLost(context.Background(), v.inst, v.c, pack)
 	if v.status(t, a.ID).Status != "lost" || v.status(t, b.ID).Status != "downloading" {
 		t.Fatalf("older=%s newer=%s", v.status(t, a.ID).Status, v.status(t, b.ID).Status)
 	}
@@ -1098,5 +1114,122 @@ func TestReviveHonoursOwnBindingNewerJobsAndIsWiredIntoTheCycle(t *testing.T) {
 	v.e.advanceJobs(context.Background(), v.inst, v.c, store.DefaultSettings()) // dry run: verifies, deletes nothing
 	if got := v.status(t, j.ID); got.Status == "lost" || got.Status == "failed" || len(v.fake.deleted) != 0 {
 		t.Fatalf("after revival got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}
+
+func TestReviveMatchesARenamedQueueTitleThroughGrabHistory(t *testing.T) {
+	const rel = "Prehistoric.Planet.2022.S03.1080p.ATVP.WEB-DL.DDPA5.1.H.264-FLUX"
+	vanished := "no longer in Sonarr's queue; old files untouched"
+	lose := func(v *env) store.Job {
+		j := v.job(t, time.Now().Add(-3*time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, updated=? where id=?`, vanished, rel, time.Now().Add(-time.Hour).Unix(), j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	// the queue shows a rewritten title (as on the real host); only the grab history ties it to our release
+	queue := []sonarr.QueueItem{
+		{SeriesID: 1, SeasonNumber: 3, Title: "Prehistoric.Planet.2022.S03.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX", DownloadID: "FA61", Status: "completed"},
+		{SeriesID: 1, SeasonNumber: 3, Title: "Prehistoric.Planet.S03E01.720p.HDTV-OTHER", DownloadID: "BEEF", Status: "completed"},
+	}
+	grab := func(title, dl string) map[string]any {
+		return map[string]any{"eventType": "grabbed", "sourceTitle": title, "downloadId": dl}
+	}
+	v := setup(t, []int{1, 2, 3})
+	j := lose(v)
+	v.fake.history = []map[string]any{grab("Prehistoric.Planet.S03E01.720p.HDTV-OTHER", "BEEF"), grab(rel, "fa61")}
+	v.e.reviveLost(context.Background(), v.inst, v.c, queue)
+	if got := v.status(t, j.ID); got.Status != "downloading" || got.DownloadID != "FA61" {
+		t.Fatalf("got %s %q", got.Status, got.DownloadID)
+	}
+
+	// no grab of our release in the history: another download for the season is not ours
+	v = setup(t, []int{1, 2, 3})
+	j = lose(v)
+	v.fake.history = []map[string]any{grab("Prehistoric.Planet.S03E01.720p.HDTV-OTHER", "BEEF")}
+	v.e.reviveLost(context.Background(), v.inst, v.c, queue)
+	if got := v.status(t, j.ID); got.Status != "lost" {
+		t.Fatalf("got %s", got.Status)
+	}
+
+	// an import-failed or other event with the same title is not a grab
+	v = setup(t, []int{1, 2, 3})
+	j = lose(v)
+	v.fake.history = []map[string]any{{"eventType": "downloadFailed", "sourceTitle": rel, "downloadId": "FA61"}}
+	v.e.reviveLost(context.Background(), v.inst, v.c, queue)
+	if got := v.status(t, j.ID); got.Status != "lost" {
+		t.Fatalf("got %s", got.Status)
+	}
+}
+
+func TestReviveAsksForHistoryOnlyWhenItCanChangeTheAnswer(t *testing.T) {
+	const rel = "Show.S03.1080p.WEB-DL-GRP"
+	vanished := "no longer in Sonarr's queue; old files untouched"
+	lose := func(v *env, dl string) store.Job {
+		j := v.job(t, time.Now().Add(-3*time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='lost', message=?, release=?, download_id=?, updated=? where id=?`, vanished, rel, dl, time.Now().Add(-time.Hour).Unix(), j.ID)
+		j, _ = v.st.Job(j.ID)
+		return j
+	}
+	renamed := func(dl string) []sonarr.QueueItem {
+		return []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: "Show.S03.renamed", DownloadID: dl, Status: "completed"}}
+	}
+	run := func(v *env, q []sonarr.QueueItem) { v.e.reviveLost(context.Background(), v.inst, v.c, q) }
+	grab := []map[string]any{{"eventType": "grabbed", "sourceTitle": rel, "downloadId": "ABC"}}
+
+	// exact title: no history needed
+	v := setup(t, []int{1, 2, 3})
+	lose(v, "")
+	run(v, []sonarr.QueueItem{{SeriesID: 1, SeasonNumber: 3, Title: rel, DownloadID: "ABC"}})
+	if n := v.fake.historyCalls.Load(); n != 0 {
+		t.Fatalf("an exact title match made %d history calls", n)
+	}
+
+	// the download the job itself recorded: no history needed, even under a rewritten title
+	v = setup(t, []int{1, 2, 3})
+	j := lose(v, "ABC")
+	run(v, renamed("abc"))
+	if n := v.fake.historyCalls.Load(); n != 0 || v.status(t, j.ID).Status != "downloading" {
+		t.Fatalf("own binding: %d history calls, status %s", n, v.status(t, j.ID).Status)
+	}
+
+	// a season with a later job can never revive this one: no history, however often it is asked
+	v = setup(t, []int{1, 2, 3})
+	old := lose(v, "")
+	v.job(t, time.Time{})
+	v.fake.history = grab
+	for i := 0; i < 3; i++ {
+		run(v, renamed("ABC"))
+	}
+	if n := v.fake.historyCalls.Load(); n != 0 || v.status(t, old.ID).Status != "lost" {
+		t.Fatalf("later job: %d history calls, status %s", n, v.status(t, old.ID).Status)
+	}
+
+	// a Sonarr error leaves the job lost and is retried on the next pass
+	v = setup(t, []int{1, 2, 3})
+	j = lose(v, "")
+	v.fake.history, v.fake.failHistory = grab, true
+	run(v, renamed("ABC"))
+	if v.status(t, j.ID).Status != "lost" {
+		t.Fatal("a history error must not revive")
+	}
+	v.fake.failHistory = false
+	run(v, renamed("ABC"))
+	if v.status(t, j.ID).Status != "downloading" {
+		t.Fatalf("the next pass must succeed, got %s", v.status(t, j.ID).Status)
+	}
+
+	// one history request per season per pass, and no more than the cap overall
+	v = setup(t, []int{1, 2, 3})
+	for s := 1; s <= maxHistoryPerPass+5; s++ {
+		id := lose(v, "").ID
+		_, _ = v.st.Exec(`update jobs set series_id=?, season=3 where id=?`, 100+s, id)
+	}
+	var q []sonarr.QueueItem
+	for s := 1; s <= maxHistoryPerPass+5; s++ {
+		q = append(q, sonarr.QueueItem{SeriesID: 100 + s, SeasonNumber: 3, Title: "x", DownloadID: fmt.Sprint("D", s)})
+	}
+	run(v, q)
+	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass {
+		t.Fatalf("expected the cap of %d history calls, got %d", maxHistoryPerPass, n)
 	}
 }

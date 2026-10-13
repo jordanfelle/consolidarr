@@ -200,3 +200,16 @@ func TestAnUnreadableImportCommandFailsTheListingClosed(t *testing.T) {
 		t.Fatal("a listing where nothing decodes must be an error")
 	}
 }
+
+func TestRealGrabbedHistoryDecodes(t *testing.T) {
+	c := serve(t, map[string][]byte{"/history/series": fixture(t, "history_grabbed.json")})
+	h, err := c.GrabbedHistory(context.Background(), 334, 5)
+	if err != nil || len(h) == 0 {
+		t.Fatalf("real history: %d records, err=%v", len(h), err)
+	}
+	for _, r := range h {
+		if r.EventType != "grabbed" || r.SourceTitle == "" || r.DownloadID == "" {
+			t.Fatalf("a real grab record lost its basics: %+v", r)
+		}
+	}
+}

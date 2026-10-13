@@ -678,7 +678,7 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 	if qerr != nil {
 		return
 	}
-	e.reviveLost(inst, queue)
+	e.reviveLost(ctx, inst, c, queue)
 	for _, j := range jobs {
 		if j.InstID != inst.ID {
 			continue
@@ -696,12 +696,16 @@ func (e *Engine) advanceJobs(ctx context.Context, inst store.Instance, c *sonarr
 // proof the download is gone.
 const reviveWindow = 48 * time.Hour
 
+// maxHistoryPerPass bounds the history requests one revive pass makes (one per season at most, and only for a lost
+// job whose season has an unmatched download), so a slow or struggling Sonarr cannot stall the cycle.
+const maxHistoryPerPass = 10
+
 // reviveLost puts a job that ended "lost" because its download was not in Sonarr's queue back to "downloading"
 // when exactly that release (same series, season and title) shows up there afterwards. Nothing was deleted or
 // changed when the job was lost, so resuming is the same as if it had never given up: the normal flow verifies the
 // pack before any old file is touched. Left alone the finished pack sits in the queue unimported forever (Sonarr
 // does not import it over files it counts as just as good), holding disk and a seed slot.
-func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
+func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.Client, queue []sonarr.QueueItem) {
 	lost, err := e.St.VanishedLostJobs(inst.ID)
 	if err != nil || len(lost) == 0 {
 		return
@@ -716,19 +720,61 @@ func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
 			owners[strings.ToLower(o.DownloadID)] = o.ID
 		}
 	}
+	type season struct{ series, n int }
+	history := map[season]map[string]bool{} // grabbed download ids per release, fetched once per season per pass
+	fetches := 0
 	for _, j0 := range lost {
+		if ctx.Err() != nil || e.draining.Load() {
+			return
+		}
 		if j0.Release == "" || time.Since(time.Unix(j0.Updated, 0)) > reviveWindow {
 			continue
 		}
+		if newer, err := e.St.NewerJobExists(j0.InstID, j0.SeriesID, j0.Season, j0.ID); err != nil || newer {
+			continue // a later job has the last word on this season: no point asking Sonarr about this one
+		}
 		var hit *sonarr.QueueItem
+		var cand []*sonarr.QueueItem // this season's downloads that no other job holds
 		for i := range queue {
 			q := &queue[i]
-			if q.SeriesID == j0.SeriesID && q.SeasonNumber == j0.Season && q.Title == j0.Release && q.DownloadID != "" {
-				if own, taken := owners[strings.ToLower(q.DownloadID)]; taken && own != j0.ID { // its own recorded download is fine
-					continue
+			if q.SeriesID != j0.SeriesID || q.SeasonNumber != j0.Season || q.DownloadID == "" {
+				continue
+			}
+			if own, taken := owners[strings.ToLower(q.DownloadID)]; taken && own != j0.ID { // its own recorded download is fine
+				continue
+			}
+			cand = append(cand, q)
+			if hit == nil && (q.Title == j0.Release || (j0.DownloadID != "" && strings.EqualFold(q.DownloadID, j0.DownloadID))) {
+				hit = q // by title, or the download this job recorded before it went lost
+			}
+		}
+		if hit == nil && len(cand) > 0 {
+			// The queue often shows a different title than the release we grabbed (Sonarr or the client rewrites it), so
+			// ask Sonarr which download that exact release became.
+			key := season{j0.SeriesID, j0.Season}
+			grabs, ok := history[key]
+			if !ok {
+				if fetches >= maxHistoryPerPass {
+					continue // the rest next cycle: a slow Sonarr must not hold up the jobs that are downloading
 				}
-				hit = q
-				break
+				fetches++
+				list, err := c.GrabbedHistory(ctx, j0.SeriesID, j0.Season)
+				if err != nil {
+					continue // look again next cycle
+				}
+				grabs = map[string]bool{}
+				for _, g := range list {
+					if g.EventType == "grabbed" && g.DownloadID != "" {
+						grabs[strings.ToLower(g.DownloadID)+"\x00"+g.SourceTitle] = true
+					}
+				}
+				history[key] = grabs
+			}
+			for _, q := range cand {
+				if grabs[strings.ToLower(q.DownloadID)+"\x00"+j0.Release] {
+					hit = q
+					break
+				}
 			}
 		}
 		if hit == nil {

@@ -276,6 +276,20 @@ func (c *Client) EpisodeFiles(ctx context.Context, seriesID int) (out []EpisodeF
 	return
 }
 
+// HistoryItem is one entry of a season's history. Only grabs are asked for: a grab records the exact release title
+// that was sent to the download client together with the download's id, which is how a queue item whose title was
+// rewritten on the way (the client or Sonarr renames it) is tied back to the release we asked for.
+type HistoryItem struct {
+	EventType   string `json:"eventType"`
+	SourceTitle string `json:"sourceTitle"`
+	DownloadID  string `json:"downloadId"`
+}
+
+func (c *Client) GrabbedHistory(ctx context.Context, seriesID, season int) (out []HistoryItem, err error) {
+	err = c.do(ctx, "GET", fmt.Sprintf("/history/series?seriesId=%d&seasonNumber=%d&eventType=1", seriesID, season), nil, &out, 20*time.Second)
+	return
+}
+
 func (c *Client) Episodes(ctx context.Context, seriesID, season int) (out []Episode, err error) {
 	err = c.do(ctx, "GET", fmt.Sprintf("/episode?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, 2*time.Minute)
 	return

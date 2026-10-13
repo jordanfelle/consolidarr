@@ -1,0 +1,98 @@
+[
+  {
+    "episodeId": 21730,
+    "seriesId": 334,
+    "sourceTitle": "Halloween.Wars.S05.1080p.WEB-DL.AAC2.0.x264-CAFFEiNE",
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "id": 3,
+        "name": "WEBDL-1080p",
+        "source": "web",
+        "resolution": 1080
+      },
+      "revision": {
+        "version": 1,
+        "real": 0,
+        "isRepack": false
+      }
+    },
+    "customFormats": [
+      {
+        "id": 207,
+        "name": "1080p WEB-DL"
+      },
+      {
+        "id": 304,
+        "name": "1080p WEB-DL (h264)"
+      },
+      {
+        "id": 230,
+        "name": "AAC"
+      },
+      {
+        "id": 271,
+        "name": "Season Pack"
+      }
+    ],
+    "customFormatScore": 5,
+    "qualityCutoffNotMet": false,
+    "date": "2026-10-13T02:41:55Z",
+    "downloadId": "5BEEDF2EFA1436ADE0910DF8ED235E5D7DA44F86",
+    "eventType": "grabbed",
+    "id": 1620277
+  },
+  {
+    "episodeId": 21729,
+    "seriesId": 334,
+    "sourceTitle": "Halloween.Wars.S05.1080p.WEB-DL.AAC2.0.x264-CAFFEiNE",
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "id": 3,
+        "name": "WEBDL-1080p",
+        "source": "web",
+        "resolution": 1080
+      },
+      "revision": {
+        "version": 1,
+        "real": 0,
+        "isRepack": false
+      }
+    },
+    "customFormats": [
+      {
+        "id": 207,
+        "name": "1080p WEB-DL"
+      },
+      {
+        "id": 304,
+        "name": "1080p WEB-DL (h264)"
+      },
+      {
+        "id": 230,
+        "name": "AAC"
+      },
+      {
+        "id": 271,
+        "name": "Season Pack"
+      }
+    ],
+    "customFormatScore": 5,
+    "qualityCutoffNotMet": false,
+    "date": "2026-10-13T02:41:55Z",
+    "downloadId": "5BEEDF2EFA1436ADE0910DF8ED235E5D7DA44F86",
+    "eventType": "grabbed",
+    "id": 1620276
+  }
+]

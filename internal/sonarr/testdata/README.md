@@ -4,6 +4,11 @@
 captured read-only from Sonarr 4.0.20.3014 on 2026-10-12. They contain no credentials (paths, release names and
 download client names only).
 
+`history_grabbed.json` is a real `/history/series` response (a season's grab history, trimmed to 2 records, captured
+2026-10-13) with one edit: each record's `data` object was removed before committing, because Sonarr puts the indexer
+download URL there, and that URL carries the indexer proxy's API key. Anything else added here must be checked for
+credentials the same way.
+
 `command_exotic.json` is hand-written from Sonarr's command resources: the kinds a quiet instance does not happen to
 have in its listing at capture time (`RenameFiles` carries `files` as plain numbers, `ManualImport` as objects, some
 commands have a `null` body). It exists because the listing mixes every command and one odd body once made the whole
