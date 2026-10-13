@@ -710,10 +710,10 @@ func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
 	if err != nil {
 		return // cannot tell which downloads other jobs already own: do not guess a binding
 	}
-	owners := map[string]bool{}
+	owners := map[string]int64{} // download id -> the job that holds it
 	for _, o := range all {
 		if o.DownloadID != "" {
-			owners[strings.ToLower(o.DownloadID)] = true
+			owners[strings.ToLower(o.DownloadID)] = o.ID
 		}
 	}
 	for _, j0 := range lost {
@@ -723,7 +723,10 @@ func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
 		var hit *sonarr.QueueItem
 		for i := range queue {
 			q := &queue[i]
-			if q.SeriesID == j0.SeriesID && q.SeasonNumber == j0.Season && q.Title == j0.Release && q.DownloadID != "" && !owners[strings.ToLower(q.DownloadID)] {
+			if q.SeriesID == j0.SeriesID && q.SeasonNumber == j0.Season && q.Title == j0.Release && q.DownloadID != "" {
+				if own, taken := owners[strings.ToLower(q.DownloadID)]; taken && own != j0.ID { // its own recorded download is fine
+					continue
+				}
 				hit = q
 				break
 			}
@@ -732,18 +735,21 @@ func (e *Engine) reviveLost(inst store.Instance, queue []sonarr.QueueItem) {
 			continue
 		}
 		if e.reviveOne(inst, j0.ID, hit.DownloadID) {
-			owners[strings.ToLower(hit.DownloadID)] = true
+			owners[strings.ToLower(hit.DownloadID)] = j0.ID
 		}
 	}
 }
 
 // reviveOne re-reads the job under its lock and revives it only if it is still the same kind of lost job. The
-// database refuses it (and nothing changes) when the season already has another active job.
+// season must have no later job at all, and the database also refuses it when another job is active there.
 func (e *Engine) reviveOne(inst store.Instance, id int64, downloadID string) bool {
 	defer e.jobMu.lock(id)()
 	j, err := e.St.Job(id)
 	if err != nil || j.Status != "lost" || !strings.HasPrefix(j.Message, "no longer in Sonarr") {
 		return false // retried, adopted or otherwise moved on since the list was read
+	}
+	if newer, err := e.St.NewerJobExists(j.InstID, j.SeriesID, j.Season, j.ID); err != nil || newer {
+		return false // a later job has the last word on this season (as in reconcileOne)
 	}
 	j.Status, j.Message, j.DownloadID, j.Progress = "downloading", "", downloadID, 0
 	if err := e.St.UpdateJob(j); err != nil {
