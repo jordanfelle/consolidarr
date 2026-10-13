@@ -1,6 +1,6 @@
 # Sonarr API fixtures
 
-`command.json`, `queue.json` (trimmed to 6 records), `system_status.json` and `health.json` are **real responses**
+`command.json`, `queue.json` (trimmed to 6 records), `history_grabbed.json` (a season's grab history, trimmed to 2 records, captured 2026-10-13, with each record's `data` object removed because it holds the indexer download URL and its API key), `system_status.json` and `health.json` are **real responses**
 captured read-only from Sonarr 4.0.20.3014 on 2026-10-12. They contain no credentials (paths, release names and
 download client names only).
 
