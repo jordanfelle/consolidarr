@@ -1232,4 +1232,14 @@ func TestReviveAsksForHistoryOnlyWhenItCanChangeTheAnswer(t *testing.T) {
 	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass {
 		t.Fatalf("expected the cap of %d history calls, got %d", maxHistoryPerPass, n)
 	}
+	// jobs that were looked up and did not match are left alone for a while, so the next pass reaches the rest instead
+	// of spending its budget on the same first ones
+	run(v, q)
+	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass+5 {
+		t.Fatalf("the second pass must ask about the remaining 5 seasons only, got %d calls in total", n)
+	}
+	run(v, q)
+	if n := int(v.fake.historyCalls.Load()); n != maxHistoryPerPass+5 {
+		t.Fatalf("a third pass inside the recheck window must ask nothing, got %d calls in total", n)
+	}
 }

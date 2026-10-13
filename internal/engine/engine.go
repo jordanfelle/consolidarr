@@ -700,6 +700,11 @@ const reviveWindow = 48 * time.Hour
 // job whose season has an unmatched download), so a slow or struggling Sonarr cannot stall the cycle.
 const maxHistoryPerPass = 10
 
+// reviveRecheck is how long a lost job whose history lookup found no matching grab is left alone before it is looked
+// up again. Without it the same first few jobs would spend every pass's request budget and the rest would never be
+// asked about.
+const reviveRecheck = 20 * time.Minute
+
 // reviveLost puts a job that ended "lost" because its download was not in Sonarr's queue back to "downloading"
 // when exactly that release (same series, season and title) shows up there afterwards. Nothing was deleted or
 // changed when the job was lost, so resuming is the same as if it had never given up: the normal flow verifies the
@@ -748,7 +753,11 @@ func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.
 				hit = q // by title, or the download this job recorded before it went lost
 			}
 		}
+		missKey := fmt.Sprintf("revive-miss:%d", j0.ID)
 		if hit == nil && len(cand) > 0 {
+			if at, _ := strconv.ParseInt(e.St.KV(missKey), 10, 64); time.Since(time.Unix(at, 0)) < reviveRecheck {
+				continue
+			}
 			// The queue often shows a different title than the release we grabbed (Sonarr or the client rewrites it), so
 			// ask Sonarr which download that exact release became.
 			key := season{j0.SeriesID, j0.Season}
@@ -775,6 +784,9 @@ func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.
 					hit = q
 					break
 				}
+			}
+			if hit == nil {
+				e.St.SetKV(missKey, strconv.FormatInt(time.Now().Unix(), 10))
 			}
 		}
 		if hit == nil {
