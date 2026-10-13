@@ -705,6 +705,10 @@ const maxHistoryPerPass = 10
 // asked about.
 const reviveRecheck = 20 * time.Minute
 
+// reviveErrBackoff is the same for a lookup that failed: shorter, since nothing was learned, but a request that keeps
+// failing for the same first seasons must not eat the budget every pass either.
+const reviveErrBackoff = 5 * time.Minute
+
 // reviveLost puts a job that ended "lost" because its download was not in Sonarr's queue back to "downloading"
 // when exactly that release (same series, season and title) shows up there afterwards. Nothing was deleted or
 // changed when the job was lost, so resuming is the same as if it had never given up: the normal flow verifies the
@@ -755,8 +759,19 @@ func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.
 		}
 		missKey := fmt.Sprintf("revive-miss:%d", j0.ID)
 		if hit == nil && len(cand) > 0 {
-			if at, _ := strconv.ParseInt(e.St.KV(missKey), 10, 64); time.Since(time.Unix(at, 0)) < reviveRecheck {
+			ids := make([]string, 0, len(cand))
+			for _, q := range cand {
+				ids = append(ids, strings.ToLower(q.DownloadID))
+			}
+			sort.Strings(ids)
+			set := strings.Join(ids, ",")
+			// "<until>|<candidate set>": left alone until then, unless a download we have not looked at has appeared
+			until, seen, _ := strings.Cut(e.St.KV(missKey), "|")
+			if u, _ := strconv.ParseInt(until, 10, 64); time.Now().Unix() < u && seen == set {
 				continue
+			}
+			stamp := func(d time.Duration) {
+				e.St.SetKV(missKey, strconv.FormatInt(time.Now().Add(d).Unix(), 10)+"|"+set)
 			}
 			// The queue often shows a different title than the release we grabbed (Sonarr or the client rewrites it), so
 			// ask Sonarr which download that exact release became.
@@ -769,7 +784,8 @@ func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.
 				fetches++
 				list, err := c.GrabbedHistory(ctx, j0.SeriesID, j0.Season)
 				if err != nil {
-					continue // look again next cycle
+					stamp(reviveErrBackoff)
+					continue
 				}
 				grabs = map[string]bool{}
 				for _, g := range list {
@@ -786,13 +802,14 @@ func (e *Engine) reviveLost(ctx context.Context, inst store.Instance, c *sonarr.
 				}
 			}
 			if hit == nil {
-				e.St.SetKV(missKey, strconv.FormatInt(time.Now().Unix(), 10))
+				stamp(reviveRecheck)
 			}
 		}
 		if hit == nil {
 			continue
 		}
 		if e.reviveOne(inst, j0.ID, hit.DownloadID) {
+			e.St.SetKV(missKey, "")
 			owners[strings.ToLower(hit.DownloadID)] = j0.ID
 		}
 	}
