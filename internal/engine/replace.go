@@ -673,6 +673,10 @@ func groupMatches(title, group string) bool {
 		return false
 	}
 	t := strings.ToLower(strings.TrimSpace(title))
+	// Fansub-style names lead with the group: "[GetItTwisted] Show S01 [BD 1080p]...".
+	if strings.HasPrefix(t, "["+g+"]") {
+		return true
+	}
 	for trailingTag.MatchString(t) {
 		t = strings.TrimSpace(trailingTag.ReplaceAllString(t, ""))
 	}
