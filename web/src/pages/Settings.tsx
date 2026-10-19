@@ -214,7 +214,7 @@ export default function SettingsPage() {
               <div><label className="label">Reject a stuck pack after (hours)</label><input className="input" type="number" min={0} value={s.holdRejectHours} onChange={num("holdRejectHours")} />
                 <div className="mt-1 text-xs text-muted">A pack held because it lacks your episodes, has nothing importable, fails probing or uses another order is removed and blocklisted after this long, freeing its slot. 0 = never.</div></div>
               <div><label className="label">Dual-audio: skip seasons over (files)</label><input className="input" type="number" min={0} value={s.dubMaxFiles} onChange={num("dubMaxFiles")} />
-                <div className="mt-1 text-xs text-muted">Searching a long season can exhaust Sonarr's memory. 0 = no limit.</div></div>
+                <div className="mt-1 text-xs text-muted">The search covers one episode, so length no longer matters; this is an escape hatch. 0 = no limit.</div></div>
               <div><label className="label">Min files in a season</label><input className="input" type="number" value={s.minFiles} onChange={num("minFiles")} /></div>
               <div><label className="label">Cycle (minutes)</label><input className="input" type="number" value={s.cycleMinutes} onChange={num("cycleMinutes")} /></div>
               <div><label className="label">Rescan every (hours)</label><input className="input" type="number" value={s.scanHours} onChange={num("scanHours")} /></div>

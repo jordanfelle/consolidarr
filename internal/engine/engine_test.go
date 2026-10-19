@@ -66,6 +66,7 @@ type fakeSonarr struct {
 	releases      []map[string]any   // when set, GET /release answers exactly this
 	failReleases  bool               // GET /release answers 500
 	releaseCalls  atomic.Int32       // GET /release requests served
+	releaseQuery  atomic.Value       // raw query of the latest GET /release (string)
 	origLang      string             // the originalLanguage GET /series/{id} reports
 	srv           *httptest.Server
 }
@@ -120,7 +121,7 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		var eps []map[string]any
 		for n, id := range f.seasonEps {
-			eps = append(eps, map[string]any{"seasonNumber": 3, "episodeNumber": n, "episodeFileId": id, "airDateUtc": airDate(f.unaired[n])})
+			eps = append(eps, map[string]any{"id": 500 + n, "seasonNumber": 3, "episodeNumber": n, "episodeFileId": id, "airDateUtc": airDate(f.unaired[n])})
 		}
 		js(w, eps)
 	})
@@ -273,6 +274,7 @@ func newFake(packEps []int) *fakeSonarr {
 	})
 	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
 		f.releaseCalls.Add(1)
+		f.releaseQuery.Store(r.URL.RawQuery)
 		if f.failReleases {
 			http.Error(w, "indexer timeout", 500)
 			return

@@ -493,6 +493,29 @@ func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Setti
 	return e.topUp(ctx, inst, c, set)
 }
 
+// dubSearch finds season packs for a season by searching its first episode: Sonarr returns the packs that cover it, and
+// the cost no longer grows with the length of the season (see Client.ReleasesForEpisode).
+func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season) ([]sonarr.Release, error) {
+	eps, err := c.Episodes(ctx, r.SeriesID, r.Season)
+	if err != nil {
+		return nil, err
+	}
+	first := -1
+	for i, ep := range eps {
+		if first < 0 || ep.EpisodeNumber < eps[first].EpisodeNumber {
+			first = i
+		}
+	}
+	if first < 0 {
+		return nil, fmt.Errorf("Sonarr lists no episodes for the season")
+	}
+	rels, err := c.ReleasesForEpisode(ctx, eps[first].ID)
+	if rels == nil && err == nil {
+		rels = []sonarr.Release{}
+	}
+	return rels, err
+}
+
 // topUp starts new replacements up to the in-flight cap (and, in a one-off run, up to its limit). It
 // returns true when there is nothing more to start: the limit was reached or every candidate was tried.
 func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) bool {
@@ -614,6 +637,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		var rels []sonarr.Release
 		searched := false
+		var dubRels []sonarr.Release
 		search := func() bool {
 			if searched {
 				return rels != nil
@@ -637,12 +661,14 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 				dubStart = time.Now()
 			}
 			dubSearches++
-			if !search() {
+			var derr error
+			if dubRels, derr = e.dubSearch(ctx, c, r); derr != nil {
+				e.St.Event("warn", fmt.Sprintf("search %s S%02d: %v", r.Title, r.Season, derr))
 				// A search that failed (Sonarr or an indexer timing out) must not be retried every cycle.
 				e.St.Skip("dub:"+key, 6*time.Hour, "search failed")
 				continue
 			}
-			if p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true}); p != nil {
+			if p := audit.Pick(dubRels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true}); p != nil {
 				start(r, p, "dub", "dub:"+key)
 				continue
 			}

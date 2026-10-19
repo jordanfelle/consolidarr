@@ -221,7 +221,7 @@ type Settings struct {
 
 func DefaultSettings() Settings {
 	return Settings{DryRun: true, AutoDelete: true, MaxInflight: 4, MaxPackGB: 60, MinFiles: 3,
-		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}, RemapOrders: true, HoldRejectHours: 3, DubMaxFiles: 13}
+		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}, RemapOrders: true, HoldRejectHours: 3}
 }
 
 func (s *Store) Settings() Settings {
