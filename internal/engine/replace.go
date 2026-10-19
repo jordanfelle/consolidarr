@@ -181,6 +181,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	var outside, used, rejected int
 	var packFiles []order.File // every file of this series in the download, whatever season Sonarr put it in
 	byPath := map[string]sonarr.ManualImportItem{}
+	packByPath := map[string][]int{} // importable file -> the episode numbers Sonarr would file it under
 	for _, it := range items {
 		// Only files Sonarr itself would consider importing and that sit in the release proper: a sample, an unknown
 		// series, an unparseable file or anything under an extras folder is never a stand-in for one of your episodes.
@@ -223,6 +224,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 		}
 		for _, ep := range it.Episodes {
 			packEps[ep.EpisodeNumber] = true
+			packByPath[it.Path] = append(packByPath[it.Path], ep.EpisodeNumber)
 		}
 	}
 	eps, err := c.Episodes(ctx, j.SeriesID, j.Season)
@@ -252,6 +254,10 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 		}
 	}
 	unmapped := len(live) - len(mapped)
+	protected, err := e.protectedEps(ctx, c, j, eps, liveSet)
+	if err != nil {
+		return verdict{State: "retry"}
+	}
 	src := oldEps
 	if len(src) == 0 {
 		src = packEps // nothing of yours is left to replace; the pack just has to import
@@ -280,7 +286,13 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 		}
 		plan, why, lookupFailed := e.planRemap(ctx, c, j, packFiles, ordEps, need)
 		if why == "" {
-			return e.remapVerdict(inst, set, v, plan, byPath)
+			rv := e.remapVerdict(inst, set, v, plan, byPath)
+			if rv.State == "ok" {
+				if h := audioGate(inst, rv, mappedEpisodes(plan.Files, eps), requiredEnglish(protected, rv.ExpectedEps, j.Kind == "dub"), j.Kind == "dub"); h != nil {
+					return *h
+				}
+			}
+			return rv
 		}
 		remapWhy, remapUnsure = why, lookupFailed
 	}
@@ -332,8 +344,26 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	case v.Unreach != "" && !set.AllowUnverified:
 		return hold(holdOther, fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", v.Unreach))
 	}
+	if h := audioGate(inst, v, packByPath, requiredEnglish(protected, v.ExpectedEps, j.Kind == "dub"), j.Kind == "dub"); h != nil {
+		return *h
+	}
 	v.State = "ok"
 	return v
+}
+
+// requiredEnglish: the episodes whose new file must have English audio. Protected ones always; for a dub job, every
+// episode it replaces.
+func requiredEnglish(protected map[int]bool, expected []int, dub bool) map[int]bool {
+	out := map[int]bool{}
+	for n := range protected {
+		out[n] = true
+	}
+	if dub {
+		for _, n := range expected {
+			out[n] = true
+		}
+	}
+	return out
 }
 
 // replace deletes the user's old files and starts the import. It is the only place that deletes.

@@ -14,5 +14,9 @@ have in its listing at capture time (`RenameFiles` carries `files` as plain numb
 commands have a `null` body). It exists because the listing mixes every command and one odd body once made the whole
 listing undecodable in production, while every test passed against a hand-made fake that never sent such a command.
 
+`episodefile.json` and `release_dual.json` are real `/episodefile` and `/release` responses (Sonarr 4.0.x, captured 2026-10-19, trimmed to
+3 and 2 records, ids renumbered, release guids replaced). They pin the two facts the dual-audio feature rests on: a file's
+real audio is `mediaInfo.audioLanguages`, while a release titled "Dual Audio" is labelled with a single language.
+
 Rule of thumb: when a Sonarr response is involved in a bug, add the real payload here and a test that decodes it. Do
 not refresh the real captures casually; a new capture should be a deliberate PR so a changed shape is visible in review.

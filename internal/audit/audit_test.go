@@ -94,3 +94,124 @@ func TestZeroMaxGBMeansNoSizeLimit(t *testing.T) {
 		t.Fatalf("MaxGB 0 must mean no limit, got %+v", p)
 	}
 }
+
+func TestParseAudio(t *testing.T) {
+	for in, want := range map[string]Audio{
+		"eng/jpn": {Known: true, English: true, Other: true, Tracks: 2},
+		"jpn/eng": {Known: true, English: true, Other: true, Tracks: 2},
+		"eng":     {Known: true, English: true, Tracks: 1},
+		"English": {Known: true, English: true, Tracks: 1},
+		"jpn":     {Known: true, Other: true, Tracks: 1},
+		"zho":     {Known: true, Other: true, Tracks: 1},
+		"":        {},
+		"und":     {Undetermined: true, Tracks: 1},
+		// two tracks, one untagged and none English: maybe an unlabelled dub, so neither "sub only" nor "has English"
+		"jpn/und": {Other: true, Undetermined: true, Tracks: 2},
+	} {
+		if got := ParseAudio(in); got != want {
+			t.Errorf("ParseAudio(%q) = %+v, want %+v", in, got, want)
+		}
+	}
+	if !ParseAudio("jpn/und").MaybeDub() || ParseAudio("und").MaybeDub() || ParseAudio("jpn").MaybeDub() {
+		t.Error("only a multi-track file with an untagged track may be an unlabelled dub")
+	}
+}
+
+func TestProtectedDependsOnWhoMadeTheShow(t *testing.T) {
+	for _, c := range []struct {
+		audio, orig string
+		want        bool
+	}{
+		{"eng/jpn", "Japanese", true}, {"eng", "Japanese", true}, {"jpn/und", "Japanese", true},
+		{"jpn", "Japanese", false}, {"und", "Japanese", false}, {"", "Japanese", false},
+		{"eng", "English", false}, {"eng/spa", "English", false}, // English is the original: any pack has it
+		{"eng/jpn", "", true}, {"eng", "", false}, // origin unknown: only a visibly dual file is protected
+	} {
+		if got := Protected(ParseAudio(c.audio), c.orig); got != c.want {
+			t.Errorf("Protected(%q, %q) = %v, want %v", c.audio, c.orig, got, c.want)
+		}
+	}
+}
+
+func TestIsDualReadsTheReleaseNameNotSonarrsLanguageLabel(t *testing.T) {
+	yes := []string{
+		"[Dae-P9] LINK CLICK S01 [Blu-ray][1080p][FLAC 2.0][Dual Audio][Softsubs (Dae-P9)]",
+		"Show.S01.1080p.BluRay.Dual-Audio.x265-GRP", "Show S01 1080p DUAL AUDIO", "Show.S02.Multi-Audio.1080p", "Show S01 English Dub 1080p",
+		"Show S01 ENG.DUB 1080p", "Show.S01.English.Dubbed.720p", "Show S01 [Dual] 1080p", "Show.S01.1080p.Dual.Lang.x264",
+	}
+	no := []string{"Show.S01.1080p.WEB-DL-GRP", "Show S01 Multi-Subs 1080p", "Show.S01.MULTi.1080p", "Individual.S01.1080p", "Show S01 Dualshock", "Show S01 Redub"}
+	for _, n := range yes {
+		if !IsDual(sonarr.Release{Title: n}) {
+			t.Errorf("%q should advertise a dub", n)
+		}
+	}
+	for _, n := range no {
+		if IsDual(sonarr.Release{Title: n}) {
+			t.Errorf("%q should not advertise a dub", n)
+		}
+	}
+}
+
+func dubRel(title string, res int, source string) sonarr.Release {
+	r := sonarr.Release{Title: title, FullSeason: true, SeasonNum: 1, Size: 10e9}
+	r.Quality.Quality.Resolution, r.Quality.Quality.Source, r.Quality.Quality.Name = res, source, "q"
+	return r
+}
+
+func TestDubPickAcceptsOnlyDualPacksAtNoLowerResolutionButAnySource(t *testing.T) {
+	s := Season{Season: 1, CurRank: 10803} // a 1080p Blu-ray sub today
+	rels := []sonarr.Release{dubRel("S01 1080p BD", 1080, "bluray"), dubRel("S01 720p Dual Audio", 720, "web"), dubRel("S01 1080p WEB Dual Audio", 1080, "web")}
+	p := Pick(rels, s, PickOpts{Dub: true})
+	if p == nil || p.Title != "S01 1080p WEB Dual Audio" {
+		t.Fatalf("got %+v: a 1080p web dub may replace a Blu-ray sub, a 720p one or a sub-only one may not", p)
+	}
+	if Pick([]sonarr.Release{dubRel("S01 1080p BD", 1080, "bluray")}, s, PickOpts{Dub: true}) != nil {
+		t.Fatal("a sub-only pack is never a dub")
+	}
+}
+
+func TestAConsolidationNeverPicksASubPackForASeasonWithADubToProtect(t *testing.T) {
+	rels := []sonarr.Release{dubRel("S01 1080p BD", 1080, "bluray"), dubRel("S01 1080p BD Dual Audio", 1080, "bluray")}
+	if p := Pick(rels, Season{Season: 1, CurRank: 10802, Protected: 3}, PickOpts{}); p == nil || !IsDual(*p) {
+		t.Fatalf("got %+v", p)
+	}
+	if p := Pick(rels, Season{Season: 1, CurRank: 10802}, PickOpts{}); p == nil || p.Title != "S01 1080p BD" {
+		t.Fatalf("with nothing to protect the ordinary best-quality rule stands: %+v", p)
+	}
+}
+
+func TestBuildCountsAudioAndCompleteness(t *testing.T) {
+	f := func(id int, audio string) sonarr.EpisodeFile {
+		x := sonarr.EpisodeFile{ID: id, SeasonNumber: 1}
+		x.MediaInfo = &struct {
+			AudioLanguages string `json:"audioLanguages"`
+		}{audio}
+		return x
+	}
+	mk := func(orig string, ep, total int) sonarr.Series {
+		s := sonarr.Series{ID: 1, SeriesType: "anime", Seasons: []sonarr.SeasonStat{{SeasonNumber: 1}}}
+		s.OriginalLanguage.Name = orig
+		s.Seasons[0].Statistics.EpisodeCount, s.Seasons[0].Statistics.TotalEpisodeCount = ep, total
+		return s
+	}
+	files := []sonarr.EpisodeFile{f(1, "eng/jpn"), f(2, "jpn"), f(3, "eng"), f(4, ""), f(5, "jpn"), f(6, "chi")}
+	r := Build(1, mk("Japanese", 6, 6), files, 3)[0]
+	if r.English != 2 || r.NoEnglish != 3 || r.AudioUnk != 1 || r.Protected != 2 || !r.Complete {
+		t.Fatalf("%+v", r)
+	}
+	if !DubWanted(r) {
+		t.Fatal("a finished anime season with sub-only files is wanted")
+	}
+	if DubWanted(Season{SeriesType: "anime", Files: 43, NoEnglish: 1, English: 42, Complete: true}) {
+		t.Fatal("one stray sub-only file in a dubbed season must not trigger a wholesale replacement")
+	}
+	if !DubWanted(Season{SeriesType: "anime", Files: 26, NoEnglish: 21, English: 5, Complete: true}) {
+		t.Fatal("a mostly-sub season with a few dubbed episodes is wanted")
+	}
+	if r2 := Build(1, mk("Japanese", 6, 24), files, 3)[0]; r2.Complete || DubWanted(r2) {
+		t.Fatal("a season with unaired episodes is not chased")
+	}
+	if r3 := Build(1, mk("English", 6, 6), files, 3)[0]; r3.Protected != 0 {
+		t.Fatalf("nothing in an English-original show has a dub to protect: %+v", r3)
+	}
+}

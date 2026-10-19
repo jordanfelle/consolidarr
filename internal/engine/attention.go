@@ -411,6 +411,9 @@ func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job,
 	_ = e.St.UpdateJob(*j)
 	e.St.SetKV(holdKey(j.ID), "")
 	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), skip, "rejected")
+	if j.Kind == "dub" {
+		e.St.Skip("dub:"+skipKey(j.InstID, j.SeriesID, j.Season), skip, "rejected") // do not pull the next "dual" pack straight away
+	}
 	e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v): %s", j.Title, j.Season, research, msg))
 	return nil
 }

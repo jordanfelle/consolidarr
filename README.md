@@ -5,6 +5,7 @@ seasons stitched together from five groups, three qualities and two sources. **c
 ranks the messiest first, and replaces them with a proper season pack, only deleting your existing files once the pack
 has downloaded, probed clean and been checked to cover every episode you have.
 
+- **Dubs are protected, and can be chased:** a dual-audio season is never replaced by a sub-only pack, and finished anime with no English audio can be upgraded to a dual-audio pack, both proved with `ffprobe`
 - **Multiple Sonarr instances** (HD, 4K, anime…), each with its own scan, queue health and path mapping
 - **Ranked audit:** seasons with no season-pack files, scored by release-group, quality and source sprawl; TV before anime
 - **Deterministic picking:** no guessing. Sonarr's own rejections are honoured, a pack must not be a downgrade or over your size cap, and chosen indexers (default TorrentLeech) are used only as a last resort
@@ -58,6 +59,36 @@ consolidarr still checks episode coverage but cannot probe the files, and says s
 
 Nothing is deleted before step 6, and step 6 only runs when every check passes. Jobs that fail a check show as **holding**
 with the reason. With *Dry run* on (the default), the scheduler only logs what it would grab.
+
+### English dubs (dual-audio packs)
+
+Two rules about audio, both checked against the files themselves rather than release names (Sonarr labels a
+"Dual Audio" pack with a single language, so its language field is no evidence):
+
+1. **A dub is never swapped for a sub.** If an episode's current file has English audio that must be kept (dual audio,
+   or an English track on a show not made in English), the replacement pack must come back with an English track on
+   that episode. Packs that do not advertise a dub in their name are not even picked for such a season, and before
+   anything is deleted, `ffprobe` must find an English audio track in the pack's file for every protected episode.
+   Otherwise the job is held, then rejected and blocklisted like any wrong pack (*Reject a stuck pack after*). This is
+   always on and needs no setting. Shows made in English are unaffected (any pack of them has English). Commentary and
+   audio-description tracks never count as English. If a pack holds two files for one episode, both need English. A
+   file with several tracks, one untagged and none English, is treated as a possible unlabelled dub. Files Sonarr could
+   not read at all, and an English-only file of a show whose original language Sonarr does not report, are not
+   protected (nothing says there is a dub to keep).
+2. **Optional: go and find the dub.** With *Find dual-audio packs for anime with no English audio* on, a finished anime
+   season (every episode aired) where at least half the files have no English audio is searched for a pack whose name advertises a dub
+   (`Dual Audio`, `Multi-Audio`, `English Dub`, ...). The pack may be a lower source than what you have (a web dub for a
+   Blu-ray sub) but never a lower resolution. It is replaced only when `ffprobe` proves **every** episode it replaces
+   has an English track; a pack whose "dual audio" turns out to be a lie is held and rejected. If no dual-audio pack
+   exists yet the season is looked at again in a week (dubs lag). This runs independently of *Include anime*, and the
+   **Seasons** page has a *Needs English dub* filter listing the candidates.
+
+The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
+nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started
+at all, so no download sits held for ever. Sonarr's recycle bin (Media Management) is the safety net for anything you
+are unsure about: with it set, every delete is recoverable. Seasons still airing are not chased, and dubs released one episode at a
+time are not handled yet (the pack must cover the season); until then a Sonarr custom format (a release-title match for
+`Dual Audio` with a positive score) is the way to have Sonarr itself prefer a dual-audio episode release.
 
 ### Packs numbered in a different order
 

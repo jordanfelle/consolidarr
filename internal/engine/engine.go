@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ type Engine struct {
 	inflight  atomic.Int64       // replacements between 'record importing' and 'import started'; a restart waits for them
 
 	mu       sync.Mutex
+	origLang map[string]origLang // see originalLanguage
 	scanning map[int64]bool
 	errSince map[int64]time.Time // job id -> when Sonarr first failed the "did Sonarr import it" check, in a row
 	runNow   chan struct{}
@@ -238,6 +240,19 @@ type Candidate struct {
 	sonarr.Release
 	Blocking []string `json:"blocking"`
 	Picked   bool     `json:"picked"`
+	Dual     bool     `json:"dual"` // advertises an English dub
+	Kind     string   `json:"kind"` // "dub" when grabbing it would be a dual-audio upgrade, "" for a consolidation
+}
+
+// dubMode: this season is being chased for an English dub (the setting is on and it has finished airing without one).
+func dubMode(set store.Settings, s audit.Season) bool { return set.DualAudio && audit.DubWanted(s) }
+
+// kindOf is the job kind a grab of rel would be: a dub when the season is chased for one and the release advertises it.
+func kindOf(set store.Settings, s audit.Season, rel sonarr.Release) string {
+	if dubMode(set, s) && audit.IsDual(rel) {
+		return "dub"
+	}
+	return ""
 }
 
 func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Season) ([]Candidate, error) {
@@ -246,13 +261,14 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 		return nil, err
 	}
 	set := e.St.Settings()
-	pick := audit.Pick(rels, s, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort})
+	pick := audit.Pick(rels, s, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: dubMode(set, s)})
 	var out []Candidate
 	for _, r := range rels {
 		if !r.FullSeason || r.SeasonNum != s.Season {
 			continue
 		}
-		out = append(out, Candidate{Release: r, Blocking: audit.Blocking(r), Picked: pick != nil && pick.GUID == r.GUID})
+		out = append(out, Candidate{Release: r, Blocking: audit.Blocking(r), Picked: pick != nil && pick.GUID == r.GUID,
+			Dual: audit.IsDual(r), Kind: kindOf(set, s, r)})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Picked != out[j].Picked {
@@ -281,7 +297,7 @@ func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.S
 }
 
 // Grab records the season's current files, grabs the release and starts tracking a job.
-func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer string) (int64, error) {
+func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer, kind string) (int64, error) {
 	c := client(inst)
 	files, err := c.EpisodeFiles(ctx, s.SeriesID)
 	if err != nil {
@@ -300,7 +316,7 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 	// double click, the scheduler and a user) only one gets here, and only that one tells Sonarr to download. The
 	// placeholder is "reserving" so the scheduler does not try to bind it to a download that does not exist yet.
 	id, err := e.St.AddJob(store.Job{InstID: inst.ID, SeriesID: s.SeriesID, Season: s.Season, Title: s.Title,
-		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB, Status: "reserving"})
+		OldFileIDs: old, Release: title, Indexer: indexer, SizeGB: sizeGB, Status: "reserving", Kind: kind})
 	if err != nil {
 		return 0, err
 	}
@@ -501,11 +517,67 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		return rows[i].Score > rows[j].Score
 	})
+	type cand struct {
+		r         audit.Season
+		dub, pack bool // chased for an English dub / flagged for consolidation
+	}
+	var cands []cand
+	if set.DualAudio {
+		// Finished anime seasons with no English audio come first: a dual-audio pack settles both questions.
+		dq, err := e.St.Seasons(store.SeasonQuery{InstID: inst.ID, Anime: "only", MinFiles: set.MinFiles})
+		if err != nil {
+			return false
+		}
+		sort.SliceStable(dq, func(i, j int) bool { return dq[i].NoEnglish > dq[j].NoEnglish })
+		seen := map[string]bool{}
+		for _, r := range dq {
+			if audit.DubWanted(r) {
+				seen[skipKey(inst.ID, r.SeriesID, r.Season)] = true
+				cands = append(cands, cand{r: r, dub: true, pack: r.Flagged && set.IncludeAnime})
+			}
+		}
+		for _, r := range rows {
+			if !seen[skipKey(inst.ID, r.SeriesID, r.Season)] {
+				cands = append(cands, cand{r: r, pack: true})
+			}
+		}
+	} else {
+		for _, r := range rows {
+			cands = append(cands, cand{r: r, pack: true})
+		}
+	}
 	queue, qerr := c.Queue(ctx, time.Minute)
 	if qerr != nil {
 		return false // an unreadable queue is not an empty one; regrabbing seasons already downloading would waste data
 	}
-	for _, r := range rows {
+	// start grabs (or, in a dry run, only reports) a picked pack. It returns true once the caller should stop.
+	start := func(r audit.Season, p *sonarr.Release, kind string, key string) (stop bool) {
+		what := ""
+		if kind == "dub" {
+			what = "dual-audio "
+		}
+		if set.DryRun {
+			e.St.Event("info", fmt.Sprintf("[dry run] would grab %s S%02d <- %s%s (%.1f GB, %s)", r.Title, r.Season, what, p.Title, float64(p.Size)/1e9, p.Indexer))
+			e.St.Skip(key, 24*time.Hour, "dry run")
+			if oneOff {
+				e.bumpOnce()
+			}
+			return false
+		}
+		if _, err := e.Grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer, kind); err != nil {
+			e.St.Skip(key, 24*time.Hour, "grab failed")
+			e.St.Event("error", fmt.Sprintf("grab %s S%02d: %v", r.Title, r.Season, err))
+			return false
+		}
+		active = append(active, store.Job{})
+		if oneOff {
+			e.bumpOnce()
+		}
+		time.Sleep(grabPause) // let the download client breathe between grabs
+		return false
+	}
+	for _, cd := range cands {
+		r := cd.r
 		if e.draining.Load() {
 			return false // shutting down: start nothing new
 		}
@@ -516,12 +588,50 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			return false
 		}
 		key := skipKey(inst.ID, r.SeriesID, r.Season)
-		if busy[key] || e.St.Skipped(key) || inQueue(queue, r.SeriesID, r.Season) {
+		if busy[key] || inQueue(queue, r.SeriesID, r.Season) {
 			continue
 		}
-		rels, err := c.Releases(ctx, r.SeriesID, r.Season)
-		if err != nil {
-			e.St.Event("warn", fmt.Sprintf("search %s S%02d: %v", r.Title, r.Season, err))
+		if (cd.dub || r.Protected > 0) && !ffprobeAvailable() {
+			// The English audio of the pack must be proven with ffprobe before anything is deleted; with no ffprobe the
+			// download would only sit held and occupy a slot.
+			e.warnOften("noffprobe", "ffprobe is not installed: seasons with an English dub to protect, and dub upgrades, are not started")
+			continue
+		}
+		var rels []sonarr.Release
+		searched := false
+		search := func() bool {
+			if searched {
+				return rels != nil
+			}
+			searched = true
+			var err error
+			if rels, err = c.Releases(ctx, r.SeriesID, r.Season); err != nil {
+				e.St.Event("warn", fmt.Sprintf("search %s S%02d: %v", r.Title, r.Season, err))
+				rels = nil
+				return false
+			}
+			if rels == nil {
+				rels = []sonarr.Release{}
+			}
+			return true
+		}
+		// The dub search honours every back-off the consolidation does (done, lost, failed after delete, rejected) as
+		// well as its own weekly one.
+		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) {
+			if !search() {
+				continue
+			}
+			if p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true}); p != nil {
+				start(r, p, "dub", "dub:"+key)
+				continue
+			}
+			// Packs usually appear only after the season ends and dubs lag the sub, so look again in a week.
+			e.St.Skip("dub:"+key, 7*24*time.Hour, "no dual-audio pack")
+		}
+		if !cd.pack || e.St.Skipped(key) {
+			continue
+		}
+		if !search() {
 			continue
 		}
 		p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort})
@@ -529,24 +639,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			e.St.Skip(key, 7*24*time.Hour, "no pack")
 			continue
 		}
-		if set.DryRun {
-			e.St.Event("info", fmt.Sprintf("[dry run] would grab %s S%02d <- %s (%.1f GB, %s)", r.Title, r.Season, p.Title, float64(p.Size)/1e9, p.Indexer))
-			e.St.Skip(key, 24*time.Hour, "dry run")
-			if oneOff {
-				e.bumpOnce()
-			}
-			continue
-		}
-		if _, err := e.Grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer); err != nil {
-			e.St.Skip(key, 24*time.Hour, "grab failed")
-			e.St.Event("error", fmt.Sprintf("grab %s S%02d: %v", r.Title, r.Season, err))
-			continue
-		}
-		active = append(active, store.Job{})
-		if oneOff {
-			e.bumpOnce()
-		}
-		time.Sleep(grabPause) // let the download client breathe between grabs
+		start(r, p, "", key)
 	}
 	return true
 }
@@ -1188,6 +1281,66 @@ func maxf(a, b float64) float64 {
 
 // probeFn is swappable so tests can simulate bad downloads without ffprobe.
 var probeFn = probe
+
+// audioFn reads which audio languages a file carries; tests replace it.
+var audioFn = probeAudio
+
+// ffprobeAvailable is a variable so tests can run without ffprobe installed.
+var ffprobeAvailable = func() bool { _, err := exec.LookPath("ffprobe"); return err == nil }
+
+// probeAudio lists the audio tracks of a file with ffprobe. state is "ok" (langs is the answer, possibly empty),
+// or "unverified" when the file or ffprobe is unreachable or unreadable. A track tagged "und" (or untagged) is
+// reported as "und": it proves nothing.
+func probeAudio(inst store.Instance, path string) (langs []string, state string) {
+	local := filepath.Clean(mapPath(inst, path))
+	if !filepath.IsAbs(local) {
+		return nil, "unverified"
+	}
+	if _, err := os.Stat(local); err != nil {
+		return nil, "unverified"
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return nil, "unverified"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-select_streams", "a",
+		"-show_entries", "stream_tags=language,title:stream_disposition=comment,visual_impaired,hearing_impaired", "-of", "json", "-i", local).Output()
+	if err != nil {
+		return nil, "unverified"
+	}
+	var doc struct {
+		Streams []struct {
+			Tags        map[string]string `json:"tags"`
+			Disposition map[string]int    `json:"disposition"`
+		} `json:"streams"`
+	}
+	if json.Unmarshal(out, &doc) != nil {
+		return nil, "unverified"
+	}
+	for _, st := range doc.Streams {
+		// A commentary or audio-description track is not a dub, however it is tagged.
+		if st.Disposition["comment"] == 1 || st.Disposition["visual_impaired"] == 1 || st.Disposition["hearing_impaired"] == 1 || extraTrack.MatchString(st.Tags["title"]) {
+			continue
+		}
+		l := strings.ToLower(strings.TrimSpace(st.Tags["language"]))
+		if l == "" || l == "und" {
+			// an untagged track titled "English" is English ("Non-English" is not)
+			if englishTitle.MatchString(st.Tags["title"]) {
+				l = "eng"
+			} else {
+				l = "und"
+			}
+		}
+		langs = append(langs, l)
+	}
+	return langs, "ok"
+}
+
+var (
+	extraTrack   = regexp.MustCompile(`(?i)commentar|descriptive|audio description|\bAD\b|isolated|karaoke|\bsap\b`)
+	englishTitle = regexp.MustCompile(`(?i)(^|[^a-z-])english\b`)
+)
 
 // probe checks a file with ffprobe through the instance's path mapping.
 // why == "unverified" means ffprobe or the file isn't reachable (not an error).

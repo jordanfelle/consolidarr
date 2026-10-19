@@ -9,26 +9,34 @@ import (
 )
 
 type Season struct {
-	InstID     int      `json:"instId"`
-	SeriesID   int      `json:"seriesId"`
-	Season     int      `json:"season"`
-	Title      string   `json:"title"`
-	SeriesType string   `json:"seriesType"`
-	Monitored  bool     `json:"monitored"`
-	Files      int      `json:"files"`
-	Aired      int      `json:"aired"`
-	Pack       int      `json:"pack"`
-	Single     int      `json:"single"`
-	Multi      int      `json:"multi"`
-	Unknown    int      `json:"unknown"`
-	Groups     []string `json:"groups"`
-	Qualities  []string `json:"qualities"`
-	Sources    []string `json:"sources"`
-	GB         float64  `json:"gb"`
-	CurRank    int      `json:"curRank"`
-	Path       string   `json:"path"`
-	Score      float64  `json:"score"`
-	Flagged    bool     `json:"flagged"`
+	InstID     int    `json:"instId"`
+	SeriesID   int    `json:"seriesId"`
+	Season     int    `json:"season"`
+	Title      string `json:"title"`
+	SeriesType string `json:"seriesType"`
+	Monitored  bool   `json:"monitored"`
+	Files      int    `json:"files"`
+	Aired      int    `json:"aired"`
+	Pack       int    `json:"pack"`
+	Single     int    `json:"single"`
+	// Audio, from Sonarr's reading of each file: how many have an English track, how many have audio read and none of
+	// it English, and how many Sonarr could not read. Protected: files whose English track must survive a
+	// replacement (dual audio, or a dub of a foreign show). Complete: every episode of the season has aired.
+	English   int      `json:"english"`
+	Protected int      `json:"protected"`
+	NoEnglish int      `json:"noEnglish"`
+	AudioUnk  int      `json:"audioUnknown"`
+	Complete  bool     `json:"complete"`
+	Multi     int      `json:"multi"`
+	Unknown   int      `json:"unknown"`
+	Groups    []string `json:"groups"`
+	Qualities []string `json:"qualities"`
+	Sources   []string `json:"sources"`
+	GB        float64  `json:"gb"`
+	CurRank   int      `json:"curRank"`
+	Path      string   `json:"path"`
+	Score     float64  `json:"score"`
+	Flagged   bool     `json:"flagged"`
 }
 
 func uniq(m map[string]bool) []string {
@@ -43,8 +51,10 @@ func uniq(m map[string]bool) []string {
 // Build summarises one series' episode files into per-season rows.
 func Build(instID int, s sonarr.Series, files []sonarr.EpisodeFile, minFiles int) []Season {
 	stat := map[int]int{}
+	total := map[int]int{}
 	for _, x := range s.Seasons {
 		stat[x.SeasonNumber] = x.Statistics.EpisodeCount
+		total[x.SeasonNumber] = x.Statistics.TotalEpisodeCount
 	}
 	by := map[int][]sonarr.EpisodeFile{}
 	for _, f := range files {
@@ -56,7 +66,8 @@ func Build(instID int, s sonarr.Series, files []sonarr.EpisodeFile, minFiles int
 			continue
 		}
 		r := Season{InstID: instID, SeriesID: s.ID, Season: n, Title: s.Title, SeriesType: s.SeriesType,
-			Monitored: s.Monitored, Files: len(fs), Aired: stat[n], Path: s.Path}
+			Monitored: s.Monitored, Files: len(fs), Aired: stat[n], Path: s.Path,
+			Complete: total[n] > 0 && stat[n] >= total[n]}
 		groups, quals, srcs := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		var bytes int64
 		for _, f := range fs {
@@ -73,6 +84,18 @@ func Build(instID int, s sonarr.Series, files []sonarr.EpisodeFile, minFiles int
 			g := strings.ToLower(f.ReleaseGroup)
 			if g == "" {
 				g = "?"
+			}
+			a := ParseAudio(f.AudioLanguages())
+			if Protected(a, s.OriginalLanguage.Name) {
+				r.Protected++
+			}
+			switch {
+			case a.English:
+				r.English++
+			case a.Known:
+				r.NoEnglish++
+			default:
+				r.AudioUnk++
 			}
 			groups[g] = true
 			quals[f.Quality.Quality.Name] = true
@@ -103,6 +126,9 @@ func IsFlagged(r Season, minFiles int) bool {
 type PickOpts struct {
 	MaxGB      float64  // 0 = no size limit
 	LastResort []string // indexer name substrings used only when nothing else qualifies
+	// Dub picks a dual-audio pack for a season that has no English audio: only packs advertising an English dub
+	// qualify, and the pack may be a lower source (a web dub for a Blu-ray sub) as long as it is not lower resolution.
+	Dub bool
 }
 
 // Pick chooses a pack deterministically. Sonarr's own rejections are honoured except
@@ -110,7 +136,19 @@ type PickOpts struct {
 func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 	var c []sonarr.Release
 	for _, x := range rels {
-		if !x.FullSeason || x.SeasonNum != s.Season || (o.MaxGB > 0 && float64(x.Size)/1e9 > o.MaxGB) || x.Quality.Rank() < s.CurRank {
+		if !x.FullSeason || x.SeasonNum != s.Season || (o.MaxGB > 0 && float64(x.Size)/1e9 > o.MaxGB) {
+			continue
+		}
+		if o.Dub {
+			if x.Quality.Quality.Resolution < s.CurRank/10 || !IsDual(x) {
+				continue
+			}
+		} else if x.Quality.Rank() < s.CurRank {
+			continue
+		}
+		// Never trade a dub for a sub: a season that already has a dub to protect takes only packs that advertise
+		// one. (Verification repeats this with ffprobe on the real files; this just avoids downloading the wrong pack.)
+		if s.Protected > 0 && !IsDual(x) {
 			continue
 		}
 		if len(Blocking(x)) > 0 {
