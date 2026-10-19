@@ -148,7 +148,8 @@ func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled 
 var dubSearchBudget = 4
 
 // dubSearchTime stops a cycle starting further dub searches once it has spent this long on them, so a run of slow
-// searches cannot delay verifying and importing the jobs already running. Tests may lower it.
+// searches cannot hold up verifying and importing the jobs already running for long. It is checked before each search
+// starts: one slow search can still take up to sonarr.ReleaseSearchTimeout. Tests may lower it.
 var dubSearchTime = 10 * time.Minute
 
 // grabPause is the breather between grabs so the download client keeps up (tests set it to 0).
@@ -589,7 +590,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		return false
 	}
 	dubSearches := 0
-	dubStart := time.Now()
+	var dubStart time.Time // set when the first dub search starts, so only searching counts against dubSearchTime
 	for _, cd := range cands {
 		r := cd.r
 		if e.draining.Load() {
@@ -632,6 +633,9 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		// The dub search honours every back-off the consolidation does (done, lost, failed after delete, rejected) as
 		// well as its own weekly one.
 		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) && dubSearches < dubSearchBudget && (dubSearches == 0 || time.Since(dubStart) < dubSearchTime) {
+			if dubSearches == 0 {
+				dubStart = time.Now()
+			}
 			dubSearches++
 			if !search() {
 				// A search that failed (Sonarr or an indexer timing out) must not be retried every cycle.
