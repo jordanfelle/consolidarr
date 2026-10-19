@@ -988,7 +988,10 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	}
 	mine := ownedItems(queue, &j)
 	if len(mine) == 0 {
-		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute && j.Status != "ready" {
+		if time.Since(time.Unix(j.Created, 0)) > 30*time.Minute {
+			// A verified ("ready") job waiting for approval can also find its pack gone because Sonarr imported it
+			// itself (a quality upgrade it accepts on its own); that closes the job. A ready job is never written off as
+			// lost: it stays for the operator, as before.
 			got, ok, ierr := e.importedBySonarr(ctx, c, &j)
 			if ierr != nil && !e.errorsPersisted(j.ID) {
 				keepErr = true
@@ -996,6 +999,9 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			}
 			if ok {
 				_ = e.markImportedBySonarr(ctx, inst, &j, got) // on a database error the job is still unchanged and is judged again next cycle
+				return
+			}
+			if j.Status == "ready" {
 				return
 			}
 			j.Status = "lost"
