@@ -213,3 +213,32 @@ func TestRealGrabbedHistoryDecodes(t *testing.T) {
 		}
 	}
 }
+
+// Real payloads: a file's audio comes from MediaInfo (Sonarr's own ffprobe), while a "Dual Audio" release is labelled
+// with ONE language. The dub features lean on exactly that difference.
+func TestRealEpisodeFilesCarryTheirAudioLanguages(t *testing.T) {
+	var fs []EpisodeFile
+	if err := json.Unmarshal(fixture(t, "episodefile.json"), &fs); err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, f := range fs {
+		got = append(got, f.AudioLanguages())
+	}
+	if strings.Join(got, ",") != "zho,chi,eng/jpn" {
+		t.Fatalf("audio languages = %v", got)
+	}
+	if (EpisodeFile{}).AudioLanguages() != "" {
+		t.Fatal("a file without MediaInfo has no audio reading")
+	}
+}
+
+func TestRealDualAudioReleaseIsLabelledWithOneLanguage(t *testing.T) {
+	var rs []Release
+	if err := json.Unmarshal(fixture(t, "release_dual.json"), &rs); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 2 || len(rs[0].Languages) != 1 || rs[0].Languages[0].Name != "Chinese" {
+		t.Fatalf("Sonarr reports the dual-audio pack as %+v: its language label cannot be evidence of an English dub", rs[0].Languages)
+	}
+}

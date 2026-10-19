@@ -1,0 +1,70 @@
+[
+ {
+  "title": "[Dae-P9] LINK CLICK S01 [Blu-ray][MKV][h265 10-bit][1080p][FLAC 2.0][Dual Audio][Softsubs (Dae-P9)]",
+  "size": 23538477040,
+  "seeders": 118,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 7,
+    "name": "Bluray-1080p",
+    "source": "bluray",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 10,
+    "name": "Chinese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 0x1-11",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "guid": "redacted-1"
+ },
+ {
+  "title": "[SubsPlease] LINK CLICK II S02 [Web][MKV][h264][1080p][AAC 2.0][Softsubs (SubsPlease)]",
+  "size": 18176603686,
+  "seeders": 45,
+  "fullSeason": true,
+  "seasonNumber": 2,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 10,
+    "name": "Chinese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 2x1-12",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "guid": "redacted-2"
+ }
+]

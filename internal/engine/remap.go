@@ -19,12 +19,13 @@ const (
 	holdEmpty   = "empty"   // nothing in the download will import
 	holdProbe   = "probe"   // a file is undecodable or DRM-protected
 	holdOrder   = "order"   // the pack numbers episodes differently from Sonarr and titles could not settle it
+	holdAudio   = "audio"   // the pack would drop (or, for a dub job, does not have) the English audio
 	holdOther   = ""        // anything that may resolve itself or needs a human: never auto-rejected
 )
 
 func rejectable(kind string) bool {
 	switch kind {
-	case holdMissing, holdEmpty, holdProbe, holdOrder:
+	case holdMissing, holdEmpty, holdProbe, holdOrder, holdAudio:
 		return true
 	}
 	return false

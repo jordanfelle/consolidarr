@@ -327,7 +327,11 @@ func (a *API) seasons(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, "anime must be one of: all, only, hide")
 		return
 	}
-	rows, err := a.St.Seasons(store.SeasonQuery{InstID: inst, FlaggedOnly: qv.Get("flagged") != "0", Anime: anime, Search: qv.Get("q"), MinFiles: minFiles})
+	dub := qv.Get("dub") == "1"
+	if dub {
+		anime = "only"
+	}
+	rows, err := a.St.Seasons(store.SeasonQuery{InstID: inst, FlaggedOnly: qv.Get("flagged") != "0" && !dub, Anime: anime, Search: qv.Get("q"), MinFiles: minFiles, DubWanted: dub})
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -453,12 +457,16 @@ func (a *API) grab(w http.ResponseWriter, r *http.Request) {
 		if fresh, err := a.Eng.CurrentRank(r.Context(), inst, s); err == nil {
 			cur = fresh // the stored value is from the last scan; the files may have changed since
 		}
-		if pick.Quality.Rank() < cur {
+		lower := pick.Quality.Rank() < cur
+		if pick.Kind == "dub" { // a dub may come from a lower source, never a lower resolution
+			lower = pick.Quality.Quality.Resolution < cur/10
+		}
+		if lower {
 			fail(w, 409, "needs force: it is lower quality than the files it would replace")
 			return
 		}
 	}
-	id, err := a.Eng.Grab(r.Context(), inst, s, pick.GUID, pick.IndexerID, pick.Title, float64(pick.Size)/1e9, pick.Indexer)
+	id, err := a.Eng.Grab(r.Context(), inst, s, pick.GUID, pick.IndexerID, pick.Title, float64(pick.Size)/1e9, pick.Indexer, pick.Kind)
 	if err == store.ErrDuplicate {
 		fail(w, 409, err.Error())
 		return

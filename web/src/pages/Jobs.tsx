@@ -56,7 +56,7 @@ export default function Jobs() {
           <tbody>
             {jobs.data?.filter((j) => FILTERS.find((f) => f.id === filter)!.match(j.status)).map((j) => (
               <tr key={j.id}>
-                <td className="whitespace-nowrap">{j.title} S{String(j.season).padStart(2, "0")}</td>
+                <td className="whitespace-nowrap">{j.title} S{String(j.season).padStart(2, "0")}{j.kind === "dub" && <span className="pill ml-2 text-accent" title="Replacing this season with an English dub">dub</span>}</td>
                 <td className="max-w-xs truncate text-muted" title={j.release}>{j.release}</td>
                 <td className="whitespace-nowrap" title={j.indexer}>{tracker(j.indexer)}</td>
                 <td className="whitespace-nowrap">{j.sizeGB.toFixed(1)} GB</td>

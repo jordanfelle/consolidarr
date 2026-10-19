@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,8 @@ type fakeSonarr struct {
 	failByID      bool               // GET /manualimport?downloadId=... answers 500
 	episodes      []map[string]any   // when set, GET /episode answers exactly this
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
+	releases      []map[string]any   // when set, GET /release answers exactly this
+	origLang      string             // the originalLanguage GET /series/{id} reports
 	srv           *httptest.Server
 }
 
@@ -263,7 +266,14 @@ func newFake(packEps []int) *fakeSonarr {
 		}
 		js(w, []any{})
 	})
+	mux.HandleFunc("GET /api/v3/series/{id}", func(w http.ResponseWriter, r *http.Request) {
+		js(w, map[string]any{"id": 1, "tvdbId": 100, "tmdbId": 200, "originalLanguage": map[string]any{"name": f.origLang}})
+	})
 	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		if f.releases != nil {
+			js(w, f.releases)
+			return
+		}
 		js(w, []map[string]any{{"guid": "g1", "indexerId": 1, "indexer": "BTN", "title": "Show.S03.1080p.WEB-DL", "size": 20e9,
 			"seeders": 10, "fullSeason": true, "seasonNumber": 3, "rejected": false, "rejections": []string{},
 			"quality": map[string]any{"quality": map[string]any{"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}}})
@@ -307,6 +317,8 @@ func setup(t *testing.T, packEps []int) *env {
 	t.Cleanup(f.srv.Close)
 	probeFn = func(store.Instance, string) (bool, string) { return true, "ok" }
 	t.Cleanup(func() { probeFn = probe })
+	ffprobeAvailable = func() bool { return true }
+	t.Cleanup(func() { ffprobeAvailable = func() bool { _, err := exec.LookPath("ffprobe"); return err == nil } })
 	return &env{e: New(st), st: st, c: sonarr.New(f.srv.URL, "k"), inst: store.Instance{ID: 1, Name: "t"}, fake: f}
 }
 

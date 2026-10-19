@@ -442,6 +442,11 @@
       "default": true,
       "description": "Import a pack whose episode order differs from Sonarr's (aired vs DVD order, a wrong scene mapping) when every file's title proves which episode it is. The import names the episodes explicitly and deletes nothing first."
      },
+     "dualAudio": {
+      "type": "boolean",
+      "default": false,
+      "description": "Look for dual-audio season packs for finished anime seasons that have no English audio, and replace them once ffprobe proves the pack carries an English track. Independent of includeAnime."
+     },
      "holdRejectHours": {
       "type": "integer",
       "minimum": 0,
@@ -1630,6 +1635,18 @@
        "default": "1"
       },
       "description": "0 = every season with 2+ files, not just flagged ones"
+     },
+     {
+      "name": "dub",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "0",
+        "1"
+       ]
+      },
+      "description": "1 = finished anime seasons that still have files with no English audio (the dual-audio candidates); implies anime only and ignores flagged"
      },
      {
       "name": "anime",

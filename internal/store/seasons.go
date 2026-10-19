@@ -26,10 +26,10 @@ func (s *Store) ReplaceSeasons(instID int64, seriesID int, rows []audit.Season) 
 		g, _ := json.Marshal(r.Groups)
 		q, _ := json.Marshal(r.Qualities)
 		sr, _ := json.Marshal(r.Sources)
-		if _, err := tx.Exec(s.rebind(`insert into seasons(inst_id,series_id,season,title,series_type,monitored,files,aired,pack,single,multi,unknown,groups,qualities,sources,gb,cur_rank,path)
-			values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+		if _, err := tx.Exec(s.rebind(`insert into seasons(inst_id,series_id,season,title,series_type,monitored,files,aired,pack,single,multi,unknown,groups,qualities,sources,gb,cur_rank,path,english,protected,no_english,audio_unknown,complete)
+			values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 			instID, r.SeriesID, r.Season, r.Title, r.SeriesType, b2i(r.Monitored), r.Files, r.Aired, r.Pack, r.Single, r.Multi, r.Unknown,
-			string(g), string(q), string(sr), r.GB, r.CurRank, r.Path); err != nil {
+			string(g), string(q), string(sr), r.GB, r.CurRank, r.Path, r.English, r.Protected, r.NoEnglish, r.AudioUnk, b2i(r.Complete)); err != nil {
 			return err
 		}
 	}
@@ -42,10 +42,11 @@ type SeasonQuery struct {
 	Anime       string // "", "only", "hide"
 	Search      string
 	MinFiles    int
+	DubWanted   bool // only finished anime seasons that still have files with no English audio
 }
 
 func (s *Store) Seasons(q SeasonQuery) ([]audit.Season, error) {
-	rows, err := s.Query(`select inst_id,series_id,season,title,series_type,monitored,files,aired,pack,single,multi,unknown,groups,qualities,sources,gb,cur_rank,path from seasons`)
+	rows, err := s.Query(`select inst_id,series_id,season,title,series_type,monitored,files,aired,pack,single,multi,unknown,groups,qualities,sources,gb,cur_rank,path,english,protected,no_english,audio_unknown,complete from seasons`)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +54,13 @@ func (s *Store) Seasons(q SeasonQuery) ([]audit.Season, error) {
 	out := []audit.Season{}
 	for rows.Next() {
 		var r audit.Season
-		var mon int
+		var mon, complete int
 		var g, ql, sr string
 		if err := rows.Scan(&r.InstID, &r.SeriesID, &r.Season, &r.Title, &r.SeriesType, &mon, &r.Files, &r.Aired, &r.Pack, &r.Single, &r.Multi,
-			&r.Unknown, &g, &ql, &sr, &r.GB, &r.CurRank, &r.Path); err != nil {
+			&r.Unknown, &g, &ql, &sr, &r.GB, &r.CurRank, &r.Path, &r.English, &r.Protected, &r.NoEnglish, &r.AudioUnk, &complete); err != nil {
 			return nil, err
 		}
-		r.Monitored = mon == 1
+		r.Monitored, r.Complete = mon == 1, complete == 1
 		_ = json.Unmarshal([]byte(g), &r.Groups)
 		_ = json.Unmarshal([]byte(ql), &r.Qualities)
 		_ = json.Unmarshal([]byte(sr), &r.Sources)
@@ -67,6 +68,8 @@ func (s *Store) Seasons(q SeasonQuery) ([]audit.Season, error) {
 		r.Flagged = audit.IsFlagged(r, max(q.MinFiles, 1))
 		switch {
 		case q.InstID != 0 && int64(r.InstID) != q.InstID:
+			continue
+		case q.DubWanted && !audit.DubWanted(r):
 			continue
 		case q.FlaggedOnly && !r.Flagged:
 			continue

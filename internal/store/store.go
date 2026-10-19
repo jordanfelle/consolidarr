@@ -123,6 +123,12 @@ var migrations = []migration{
 	{"jobs", "expected_eps", `alter table jobs add column expected_eps text not null default '[]'`}, // exactly which episode numbers
 	{"jobs", "import_at", `alter table jobs add column import_at bigint not null default 0`},        // when the current import attempt started
 	{"jobs", "mapping", `alter table jobs add column mapping text not null default ''`},             // pack file -> episode ids, when the pack's order differs from Sonarr's
+	{"seasons", "english", `alter table seasons add column english bigint not null default 0`},
+	{"seasons", "protected", `alter table seasons add column protected bigint not null default 0`},
+	{"seasons", "no_english", `alter table seasons add column no_english bigint not null default 0`},
+	{"seasons", "audio_unknown", `alter table seasons add column audio_unknown bigint not null default 0`},
+	{"seasons", "complete", `alter table seasons add column complete bigint not null default 0`},
+	{"jobs", "kind", `alter table jobs add column kind text not null default ''`}, // "dub" when the job exists to add an English dub
 }
 
 func (s *Store) hasColumn(table, column string) (bool, error) {
@@ -209,6 +215,7 @@ type Settings struct {
 	LastResort       []string `json:"lastResortIndexers"`
 	RemapOrders      bool     `json:"remapOrders"`     // import a pack whose episode order differs from Sonarr's when its file titles prove the mapping
 	HoldRejectHours  int      `json:"holdRejectHours"` // reject a pack held for a reason that cannot fix itself after this long (0 = never)
+	DualAudio        bool     `json:"dualAudio"`       // look for dual-audio packs for finished anime seasons that have no English audio
 }
 
 func DefaultSettings() Settings {

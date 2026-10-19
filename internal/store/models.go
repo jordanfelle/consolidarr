@@ -117,15 +117,18 @@ type Job struct {
 	// file is: pack file path -> Sonarr episode ids. The import then names the episodes itself, and nothing is deleted
 	// first (Sonarr replaces each episode's file as it imports; a failed import leaves your files as they were).
 	Mapping map[string][]int `json:"mapping,omitempty"`
+	// Kind is "dub" for a job whose point is to give a season an English dub (the pack must prove it has one);
+	// "" for an ordinary consolidation.
+	Kind string `json:"kind,omitempty"`
 }
 
-const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected,expected_eps,import_at,mapping`
+const jobCols = `id,inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,deleted,download_id,expected,expected_eps,import_at,mapping,kind`
 
 func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var old, eps, mapping string
 	err := sc.Scan(&j.ID, &j.InstID, &j.SeriesID, &j.Season, &j.Title, &old, &j.Release, &j.Indexer, &j.SizeGB,
-		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected, &eps, &j.ImportAt, &mapping)
+		&j.Status, &j.Message, &j.Progress, &j.ImportCmd, &j.Created, &j.Updated, &j.Deleted, &j.DownloadID, &j.Expected, &eps, &j.ImportAt, &mapping, &j.Kind)
 	_ = json.Unmarshal([]byte(old), &j.OldFileIDs)
 	_ = json.Unmarshal([]byte(eps), &j.ExpectedEps)
 	if mapping != "" {
@@ -222,9 +225,9 @@ func (s *Store) AddJob(j Job) (int64, error) {
 	if status == "" {
 		status = "downloading"
 	}
-	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,download_id)
-		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
-		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, status, "", 0, 0, now, now, j.DownloadID).Scan(&j.ID)
+	err := s.QueryRow(`insert into jobs(inst_id,series_id,season,title,old_file_ids,release,indexer,size_gb,status,message,progress,import_cmd,created,updated,download_id,kind)
+		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) returning id`,
+		j.InstID, j.SeriesID, j.Season, j.Title, string(old), j.Release, j.Indexer, j.SizeGB, status, "", 0, 0, now, now, j.DownloadID, j.Kind).Scan(&j.ID)
 	if err != nil && isUniqueViolation(err) {
 		return 0, ErrDuplicate // lost a race to another caller that created the season's job first
 	}

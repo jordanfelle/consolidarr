@@ -6,20 +6,21 @@ export type Season = {
   instId: number; seriesId: number; season: number; title: string; seriesType: string;
   files: number; aired: number; pack: number; single: number; multi: number; unknown: number;
   groups: string[]; qualities: string[]; sources: string[]; gb: number; score: number;
+  english: number; noEnglish: number; protected: number; complete: boolean;
 };
 export type Candidate = {
   guid: string; indexerId: number; indexer: string; title: string; size: number; seeders: number | null;
-  quality: { quality: { name: string } }; blocking: string[]; picked: boolean;
+  quality: { quality: { name: string } }; blocking: string[]; picked: boolean; dual: boolean; kind: string;
 };
 export type Job = {
   id: number; instId: number; seriesId: number; season: number; title: string; release: string;
   indexer: string; sizeGB: number; status: string; message: string; progress: number; oldFileIds: number[];
-  created: number; updated: number;
+  created: number; updated: number; kind?: string;
 };
 export type Settings = {
   schedulerEnabled: boolean; dryRun: boolean; autoDelete: boolean; allowUnverified: boolean; maxInflight: number; maxPackGB: number;
   minFiles: number; includeAnime: boolean; cycleMinutes: number; scanHours: number; lastResortIndexers: string[];
-  remapOrders: boolean; holdRejectHours: number;
+  remapOrders: boolean; holdRejectHours: number; dualAudio: boolean;
 };
 export type ApiKey = { id: number; name: string; prefix: string; created: number; lastUsed: number };
 export type Once = { active: boolean; limit: number; started: number; began: number; finished: number };

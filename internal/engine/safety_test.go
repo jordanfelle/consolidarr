@@ -299,7 +299,7 @@ func TestRacingGrabsReserveTheSeasonSoOnlyOneDownloads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := v.e.Grab(context.Background(), inst, s, "g", 1, "Show.S03", 10, "BTN")
+			_, err := v.e.Grab(context.Background(), inst, s, "g", 1, "Show.S03", 10, "BTN", "")
 			errs <- err
 		}()
 	}
@@ -378,7 +378,7 @@ func TestAFailedGrabReleasesItsReservation(t *testing.T) {
 	v := setup(t, nil)
 	v.fake.failGrab = true
 	inst := store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}
-	if _, err := v.e.Grab(context.Background(), inst, audit.Season{SeriesID: 1, Season: 3, Title: "Show"}, "g", 1, "r", 1, "BTN"); err == nil {
+	if _, err := v.e.Grab(context.Background(), inst, audit.Season{SeriesID: 1, Season: 3, Title: "Show"}, "g", 1, "r", 1, "BTN", ""); err == nil {
 		t.Fatal("the grab was refused, so Grab must report it")
 	}
 	if v.st.ActiveJob(1, 1, 3) {

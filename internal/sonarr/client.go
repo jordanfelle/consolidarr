@@ -104,7 +104,10 @@ type SeasonStat struct {
 }
 
 type Series struct {
-	ID         int          `json:"id"`
+	ID               int `json:"id"`
+	OriginalLanguage struct {
+		Name string `json:"name"`
+	} `json:"originalLanguage"`
 	Title      string       `json:"title"`
 	SeriesType string       `json:"seriesType"`
 	Monitored  bool         `json:"monitored"`
@@ -121,6 +124,20 @@ type EpisodeFile struct {
 	ReleaseType  string  `json:"releaseType"`
 	Path         string  `json:"path"`
 	Quality      Quality `json:"quality"`
+	// MediaInfo is what Sonarr's own ffprobe read at import. AudioLanguages is "eng/jpn"-style (ISO codes, or "" when
+	// Sonarr could not read the file), the only trustworthy record of which audio a file has: Sonarr's Languages field
+	// is its guess from the release name and reports a "Dual Audio" pack as a single language.
+	MediaInfo *struct {
+		AudioLanguages string `json:"audioLanguages"`
+	} `json:"mediaInfo"`
+}
+
+// AudioLanguages is MediaInfo.AudioLanguages, "" when Sonarr has no reading of the file.
+func (f EpisodeFile) AudioLanguages() string {
+	if f.MediaInfo == nil {
+		return ""
+	}
+	return f.MediaInfo.AudioLanguages
 }
 
 type Episode struct {
@@ -136,15 +153,18 @@ type Episode struct {
 }
 
 type Release struct {
-	GUID       string   `json:"guid"`
-	IndexerID  int      `json:"indexerId"`
-	Indexer    string   `json:"indexer"`
-	Title      string   `json:"title"`
-	Size       int64    `json:"size"`
-	Seeders    *int     `json:"seeders"`
-	FullSeason bool     `json:"fullSeason"`
-	SeasonNum  int      `json:"seasonNumber"`
-	Quality    Quality  `json:"quality"`
+	GUID       string  `json:"guid"`
+	IndexerID  int     `json:"indexerId"`
+	Indexer    string  `json:"indexer"`
+	Title      string  `json:"title"`
+	Size       int64   `json:"size"`
+	Seeders    *int    `json:"seeders"`
+	FullSeason bool    `json:"fullSeason"`
+	SeasonNum  int     `json:"seasonNumber"`
+	Quality    Quality `json:"quality"`
+	Languages  []struct {
+		Name string `json:"name"`
+	} `json:"languages"`
 	Rejected   bool     `json:"rejected"`
 	Rejections []string `json:"rejections"`
 }
@@ -197,6 +217,10 @@ type ManualImportItem struct {
 type SeriesIDs struct {
 	TvdbID int `json:"tvdbId"`
 	TmdbID int `json:"tmdbId"`
+	// OriginalLanguage is the language the show was made in ("" when Sonarr does not say).
+	OriginalLanguage struct {
+		Name string `json:"name"`
+	} `json:"originalLanguage"`
 }
 
 type Command struct {

@@ -38,6 +38,7 @@ function Drawer({ s, onClose }: { s: Season; onClose: () => void }) {
                     <span className="pill">{c.quality.quality.name}</span>
                     <span>{(c.size / 1e9).toFixed(1)} GB</span><span>{c.seeders ?? 0} seeders</span><span>{c.indexer}</span>
                     {c.picked && <span className="pill text-accent">auto-pick</span>}
+                    {c.dual && <span className="pill text-accent">dual audio</span>}
                   </div>
                   {c.blocking.length > 0 && <div className="mt-1 text-xs text-bad">{c.blocking[0]}</div>}
                 </div>
@@ -79,6 +80,7 @@ export default function SeasonsPage() {
   const q = sp.get("q") ?? "";
   const [inst, setInst] = useState("");
   const [anime, setAnime] = useState(sp.get("anime") === "all" ? "all" : "hide");
+  const [dub, setDub] = useState(sp.get("dub") === "1");
   const [sort, setSort] = useState<Sort>("score");
   const [page, setPage] = useState(0);
   const [sel, setSel] = useState<Season | null>(null);
@@ -86,7 +88,8 @@ export default function SeasonsPage() {
   const params = new URLSearchParams({ anime, limit: String(PAGE), offset: String(page * PAGE), sort });
   if (q) params.set("q", q);
   if (inst) params.set("inst", inst);
-  const seasons = useQuery({ queryKey: ["seasons", q, inst, anime, sort, page], queryFn: () => api.seasons(params), placeholderData: keepPreviousData });
+  if (dub) params.set("dub", "1");
+  const seasons = useQuery({ queryKey: ["seasons", q, inst, anime, dub, sort, page], queryFn: () => api.seasons(params), placeholderData: keepPreviousData });
   const name = (id: number) => insts.data?.find((i) => i.id === id)?.name ?? id;
   const total = seasons.data?.total ?? 0;
   const rows = seasons.data?.seasons ?? [];
@@ -110,6 +113,9 @@ export default function SeasonsPage() {
         <select className="input w-full sm:w-40" aria-label="Show type" value={anime} onChange={(e) => { setAnime(e.target.value); reset(); }}>
           <option value="hide">TV only</option><option value="all">TV + anime</option><option value="only">Anime only</option>
         </select>
+        <label className="flex items-center gap-2 text-sm text-muted" title="Finished anime seasons with files that have no English audio">
+          <input type="checkbox" checked={dub} onChange={(e) => { setDub(e.target.checked); reset(); }} /> Needs English dub
+        </label>
         <span className="num text-sm text-muted">{total > 0 ? `${page * PAGE + 1}–${Math.min(total, page * PAGE + rows.length)} of ${commas(total)}` : seasons.isLoading ? "Loading…" : "0 seasons"}</span>
       </div>
 

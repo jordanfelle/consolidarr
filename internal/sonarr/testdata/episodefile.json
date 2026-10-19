@@ -1,0 +1,138 @@
+[
+ {
+  "id": 1,
+  "seriesId": 1,
+  "seasonNumber": 4,
+  "size": 203316493,
+  "releaseGroup": "SENPAI",
+  "releaseType": "singleEpisode",
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 10,
+    "name": "Chinese"
+   }
+  ],
+  "mediaInfo": {
+   "audioBitrate": 0,
+   "audioChannels": 2,
+   "audioCodec": "AAC",
+   "audioLanguages": "zho",
+   "audioStreamCount": 1,
+   "videoBitDepth": 8,
+   "videoBitrate": 0,
+   "videoCodec": "AV1",
+   "videoFps": 24,
+   "videoDynamicRange": "",
+   "videoDynamicRangeType": "",
+   "resolution": "1920x1080",
+   "runTime": "25:34",
+   "scanType": "Progressive",
+   "subtitles": "eng/ara/por/spa/fra/deu/ita/spa/rus"
+  }
+ },
+ {
+  "id": 2,
+  "seriesId": 1,
+  "seasonNumber": 4,
+  "size": 194650084,
+  "releaseGroup": "SubsPlease",
+  "releaseType": "singleEpisode",
+  "quality": {
+   "quality": {
+    "id": 9,
+    "name": "HDTV-1080p",
+    "source": "television",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 10,
+    "name": "Chinese"
+   }
+  ],
+  "mediaInfo": {
+   "audioBitrate": 0,
+   "audioChannels": 2,
+   "audioCodec": "AAC",
+   "audioLanguages": "chi",
+   "audioStreamCount": 1,
+   "videoBitDepth": 8,
+   "videoBitrate": 0,
+   "videoCodec": "AV1",
+   "videoFps": 24,
+   "videoDynamicRange": "",
+   "videoDynamicRangeType": "",
+   "resolution": "1920x1080",
+   "runTime": "24:42",
+   "scanType": "Progressive",
+   "subtitles": "eng"
+  }
+ },
+ {
+  "id": 3,
+  "seriesId": 1,
+  "seasonNumber": 2,
+  "size": 310760237,
+  "releaseGroup": "ZR",
+  "releaseType": "seasonPack",
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 1,
+    "name": "English"
+   },
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "mediaInfo": {
+   "audioBitrate": 0,
+   "audioChannels": 2,
+   "audioCodec": "AAC",
+   "audioLanguages": "eng/jpn",
+   "audioStreamCount": 2,
+   "videoBitDepth": 8,
+   "videoBitrate": 0,
+   "videoCodec": "AV1",
+   "videoFps": 24,
+   "videoDynamicRange": "",
+   "videoDynamicRangeType": "",
+   "resolution": "1920x1080",
+   "runTime": "24:50",
+   "scanType": "Progressive",
+   "subtitles": "eng"
+  }
+ }
+]
