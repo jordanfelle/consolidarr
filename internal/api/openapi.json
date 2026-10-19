@@ -450,8 +450,8 @@
      "dubMaxFiles": {
       "type": "integer",
       "minimum": 0,
-      "default": 13,
-      "description": "Skip seasons with more files than this when looking for a dual-audio pack (0 = no limit). A long season makes Sonarr's interactive search return a huge release list, which can exhaust Sonarr's memory."
+      "default": 0,
+      "description": "Skip seasons with more files than this when looking for a dual-audio pack (0 = no limit, the default). The dub search looks at one episode, so its cost does not grow with the season; the cap is only an escape hatch."
      },
      "holdRejectHours": {
       "type": "integer",

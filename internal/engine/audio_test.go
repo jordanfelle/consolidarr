@@ -469,3 +469,32 @@ func TestTheHTTPClientAllowsTheLongestSearch(t *testing.T) {
 		t.Fatal("the client-wide timeout would cut a long search short whatever deadline the call asks for")
 	}
 }
+
+// The cost of a whole-season search grows with the season for anime (Sonarr asks the indexers about every episode:
+// minutes and gigabytes on a real library); the first episode's search returns the covering packs in under a minute.
+func TestTheDubSearchAsksForTheFirstEpisodeNotTheWholeSeason(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+	cycleOnce(v, set)
+	q, _ := v.fake.releaseQuery.Load().(string)
+	if v.fake.releaseCalls.Load() != 1 || q != "episodeId=501" {
+		t.Fatalf("want one search for the season's first episode (episodeId=501), got %d searches, last query %q", v.fake.releaseCalls.Load(), q)
+	}
+}
+
+func TestADubPackFoundThroughTheEpisodeSearchIsGrabbed(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{dualRelease("dual", "Show S03 1080p WEB-DL Dual Audio-GRP")}
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+	cycleOnce(v, set)
+	if jobs, _ := v.st.Jobs(true, 10); len(jobs) != 1 || jobs[0].Kind != "dub" {
+		t.Fatalf("want one dub job, got %+v", jobs)
+	}
+}

@@ -324,6 +324,15 @@ func (c *Client) Episodes(ctx context.Context, seriesID, season int) (out []Epis
 // take well over five minutes; giving up early throws the result away while Sonarr keeps working.
 const ReleaseSearchTimeout = 12 * time.Minute
 
+// ReleasesForEpisode runs the interactive search for one episode. Season packs that cover the episode come back too
+// (fullSeason, with their seasonNumber), at a small fraction of the cost of searching the whole season: for anime
+// Sonarr searches a season one episode at a time (a 24-episode season is ~25 indexer rounds, several minutes and
+// gigabytes of Sonarr memory on a real library), while this is one or two rounds (30-50 s).
+func (c *Client) ReleasesForEpisode(ctx context.Context, episodeID int) (out []Release, err error) {
+	err = c.do(ctx, "GET", fmt.Sprintf("/release?episodeId=%d", episodeID), nil, &out, ReleaseSearchTimeout)
+	return
+}
+
 func (c *Client) Releases(ctx context.Context, seriesID, season int) (out []Release, err error) {
 	err = c.do(ctx, "GET", fmt.Sprintf("/release?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, ReleaseSearchTimeout)
 	return
