@@ -319,8 +319,12 @@ func (c *Client) Episodes(ctx context.Context, seriesID, season int) (out []Epis
 	return
 }
 
+// ReleaseSearchTimeout bounds one interactive search. Sonarr asks every indexer (through Prowlarr) and a long season can
+// take well over five minutes; giving up early throws the result away while Sonarr keeps working.
+const ReleaseSearchTimeout = 12 * time.Minute
+
 func (c *Client) Releases(ctx context.Context, seriesID, season int) (out []Release, err error) {
-	err = c.do(ctx, "GET", fmt.Sprintf("/release?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, 5*time.Minute)
+	err = c.do(ctx, "GET", fmt.Sprintf("/release?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, ReleaseSearchTimeout)
 	return
 }
 

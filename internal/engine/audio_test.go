@@ -433,3 +433,32 @@ func TestLongSeasonsAreNotSearchedForADub(t *testing.T) {
 		t.Fatalf("only seasons of 13 files or fewer may be searched: 12=%v 13=%v 14=%v 136=%v", searched(1), searched(2), searched(3), searched(4))
 	}
 }
+
+func TestSlowDubSearchesStopTheCycleEarly(t *testing.T) {
+	grabPause = 0
+	oldT, oldB := dubSearchTime, dubSearchBudget
+	dubSearchTime, dubSearchBudget = time.Nanosecond, 10
+	t.Cleanup(func() { dubSearchTime, dubSearchBudget = oldT, oldB })
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
+	var rows []audit.Season
+	for i := 1; i <= 4; i++ {
+		rows = append(rows, audit.Season{InstID: 1, SeriesID: i, Season: 3, Title: fmt.Sprintf("Show %d", i), SeriesType: "anime", Files: 10 + i,
+			Aired: 10 + i, NoEnglish: 10 + i, Complete: true, Qualities: []string{"WEBDL-1080p"}, CurRank: 10802})
+	}
+	_ = v.st.ReplaceSeasons(1, 0, rows)
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+	set := live()
+	set.SchedulerEnabled, set.DualAudio, set.DubMaxFiles = true, true, 26
+	cycleOnce(v, set)
+	n := 0
+	for i := 1; i <= 4; i++ {
+		if v.st.Skipped("dub:" + skipKey(1, i, 3)) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("with the time budget spent after the first search, exactly one season may be searched this cycle, got %d", n)
+	}
+}
