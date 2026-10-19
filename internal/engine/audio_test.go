@@ -366,3 +366,29 @@ func TestAFailedDubSearchBacksOffInsteadOfRetryingEveryCycle(t *testing.T) {
 		t.Fatal("a search that errored must back off")
 	}
 }
+
+// Seen live on the first dub job: with auto-delete off the job sat "ready" while Sonarr, which accepts a Remux
+// dual-audio pack as a quality upgrade on its own, imported all of it and cleared the download.
+func TestAReadyJobWhoseDownloadSonarrImportedItselfIsDoneNotStuck(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Now().Add(-time.Hour))
+	_, _ = v.st.Exec(`update jobs set status='ready', release=? where id=?`, "Show S03 1080p WEB x265-NOXXUS", j.ID)
+	j, _ = v.st.Job(j.ID)
+	v.fake.seasonEps = map[int]int{1: 91, 2: 92, 3: 93}
+	v.fake.filesAfter = []sonarr.EpisodeFile{{ID: 91, ReleaseGroup: "NOXXUS"}, {ID: 92, ReleaseGroup: "NOXXUS"}, {ID: 93, ReleaseGroup: "NOXXUS"}}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "done" || len(v.fake.deleted) != 0 {
+		t.Fatalf("got %s %q deleted=%v", got.Status, got.Message, v.fake.deleted)
+	}
+}
+
+func TestAReadyJobWhoseDownloadVanishedAndWasNotImportedStaysReady(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Now().Add(-time.Hour))
+	_, _ = v.st.Exec(`update jobs set status='ready' where id=?`, j.ID)
+	j, _ = v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	if got := v.status(t, j.ID); got.Status != "ready" {
+		t.Fatalf("a verified job must never be written off as lost: %s %q", got.Status, got.Message)
+	}
+}
