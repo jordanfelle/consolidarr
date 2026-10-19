@@ -404,6 +404,8 @@ func TestGroupMatchesSceneAndFansubTitles(t *testing.T) {
 		{"[GetItTwisted] PSYCHO-PASS 3 S03 [Blu-ray]", "Mysteria", false}, // another group's file is someone else's upgrade
 		{"Show.S03.1080p.WEB-DL", "", false},
 		{"[Mysteria] Show S03 [GetItTwisted]", "GetItTwisted", false}, // a tag that merely mentions the group
+		{"[NTbExtra] Some Show S03", "NTb", false},                    // a longer group name that merely starts with ours
+		{"[NTb Extra] Some Show S03", "NTb", false},                   // likewise with a space
 	} {
 		if got := groupMatches(c.title, c.group); got != c.want {
 			t.Errorf("groupMatches(%q, %q) = %v, want %v", c.title, c.group, got, c.want)
