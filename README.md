@@ -80,7 +80,7 @@ Two rules about audio, both checked against the files themselves rather than rel
    (`Dual Audio`, `Multi-Audio`, `English Dub`, ...). The pack may be a lower source than what you have (a web dub for a
    Blu-ray sub) but never a lower resolution. It is replaced only when `ffprobe` proves **every** episode it replaces
    has an English track; a pack whose "dual audio" turns out to be a lie is held and rejected. If no dual-audio pack
-   exists yet the season is looked at again in a week (dubs lag). This runs independently of *Include anime*, and the
+   exists yet the season is looked at again in a week (dubs lag). Seasons with more than *Skip seasons over (files)* files (default 13) are not searched: a long season makes Sonarr's search return a huge release list, which crashed Sonarr with out-of-memory errors on a real library. Searches are paced (4 per cycle). This runs independently of *Include anime*, and the
    **Seasons** page has a *Needs English dub* filter listing the candidates.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because

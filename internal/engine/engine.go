@@ -537,7 +537,9 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		sort.SliceStable(dq, func(i, j int) bool { return dq[i].Files < dq[j].Files })
 		seen := map[string]bool{}
 		for _, r := range dq {
-			if audit.DubWanted(r) {
+			// A long season makes Sonarr's interactive search return a huge release list; on this host that crashed
+			// Sonarr (OutOfMemoryException) for seasons of more than a cour. The cap is a setting.
+			if audit.DubWanted(r) && (set.DubMaxFiles <= 0 || r.Files <= set.DubMaxFiles) {
 				seen[skipKey(inst.ID, r.SeriesID, r.Season)] = true
 				cands = append(cands, cand{r: r, dub: true, pack: r.Flagged && set.IncludeAnime})
 			}
