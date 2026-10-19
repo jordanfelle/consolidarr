@@ -22,8 +22,9 @@ type Client struct {
 }
 
 func New(base, key string) *Client {
+	// The client-wide timeout must fit the longest call (a season search); every do() passes its own, tighter, deadline.
 	return &Client{Base: strings.TrimRight(base, "/"), Key: key,
-		HTTP: &http.Client{Timeout: 5 * time.Minute, Transport: newTransport(), CheckRedirect: noRedirect}}
+		HTTP: &http.Client{Timeout: ReleaseSearchTimeout, Transport: newTransport(), CheckRedirect: noRedirect}}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any, timeout time.Duration) error {
@@ -319,8 +320,12 @@ func (c *Client) Episodes(ctx context.Context, seriesID, season int) (out []Epis
 	return
 }
 
+// ReleaseSearchTimeout bounds one interactive search. Sonarr asks every indexer (through Prowlarr) and a long season can
+// take well over five minutes; giving up early throws the result away while Sonarr keeps working.
+const ReleaseSearchTimeout = 12 * time.Minute
+
 func (c *Client) Releases(ctx context.Context, seriesID, season int) (out []Release, err error) {
-	err = c.do(ctx, "GET", fmt.Sprintf("/release?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, 5*time.Minute)
+	err = c.do(ctx, "GET", fmt.Sprintf("/release?seriesId=%d&seasonNumber=%d", seriesID, season), nil, &out, ReleaseSearchTimeout)
 	return
 }
 

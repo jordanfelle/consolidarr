@@ -66,7 +66,7 @@ func newTransport() *http.Transport {
 		MaxIdleConns:          10,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
+		ResponseHeaderTimeout: ReleaseSearchTimeout, // an interactive season search can take this long; other calls set their own, shorter, deadline
 	}
 }
 

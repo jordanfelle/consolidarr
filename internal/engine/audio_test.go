@@ -433,3 +433,39 @@ func TestLongSeasonsAreNotSearchedForADub(t *testing.T) {
 		t.Fatalf("only seasons of 13 files or fewer may be searched: 12=%v 13=%v 14=%v 136=%v", searched(1), searched(2), searched(3), searched(4))
 	}
 }
+
+func TestSlowDubSearchesStopTheCycleEarly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		budget time.Duration
+		want   int32
+	}{"spent budget stops after the first search": {time.Nanosecond, 1}, "ample budget searches all four": {time.Hour, 4}} {
+		t.Run(name, func(t *testing.T) {
+			grabPause = 0
+			oldT, oldB := dubSearchTime, dubSearchBudget
+			dubSearchTime, dubSearchBudget = tc.budget, 10
+			t.Cleanup(func() { dubSearchTime, dubSearchBudget = oldT, oldB })
+			v := setup(t, []int{1, 2, 3})
+			v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
+			var rows []audit.Season
+			for i := 1; i <= 4; i++ {
+				rows = append(rows, audit.Season{InstID: 1, SeriesID: i, Season: 3, Title: fmt.Sprintf("Show %d", i), SeriesType: "anime", Files: 10 + i,
+					Aired: 10 + i, NoEnglish: 10 + i, Complete: true, Qualities: []string{"WEBDL-1080p"}, CurRank: 10802})
+			}
+			_ = v.st.ReplaceSeasons(1, 0, rows)
+			_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+			v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+			set := live()
+			set.SchedulerEnabled, set.DualAudio, set.DubMaxFiles = true, true, 26
+			cycleOnce(v, set)
+			if got := v.fake.releaseCalls.Load(); got != tc.want {
+				t.Fatalf("release searches served = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheHTTPClientAllowsTheLongestSearch(t *testing.T) {
+	if sonarr.New("http://x", "k").HTTP.Timeout < sonarr.ReleaseSearchTimeout {
+		t.Fatal("the client-wide timeout would cut a long search short whatever deadline the call asks for")
+	}
+}
