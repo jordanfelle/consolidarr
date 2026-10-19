@@ -493,8 +493,6 @@ func (e *Engine) cycle(ctx context.Context, inst store.Instance, set store.Setti
 	return e.topUp(ctx, inst, c, set)
 }
 
-// topUp starts new replacements up to the in-flight cap (and, in a one-off run, up to its limit). It
-// returns true when there is nothing more to start: the limit was reached or every candidate was tried.
 // dubSearch finds season packs for a season by searching its first episode: Sonarr returns the packs that cover it, and
 // the cost no longer grows with the length of the season (see Client.ReleasesForEpisode).
 func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season) ([]sonarr.Release, error) {
@@ -518,6 +516,8 @@ func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season
 	return rels, err
 }
 
+// topUp starts new replacements up to the in-flight cap (and, in a one-off run, up to its limit). It
+// returns true when there is nothing more to start: the limit was reached or every candidate was tried.
 func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) bool {
 	oneOff := !set.SchedulerEnabled && e.Once().Active
 	limitHit := func() bool { o := e.Once(); return oneOff && o.Started >= o.Limit }
