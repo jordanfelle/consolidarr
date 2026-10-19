@@ -412,3 +412,24 @@ func TestGroupMatchesSceneAndFansubTitles(t *testing.T) {
 		}
 	}
 }
+
+func TestLongSeasonsAreNotSearchedForADub(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
+	var rows []audit.Season
+	for i, files := range []int{12, 13, 14, 136} {
+		rows = append(rows, audit.Season{InstID: 1, SeriesID: i + 1, Season: 3, Title: fmt.Sprintf("Show %d", i+1), SeriesType: "anime", Files: files,
+			Aired: files, NoEnglish: files, Complete: true, Qualities: []string{"WEBDL-1080p"}, CurRank: 10802})
+	}
+	_ = v.st.ReplaceSeasons(1, 0, rows)
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+	set := live()
+	set.SchedulerEnabled, set.DualAudio, set.DubMaxFiles = true, true, 13
+	cycleOnce(v, set)
+	searched := func(series int) bool { return v.st.Skipped("dub:" + skipKey(1, series, 3)) }
+	if !searched(1) || !searched(2) || searched(3) || searched(4) {
+		t.Fatalf("only seasons of 13 files or fewer may be searched: 12=%v 13=%v 14=%v 136=%v", searched(1), searched(2), searched(3), searched(4))
+	}
+}

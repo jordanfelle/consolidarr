@@ -216,11 +216,12 @@ type Settings struct {
 	RemapOrders      bool     `json:"remapOrders"`     // import a pack whose episode order differs from Sonarr's when its file titles prove the mapping
 	HoldRejectHours  int      `json:"holdRejectHours"` // reject a pack held for a reason that cannot fix itself after this long (0 = never)
 	DualAudio        bool     `json:"dualAudio"`       // look for dual-audio packs for finished anime seasons that have no English audio
+	DubMaxFiles      int      `json:"dubMaxFiles"`     // skip seasons with more files than this when looking for a dub (0 = no limit)
 }
 
 func DefaultSettings() Settings {
 	return Settings{DryRun: true, AutoDelete: true, MaxInflight: 4, MaxPackGB: 60, MinFiles: 3,
-		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}, RemapOrders: true, HoldRejectHours: 3}
+		CycleMinutes: 3, ScanHours: 6, LastResort: []string{"torrentleech"}, RemapOrders: true, HoldRejectHours: 3, DubMaxFiles: 13}
 }
 
 func (s *Store) Settings() Settings {
