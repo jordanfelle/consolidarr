@@ -64,6 +64,7 @@ type fakeSonarr struct {
 	episodes      []map[string]any   // when set, GET /episode answers exactly this
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
 	releases      []map[string]any   // when set, GET /release answers exactly this
+	failReleases  bool               // GET /release answers 500
 	origLang      string             // the originalLanguage GET /series/{id} reports
 	srv           *httptest.Server
 }
@@ -270,6 +271,10 @@ func newFake(packEps []int) *fakeSonarr {
 		js(w, map[string]any{"id": 1, "tvdbId": 100, "tmdbId": 200, "originalLanguage": map[string]any{"name": f.origLang}})
 	})
 	mux.HandleFunc("GET /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		if f.failReleases {
+			http.Error(w, "indexer timeout", 500)
+			return
+		}
 		if f.releases != nil {
 			js(w, f.releases)
 			return

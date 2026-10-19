@@ -142,6 +142,11 @@ func (e *Engine) finishOnce() {
 // shouldCycle: the loop runs cycles while the scheduler is on or a one-off run is active.
 func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled || o.Active }
 
+// dubSearchBudget caps how many dual-audio searches one cycle makes. Each is an interactive search of every indexer
+// through Sonarr (a long season can take minutes), and hundreds of seasons may qualify at once; spreading them over
+// cycles keeps a live Sonarr and the indexers from being hammered. Tests may raise it.
+var dubSearchBudget = 4
+
 // grabPause is the breather between grabs so the download client keeps up (tests set it to 0).
 var grabPause = 20 * time.Second
 
@@ -528,7 +533,8 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		if err != nil {
 			return false
 		}
-		sort.SliceStable(dq, func(i, j int) bool { return dq[i].NoEnglish > dq[j].NoEnglish })
+		// Smallest seasons first: they are the cheapest to search and download, and the most likely to have a pack.
+		sort.SliceStable(dq, func(i, j int) bool { return dq[i].Files < dq[j].Files })
 		seen := map[string]bool{}
 		for _, r := range dq {
 			if audit.DubWanted(r) {
@@ -576,6 +582,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		time.Sleep(grabPause) // let the download client breathe between grabs
 		return false
 	}
+	dubSearches := 0
 	for _, cd := range cands {
 		r := cd.r
 		if e.draining.Load() {
@@ -617,8 +624,11 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		// The dub search honours every back-off the consolidation does (done, lost, failed after delete, rejected) as
 		// well as its own weekly one.
-		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) {
+		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) && dubSearches < dubSearchBudget {
+			dubSearches++
 			if !search() {
+				// A search that failed (Sonarr or an indexer timing out) must not be retried every cycle.
+				e.St.Skip("dub:"+key, 6*time.Hour, "search failed")
 				continue
 			}
 			if p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true}); p != nil {

@@ -329,3 +329,40 @@ func TestNoFfprobeMeansNoDubDownloadsThatCouldNeverBeProven(t *testing.T) {
 		t.Fatal("without ffprobe the pack could only be held")
 	}
 }
+
+func TestDubSearchesAreSpreadOverCyclesSmallestSeasonFirst(t *testing.T) {
+	grabPause = 0
+	old := dubSearchBudget
+	dubSearchBudget = 2
+	t.Cleanup(func() { dubSearchBudget = old })
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")} // nothing to grab
+	var rows []audit.Season
+	for i, files := range []int{40, 12, 24, 8} {
+		rows = append(rows, audit.Season{InstID: 1, SeriesID: i + 1, Season: 3, Title: fmt.Sprintf("Show %d", i+1), SeriesType: "anime", Files: files,
+			Aired: files, NoEnglish: files, Complete: true, Qualities: []string{"WEBDL-1080p"}, CurRank: 10802})
+	}
+	_ = v.st.ReplaceSeasons(1, 0, rows)
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+	cycleOnce(v, set)
+	searched := func(series int) bool { return v.st.Skipped("dub:" + skipKey(1, series, 3)) }
+	if !searched(4) || !searched(2) || searched(3) || searched(1) {
+		t.Fatalf("only the two smallest seasons (8 and 12 files) may be searched this cycle: 8=%v 12=%v 24=%v 40=%v", searched(4), searched(2), searched(3), searched(1))
+	}
+}
+
+func TestAFailedDubSearchBacksOffInsteadOfRetryingEveryCycle(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.failReleases = true
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+	cycleOnce(v, set)
+	if !v.st.Skipped("dub:" + skipKey(1, 1, 3)) {
+		t.Fatal("a search that errored must back off")
+	}
+}
