@@ -155,6 +155,14 @@ var dubSearchTime = 10 * time.Minute
 // grabPause is the breather between grabs so the download client keeps up (tests set it to 0).
 var grabPause = 20 * time.Second
 
+// grabClientAttempts is how many times a grab is sent while Sonarr reports its download client unreachable.
+const grabClientAttempts = 3
+
+// clientUnreachable: Sonarr could not connect to the download client, so the request never reached it.
+func clientUnreachable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Failed to connect to")
+}
+
 // grabRetryWait is how long Grab waits after a failed request before checking whether it reached the client anyway.
 var grabRetryWait = 30 * time.Second
 
@@ -330,7 +338,17 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 	if err != nil {
 		return 0, err
 	}
-	if err := c.Grab(ctx, guid, indexerID); err != nil {
+	err = c.Grab(ctx, guid, indexerID)
+	// Sonarr answers "Failed to connect to <client>" when the download client was unreachable: nothing was sent, so
+	// sending again cannot double-grab. A brief outage (qBittorrent's web UI stalls under load) is common; wait it out.
+	for attempt := 1; err != nil && clientUnreachable(err) && attempt < grabClientAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt) * grabRetryWait):
+		}
+		err = c.Grab(ctx, guid, indexerID)
+	}
+	if err != nil {
 		// a grab that timed out may still have reached the download client
 		time.Sleep(grabRetryWait)
 		if q, qerr := c.Queue(ctx, 2*time.Minute); qerr != nil || !inQueue(q, s.SeriesID, s.Season) {
@@ -601,7 +619,11 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			return false
 		}
 		if _, err := e.Grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer, kind); err != nil {
-			e.St.Skip(key, 24*time.Hour, "grab failed")
+			wait := 24 * time.Hour
+			if clientUnreachable(err) {
+				wait = time.Hour // the download client was down, not the pack: try again soon
+			}
+			e.St.Skip(key, wait, "grab failed")
 			e.St.Event("error", fmt.Sprintf("grab %s S%02d: %v", r.Title, r.Season, err))
 			return false
 		}

@@ -498,3 +498,63 @@ func TestADubPackFoundThroughTheEpisodeSearchIsGrabbed(t *testing.T) {
 		t.Fatalf("want one dub job, got %+v", jobs)
 	}
 }
+
+func (v *env) liveInst() store.Instance {
+	return store.Instance{ID: 1, Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true}
+}
+
+func grabSeason() audit.Season {
+	return audit.Season{InstID: 1, SeriesID: 1, Season: 3, Title: "Show"}
+}
+
+func TestAGrabIsResentWhileTheDownloadClientIsUnreachable(t *testing.T) {
+	grabRetryWait = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.connectFails = 2 // two stalls, then qBittorrent answers
+	id, err := v.e.Grab(context.Background(), v.liveInst(), grabSeason(), "g", 1, "Show.S03", 10, "BTN", "")
+	if err != nil || id == 0 || v.fake.postAttempts.Load() != 3 || v.fake.grabs != 1 {
+		t.Fatalf("id=%d err=%v attempts=%d grabs=%d", id, err, v.fake.postAttempts.Load(), v.fake.grabs)
+	}
+}
+
+func TestAGrabGivesUpWhenTheClientStaysDownAndReleasesTheSeason(t *testing.T) {
+	grabRetryWait = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.connectFails = 100
+	if _, err := v.e.Grab(context.Background(), v.liveInst(), grabSeason(), "g", 1, "Show.S03", 10, "BTN", ""); err == nil {
+		t.Fatal("want an error")
+	}
+	if n := v.fake.postAttempts.Load(); n != grabClientAttempts {
+		t.Fatalf("want %d attempts, got %d", grabClientAttempts, n)
+	}
+	if jobs, _ := v.st.Jobs(true, 10); len(jobs) != 0 {
+		t.Fatal("the reservation must be released")
+	}
+}
+
+func TestOtherGrabErrorsAreNotResent(t *testing.T) {
+	grabRetryWait = 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.failGrab = true // a plain 500: the request may have reached the client, so never send it twice
+	_, _ = v.e.Grab(context.Background(), v.liveInst(), grabSeason(), "g", 1, "Show.S03", 10, "BTN", "")
+	if n := v.fake.postAttempts.Load(); n != 1 {
+		t.Fatalf("a grab that may have reached the client must be sent once, got %d", n)
+	}
+}
+
+func TestAClientOutageBacksTheSeasonOffForAnHourNotADay(t *testing.T) {
+	grabPause, grabRetryWait = 0, 0
+	v := setup(t, []int{1, 2, 3})
+	v.fake.connectFails = 100
+	v.fake.releases = []map[string]any{dualRelease("dual", "Show S03 1080p WEB-DL Dual Audio-GRP")}
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+	cycleOnce(v, set)
+	key := "dub:" + skipKey(1, 1, 3)
+	var until int64
+	_ = v.st.QueryRow(`select until from skips where key=?`, key).Scan(&until)
+	if left := time.Until(time.Unix(until, 0)); left > 2*time.Hour || left < 30*time.Minute {
+		t.Fatalf("back-off should be about an hour, is %v", left)
+	}
+}

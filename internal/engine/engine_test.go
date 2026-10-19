@@ -65,6 +65,8 @@ type fakeSonarr struct {
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
 	releases      []map[string]any   // when set, GET /release answers exactly this
 	failReleases  bool               // GET /release answers 500
+	connectFails  int                // the next N POST /release answer Sonarr's "Failed to connect to qBittorrent" 500
+	postAttempts  atomic.Int32       // POST /release requests received
 	releaseCalls  atomic.Int32       // GET /release requests served
 	releaseQuery  atomic.Value       // raw query of the latest GET /release (string)
 	origLang      string             // the originalLanguage GET /series/{id} reports
@@ -288,6 +290,17 @@ func newFake(packEps []int) *fakeSonarr {
 			"quality": map[string]any{"quality": map[string]any{"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}}})
 	})
 	mux.HandleFunc("POST /api/v3/release", func(w http.ResponseWriter, r *http.Request) {
+		f.postAttempts.Add(1)
+		f.mu.Lock()
+		down := f.connectFails > 0
+		if down {
+			f.connectFails--
+		}
+		f.mu.Unlock()
+		if down {
+			http.Error(w, `{"message":"Failed to connect to qBittorrent, check your settings."}`, 500)
+			return
+		}
 		if f.failGrab {
 			http.Error(w, "grab refused", 500)
 			return
