@@ -416,6 +416,9 @@ func TestGroupMatchesSceneAndFansubTitles(t *testing.T) {
 
 func TestLongSeasonsAreNotSearchedForADub(t *testing.T) {
 	grabPause = 0
+	oldB := dubSearchBudget
+	dubSearchBudget = 4 // this test is about which seasons qualify, not the pace
+	t.Cleanup(func() { dubSearchBudget = oldB })
 	v := setup(t, []int{1, 2, 3})
 	v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
 	var rows []audit.Season
@@ -578,5 +581,35 @@ func TestARejectedDubPackIsRetriedWithinHoursNotAWeek(t *testing.T) {
 		if left := time.Until(time.Unix(until, 0)); left < 5*time.Hour || left > 7*time.Hour {
 			t.Fatalf("%s: a rejected dub should be retried in about 6 hours, back-off is %v", key, left)
 		}
+	}
+}
+
+func TestTheDubSearchRateIsASetting(t *testing.T) {
+	grabPause = 0
+	for name, tc := range map[string]struct {
+		perCycle int
+		want     int32
+	}{"default is one per cycle": {0, 1}, "raised to three": {3, 3}} {
+		t.Run(name, func(t *testing.T) {
+			old := dubSearchBudget
+			dubSearchBudget = 1 // the shipped default, whatever other tests set
+			t.Cleanup(func() { dubSearchBudget = old })
+			v := setup(t, []int{1, 2, 3})
+			v.fake.releases = []map[string]any{dualRelease("sub", "Show S03 1080p WEB-DL-GRP", "Japanese")}
+			var rows []audit.Season
+			for i := 1; i <= 5; i++ {
+				rows = append(rows, audit.Season{InstID: 1, SeriesID: i, Season: 3, Title: fmt.Sprintf("Show %d", i), SeriesType: "anime", Files: 10 + i,
+					Aired: 10 + i, NoEnglish: 10 + i, Complete: true, Qualities: []string{"WEBDL-1080p"}, CurRank: 10802})
+			}
+			_ = v.st.ReplaceSeasons(1, 0, rows)
+			_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+			v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+			set := live()
+			set.SchedulerEnabled, set.DualAudio, set.DubSearchesPerCycle = true, true, tc.perCycle
+			cycleOnce(v, set)
+			if got := v.fake.releaseCalls.Load(); got != tc.want {
+				t.Fatalf("searches in one cycle = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }

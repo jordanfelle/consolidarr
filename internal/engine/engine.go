@@ -145,10 +145,13 @@ func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled 
 // dubRetryAfterReject is how long a season waits before the dub search tries again after its pack was rejected.
 var dubRetryAfterReject = 6 * time.Hour
 
-// dubSearchBudget caps how many dual-audio searches one cycle makes. Each is an interactive search of every indexer
+// dubSearchBudget is the default for how many dual-audio searches one cycle makes (the setting dubSearchesPerCycle
+// overrides it). On a real library four per cycle pushed Sonarr to 7.8 of 8 GB: its memory falls back within minutes
+// once the searching stops, but it does not keep up with a search every 45 seconds; one per cycle does.
+// It caps how many dual-audio searches one cycle makes. Each is an interactive search of every indexer
 // through Sonarr (a long season can take minutes), and hundreds of seasons may qualify at once; spreading them over
 // cycles keeps a live Sonarr and the indexers from being hammered. Tests may raise it.
-var dubSearchBudget = 4
+var dubSearchBudget = 1
 
 // dubSearchTime stops a cycle starting further dub searches once it has spent this long on them, so a run of slow
 // searches cannot hold up verifying and importing the jobs already running for long. It is checked before each search
@@ -642,6 +645,10 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		return false
 	}
 	dubSearches := 0
+	searchBudget := dubSearchBudget
+	if set.DubSearchesPerCycle > 0 {
+		searchBudget = set.DubSearchesPerCycle
+	}
 	var dubStart time.Time // set when the first dub search starts, so only searching counts against dubSearchTime
 	for _, cd := range cands {
 		r := cd.r
@@ -685,7 +692,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		// The dub search honours every back-off the consolidation does (done, lost, failed after delete, rejected) as
 		// well as its own weekly one.
-		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) && dubSearches < dubSearchBudget && (dubSearches == 0 || time.Since(dubStart) < dubSearchTime) {
+		if cd.dub && !e.St.Skipped("dub:"+key) && !e.St.Skipped(key) && dubSearches < searchBudget && (dubSearches == 0 || time.Since(dubStart) < dubSearchTime) {
 			if dubSearches == 0 {
 				dubStart = time.Now()
 			}
