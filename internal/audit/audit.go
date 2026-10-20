@@ -151,7 +151,7 @@ func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 		if s.Protected > 0 && !IsDual(x) {
 			continue
 		}
-		if len(Blocking(x)) > 0 {
+		if len(blockingFor(x, o.Dub)) > 0 {
 			continue
 		}
 		c = append(c, x)
@@ -184,6 +184,38 @@ func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 	}
 	return &c[0]
 }
+
+// ignorableForDub are Sonarr rejections that say nothing about whether a pack can replace a season's files. Searching for
+// an English dub replaces files on purpose, so "this is not an upgrade" is irrelevant, and Sonarr adds "Full season
+// pack" to every season pack that comes back from the episode search the dub pass uses (on a real library it was the only
+// reason on the genuine packs, so keeping it blocking discarded all of them). Everything else still blocks: Unknown
+// Series, an alias of another series, the wrong season, blocklisted, quality not wanted, size limits.
+var ignorableForDub = []string{
+	"Existing file meets cutoff",
+	"Existing file on disk is of equal or higher preference",
+	"Existing file on disk has a equal or higher Custom Format score",
+	"Full season pack",
+}
+
+func blockingFor(x sonarr.Release, dub bool) []string {
+	if !dub {
+		return Blocking(x)
+	}
+	var b []string
+	for _, m := range x.Rejections {
+		ignore := false
+		for _, p := range ignorableForDub {
+			ignore = ignore || strings.HasPrefix(m, p)
+		}
+		if !ignore {
+			b = append(b, m)
+		}
+	}
+	return b
+}
+
+// BlockingForDub is Blocking as it applies to a dual-audio search (see ignorableForDub).
+func BlockingForDub(x sonarr.Release) []string { return blockingFor(x, true) }
 
 // Blocking returns the rejections that actually matter.
 func Blocking(x sonarr.Release) []string {

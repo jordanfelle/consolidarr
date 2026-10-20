@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -556,5 +557,26 @@ func TestAClientOutageBacksTheSeasonOffForAnHourNotADay(t *testing.T) {
 	_ = v.st.QueryRow(`select until from skips where key=?`, key).Scan(&until)
 	if left := time.Until(time.Unix(until, 0)); left > 2*time.Hour || left < 30*time.Minute {
 		t.Fatalf("back-off should be about an hour, is %v", left)
+	}
+}
+
+func TestARejectedDubPackIsRetriedWithinHoursNotAWeek(t *testing.T) {
+	v, j := heldMissing(t)
+	_, _ = v.st.Exec(`update jobs set kind='dub' where id=?`, j.ID)
+	j.Kind = "dub"
+	set := live()
+	set.HoldRejectHours = 3
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
+	v.st.SetKV(holdKey(j.ID), holdScope("d", holdMissing)+":"+strconv.FormatInt(time.Now().Add(-4*time.Hour).Unix(), 10))
+	v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
+	if got := v.status(t, j.ID); got.Status != "failed" {
+		t.Fatalf("want the held pack rejected: %s %q", got.Status, got.Message)
+	}
+	for _, key := range []string{skipKey(1, 1, 3), "dub:" + skipKey(1, 1, 3)} {
+		var until int64
+		_ = v.st.QueryRow(`select until from skips where key=?`, key).Scan(&until)
+		if left := time.Until(time.Unix(until, 0)); left < 5*time.Hour || left > 7*time.Hour {
+			t.Fatalf("%s: a rejected dub should be retried in about 6 hours, back-off is %v", key, left)
+		}
 	}
 }

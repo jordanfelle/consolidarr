@@ -1,6 +1,9 @@
 package audit
 
 import (
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
@@ -213,5 +216,68 @@ func TestBuildCountsAudioAndCompleteness(t *testing.T) {
 	}
 	if r3 := Build(1, mk("English", 6, 6), files, 3)[0]; r3.Protected != 0 {
 		t.Fatalf("nothing in an English-original show has a dub to protect: %+v", r3)
+	}
+}
+
+// A real episode-search response (Higurashi S01, trimmed): the genuine packs carry only "Full season pack" and
+// upgrade-preference rejections, which used to make every one of them unusable for the dub pass.
+func realDualPacks(t *testing.T) []sonarr.Release {
+	b, err := os.ReadFile("../sonarr/testdata/release_episode_search_dual.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rs []sonarr.Release
+	if err := json.Unmarshal(b, &rs); err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+func TestTheDubPassIgnoresUpgradeAndEpisodeSearchRejections(t *testing.T) {
+	rs := realDualPacks(t)
+	s := Season{Season: 1, CurRank: 10801} // 24 HDTV-1080p files today
+	for i := range rs {
+		rs[i].FullSeason, rs[i].SeasonNum = true, 1
+	}
+	if Pick(rs, s, PickOpts{}) != nil {
+		t.Fatal("the consolidation rule is unchanged: 'Full season pack' still blocks")
+	}
+	p := Pick(rs, s, PickOpts{Dub: true})
+	if p == nil {
+		t.Fatal("the dub pass found no pack in a response full of dual-audio ones")
+	}
+	for _, m := range BlockingForDub(*p) {
+		t.Errorf("picked a pack with a blocking rejection %q", m)
+	}
+	if !IsDual(*p) || p.Quality.Quality.Resolution < 1080 {
+		t.Errorf("picked %q (%s)", p.Title, p.Quality.Quality.Name)
+	}
+}
+
+func TestTheDubPassStillHonoursTheRejectionsThatMatter(t *testing.T) {
+	rs := realDualPacks(t)
+	for i := range rs {
+		rs[i].FullSeason, rs[i].SeasonNum = true, 1
+	}
+	for _, x := range rs {
+		blocked := BlockingForDub(x)
+		switch {
+		case strings.Contains(x.Title, "[BYT]"):
+			if len(blocked) == 0 {
+				t.Errorf("a blocklisted release must stay blocked: %v", x.Rejections)
+			}
+		case strings.Contains(x.Title, "SOTSU") || strings.Contains(x.Title, "Sotsu"):
+			if len(blocked) == 0 {
+				t.Errorf("a pack for another season ('Episode wasn't requested') must stay blocked: %q", x.Title)
+			}
+		case len(x.Rejections) == 1 && x.Rejections[0] == "Unknown Series":
+			if len(blocked) == 0 {
+				t.Errorf("an unknown series must stay blocked: %q", x.Title)
+			}
+		case strings.Contains(strings.Join(x.Rejections, "|"), "smaller than minimum"):
+			if len(blocked) == 0 {
+				t.Errorf("a pack under the size limit must stay blocked: %q", x.Title)
+			}
+		}
 	}
 }
