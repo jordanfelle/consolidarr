@@ -1,0 +1,545 @@
+[
+ {
+  "title": "[Bunny-Apocalypse] Higurashi no Naku Koro ni Gou S01 [Blu-ray][MKV][h264][1080p][FLAC 2.0][Dual Audio][Softsubs (Bunny-Apocalypse)]",
+  "size": 30729052058,
+  "seeders": 53,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 7,
+    "name": "Bluray-1080p",
+    "source": "bluray",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-1"
+ },
+ {
+  "title": "[DragsterPS] Higurashi: When They Cry S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (DragsterPS)]",
+  "size": 23522776830,
+  "seeders": 13,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-2"
+ },
+ {
+  "title": "[BYT] Higurashi: When They Cry S01 [Blu-ray][MKV][h264][1080i Remux][FLAC 2.0][Dual Audio][Softsubs (BYT)]",
+  "size": 105186261178,
+  "seeders": 1,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 20,
+    "name": "Bluray-1080p Remux",
+    "source": "blurayRaw",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Release is blocklisted",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-3"
+ },
+ {
+  "title": "[Bunny-Apocalypse] Higurashi no Naku Koro ni Sotsu S01 [Blu-ray][MKV][h264][1080p][FLAC 2.0][Dual Audio][Softsubs (Bunny-Apocalypse)]",
+  "size": 20550139051,
+  "seeders": 47,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 7,
+    "name": "Bluray-1080p",
+    "source": "bluray",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 2x1-15",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-4"
+ },
+ {
+  "title": "[Bunny-Apocalypse] Higurashi: When They Cry - SOTSU S01 [Blu-ray][MKV][h264][1080p][FLAC 2.0][Dual Audio][Softsubs (Bunny-Apocalypse)]",
+  "size": 20550139051,
+  "seeders": 47,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 7,
+    "name": "Bluray-1080p",
+    "source": "bluray",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 2x1-15",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-5"
+ },
+ {
+  "title": "[Kitsune] Higurashi no Naku Koro ni Sotsu S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (Kitsune)]",
+  "size": 22914614773,
+  "seeders": 12,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 2x1-15",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-6"
+ },
+ {
+  "title": "[Kitsune] Higurashi: When They Cry - SOTSU S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (Kitsune)]",
+  "size": 22914614773,
+  "seeders": 12,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file meets cutoff: 1080p (WEBRip-1080p, Bluray-1080p Remux, HDTV-1080p, Bluray-1080p, WEBDL-1080p)",
+   "Episode wasn't requested: 2x1-15",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-7"
+ },
+ {
+  "title": "[DarkXo] Higurashi: When They Cry S01 [Blu-ray][MKV][h264][720p][AAC 2.0][Dual Audio][Softsubs (DarkXo)]",
+  "size": 7467309321,
+  "seeders": 20,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 6,
+    "name": "Bluray-720p",
+    "source": "bluray",
+    "resolution": 720
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "7.0 GB is smaller than minimum allowed 9.6 GB (for 24x 576min)",
+   "Existing file on disk is of equal or higher preference: HDTV-1080p v1",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-8"
+ },
+ {
+  "title": "[DragsterPS] Higurashi: When They Cry S01 [Web][MKV][h264][720p][AC3 2.0][Dual Audio][Softsubs (DragsterPS)]",
+  "size": 13056340321,
+  "seeders": 2,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 5,
+    "name": "WEBDL-720p",
+    "source": "web",
+    "resolution": 720
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file on disk is of equal or higher preference: HDTV-1080p v1",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-9"
+ },
+ {
+  "title": "[Orengelen] Higurashi: When They Cry S01 [Blu-ray][MKV][h264][720x480][DTS-HD MA 2.0][Dual Audio][Softsubs (Orengelen)]",
+  "size": 54872511313,
+  "seeders": 2,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 6,
+    "name": "Bluray-720p",
+    "source": "bluray",
+    "resolution": 720
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file on disk is of equal or higher preference: HDTV-1080p v1",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-10"
+ },
+ {
+  "title": "[E-D] Higurashi: When They Cry S01 [DVD][MKV][h264][720x480][AC3 2.0][Dual Audio][Softsubs (E-D)]",
+  "size": 9281779065,
+  "seeders": 36,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 2,
+    "name": "DVD",
+    "source": "dvd",
+    "resolution": 480
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file on disk is of equal or higher preference: HDTV-1080p v1",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-11"
+ },
+ {
+  "title": "[ACX] Higurashi: When They Cry S01 [DVD][MKV][h264][720x480][AAC 2.0][Dual Audio][Softsubs (ACX)]",
+  "size": 6360379487,
+  "seeders": 9,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 2,
+    "name": "DVD",
+    "source": "dvd",
+    "resolution": 480
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 8,
+    "name": "Japanese"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Existing file on disk is of equal or higher preference: HDTV-1080p v1",
+   "Full season pack"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-12"
+ },
+ {
+  "title": "[Kitsune] \u3072\u3050\u3089\u3057\u306e\u306a\u304f\u9803\u306b\u5352 S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (Kitsune)]",
+  "size": 22914614773,
+  "seeders": 12,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 0,
+    "name": "Unknown"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Unknown Series"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-13"
+ },
+ {
+  "title": "[Kitsune] Higurashi no Naku Koro ni Gou 2020 S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (Kitsune)]",
+  "size": 36664147317,
+  "seeders": 9,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 0,
+    "name": "Unknown"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Unknown Series"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-14"
+ },
+ {
+  "title": "[Kitsune] \u3072\u3050\u3089\u3057\u306e\u306a\u304f\u9803\u306b\u696d 2020 S01 [Web][MKV][h264][1080p][AC3 2.0][Dual Audio][Softsubs (Kitsune)]",
+  "size": 36664147317,
+  "seeders": 9,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 3,
+    "name": "WEBDL-1080p",
+    "source": "web",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 0,
+    "name": "Unknown"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Unknown Series"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-15"
+ },
+ {
+  "title": "[FutabasRips] Higurashi no Naku Koro ni 2006 S01 [Blu-ray][MKV][h265][1080i][FLAC 2.0][Dual Audio][Softsubs (FutabasRips)]",
+  "size": 10215927479,
+  "seeders": 11,
+  "fullSeason": true,
+  "seasonNumber": 1,
+  "quality": {
+   "quality": {
+    "id": 7,
+    "name": "Bluray-1080p",
+    "source": "bluray",
+    "resolution": 1080
+   },
+   "revision": {
+    "version": 1,
+    "real": 0,
+    "isRepack": false
+   }
+  },
+  "languages": [
+   {
+    "id": 0,
+    "name": "Unknown"
+   }
+  ],
+  "rejected": true,
+  "rejections": [
+   "Higurashi no Naku Koro ni 2006 matches an alias for series with TVDB ID: 79682"
+  ],
+  "indexer": "AnimeBytes (Prowlarr)",
+  "indexerId": 9,
+  "guid": "redacted-16"
+ }
+]

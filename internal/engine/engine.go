@@ -142,6 +142,9 @@ func (e *Engine) finishOnce() {
 // shouldCycle: the loop runs cycles while the scheduler is on or a one-off run is active.
 func shouldCycle(set store.Settings, o Once) bool { return set.SchedulerEnabled || o.Active }
 
+// dubRetryAfterReject is how long a season waits before the dub search tries again after its pack was rejected.
+var dubRetryAfterReject = 6 * time.Hour
+
 // dubSearchBudget caps how many dual-audio searches one cycle makes. Each is an interactive search of every indexer
 // through Sonarr (a long season can take minutes), and hundreds of seasons may qualify at once; spreading them over
 // cycles keeps a live Sonarr and the indexers from being hammered. Tests may raise it.
@@ -285,7 +288,11 @@ func (e *Engine) Candidates(ctx context.Context, inst store.Instance, s audit.Se
 		if !r.FullSeason || r.SeasonNum != s.Season {
 			continue
 		}
-		out = append(out, Candidate{Release: r, Blocking: audit.Blocking(r), Picked: pick != nil && pick.GUID == r.GUID,
+		blocking := audit.Blocking(r)
+		if dubMode(set, s) {
+			blocking = audit.BlockingForDub(r)
+		}
+		out = append(out, Candidate{Release: r, Blocking: blocking, Picked: pick != nil && pick.GUID == r.GUID,
 			Dual: audit.IsDual(r), Kind: kindOf(set, s, r)})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -1102,7 +1109,13 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	case "hold":
 		j.Status, j.Message = "holding", v.Message
 		if e.holdExpired(&j, boundID, v.Kind, set) {
-			if err := e.rejectBody(ctx, c, &j, false, 7*24*time.Hour, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {
+			// A rejected dual-audio pack is blocklisted, so a few hours later the search finds the next best one; a dub
+			// has often several candidates (some of them another series' pack that Sonarr's matcher let through).
+			skip := 7 * 24 * time.Hour
+			if j.Kind == "dub" {
+				skip = dubRetryAfterReject
+			}
+			if err := e.rejectBody(ctx, c, &j, false, skip, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {
 				e.St.Event("warn", label+": could not auto-reject the held pack: "+err.Error())
 				_ = e.St.UpdateJob(j)
 			}
