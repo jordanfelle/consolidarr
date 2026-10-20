@@ -202,21 +202,22 @@ func (s *Store) migrate() error {
 }
 
 type Settings struct {
-	SchedulerEnabled bool     `json:"schedulerEnabled"`
-	DryRun           bool     `json:"dryRun"`
-	AutoDelete       bool     `json:"autoDelete"`
-	AllowUnverified  bool     `json:"allowUnverified"` // delete even when ffprobe can't reach the files (default off)
-	MaxInflight      int      `json:"maxInflight"`
-	MaxPackGB        float64  `json:"maxPackGB"` // 0 = no size limit
-	MinFiles         int      `json:"minFiles"`
-	IncludeAnime     bool     `json:"includeAnime"`
-	CycleMinutes     int      `json:"cycleMinutes"`
-	ScanHours        int      `json:"scanHours"`
-	LastResort       []string `json:"lastResortIndexers"`
-	RemapOrders      bool     `json:"remapOrders"`     // import a pack whose episode order differs from Sonarr's when its file titles prove the mapping
-	HoldRejectHours  int      `json:"holdRejectHours"` // reject a pack held for a reason that cannot fix itself after this long (0 = never)
-	DualAudio        bool     `json:"dualAudio"`       // look for dual-audio packs for finished anime seasons that have no English audio
-	DubMaxFiles      int      `json:"dubMaxFiles"`     // skip seasons with more files than this when looking for a dub (0 = no limit)
+	SchedulerEnabled    bool     `json:"schedulerEnabled"`
+	DryRun              bool     `json:"dryRun"`
+	AutoDelete          bool     `json:"autoDelete"`
+	AllowUnverified     bool     `json:"allowUnverified"` // delete even when ffprobe can't reach the files (default off)
+	MaxInflight         int      `json:"maxInflight"`
+	MaxPackGB           float64  `json:"maxPackGB"` // 0 = no size limit
+	MinFiles            int      `json:"minFiles"`
+	IncludeAnime        bool     `json:"includeAnime"`
+	CycleMinutes        int      `json:"cycleMinutes"`
+	ScanHours           int      `json:"scanHours"`
+	LastResort          []string `json:"lastResortIndexers"`
+	RemapOrders         bool     `json:"remapOrders"`         // import a pack whose episode order differs from Sonarr's when its file titles prove the mapping
+	HoldRejectHours     int      `json:"holdRejectHours"`     // reject a pack held for a reason that cannot fix itself after this long (0 = never)
+	DualAudio           bool     `json:"dualAudio"`           // look for dual-audio packs for finished anime seasons that have no English audio
+	DubSearchesPerCycle int      `json:"dubSearchesPerCycle"` // dual-audio searches per scheduler cycle (0 = the default, 1)
+	DubMaxFiles         int      `json:"dubMaxFiles"`         // skip seasons with more files than this when looking for a dub (0 = no limit)
 }
 
 func DefaultSettings() Settings {

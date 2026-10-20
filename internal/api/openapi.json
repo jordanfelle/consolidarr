@@ -447,6 +447,12 @@
       "default": false,
       "description": "Look for dual-audio season packs for finished anime seasons that have no English audio, and replace them once ffprobe proves the pack carries an English track. Independent of includeAnime."
      },
+     "dubSearchesPerCycle": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Dual-audio searches per scheduler cycle (0 = the built-in default of 1). Each is an interactive search of every indexer through Sonarr; more per cycle makes Sonarr's memory climb faster than it is reclaimed."
+     },
      "dubMaxFiles": {
       "type": "integer",
       "minimum": 0,
