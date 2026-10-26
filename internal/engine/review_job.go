@@ -18,7 +18,7 @@ import (
 const DefaultReviewCategory = "consolidarr-review"
 
 const (
-	reviewBindWait   = 30 * time.Minute // how long a grab may take to show up in Sonarr's queue
+	reviewBindWait   = 2 * time.Hour    // how long a grab may take to show up in Sonarr's queue (and be told apart from others)
 	reviewGoneChecks = 3                // consecutive "qBittorrent does not have it" answers before the job is closed
 	addedSlack       = 30 * time.Second // a torrent added longer than this before the grab was not added by the grab
 )
@@ -50,7 +50,8 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		id := e.bindReview(&j, queue)
 		if id == "" {
 			if time.Since(time.Unix(j.Created, 0)) > reviewBindWait {
-				finish("failed", "the grab never showed up in Sonarr's queue; nothing was downloaded or changed", 24*time.Hour)
+				e.St.Event("warn", label+": could not tell which Sonarr download is this grab (none new, or several). If a pack for this season is in Sonarr's queue, check it before it imports: it was NOT parked")
+				finish("failed", "could not bind to its download in Sonarr's queue (none appeared, or several were new); nothing was parked or changed by consolidarr. Check Sonarr's queue for this season", 24*time.Hour)
 			}
 			return
 		}

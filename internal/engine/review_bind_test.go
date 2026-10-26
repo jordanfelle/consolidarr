@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
+	"github.com/jordanfelle/consolidarr/internal/store"
 )
 
 func bindEnv(t *testing.T) (*env, int64) {
@@ -51,4 +52,58 @@ func TestAReviewJobIgnoresADownloadQueuedBeforeItsGrab(t *testing.T) {
 	if got := v.status(t, id); got.DownloadID != "" {
 		t.Fatalf("adopted an older download: %q", got.DownloadID)
 	}
+}
+
+func TestBindingPrefersTheExactTitleAndSkipsOwnedHashesAndOtherSeasons(t *testing.T) {
+	v, id := bindEnv(t)
+	j, _ := v.st.Job(id)
+	other := sonarr.QueueItem{SeriesID: 1, SeasonNumber: 2, Title: "a different season", DownloadID: "s2", Added: time.Now().UTC().Format(time.RFC3339)}
+	a := queued("someone else's grab", "a", time.Now())
+	exact := queued(j.Release, "x", time.Now())
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{other, a, exact})
+	if got := v.status(t, id); got.DownloadID != "x" {
+		t.Fatalf("exact title must win over other fresh downloads: %q", got.DownloadID)
+	}
+}
+
+func TestAHashAnotherActiveJobOwnsIsNotBoundTwice(t *testing.T) {
+	v, id := bindEnv(t)
+	j, _ := v.st.Job(id)
+	_, _ = v.st.AddJob(storeJobOwning("d"))
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{queued("the pack", "d", time.Now())})
+	if got := v.status(t, id); got.DownloadID != "" {
+		t.Fatalf("bound a download another active job owns: %q", got.DownloadID)
+	}
+}
+
+func TestSeveralRecordsOfOnePackAreOneDownload(t *testing.T) {
+	v, id := bindEnv(t)
+	j, _ := v.st.Job(id)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{queued("p", "d", time.Now()), queued("p", "D", time.Now())})
+	if got := v.status(t, id); got.DownloadID == "" {
+		t.Fatal("a season pack has one queue record per episode; they are one download")
+	}
+}
+
+func TestAnUnparseableAddedTimeNeverBinds(t *testing.T) {
+	v, id := bindEnv(t)
+	j, _ := v.st.Job(id)
+	bad := sonarr.QueueItem{SeriesID: 1, SeasonNumber: 3, Title: "p", DownloadID: "d", Added: "yesterday-ish"}
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{bad})
+	if got := v.status(t, id); got.DownloadID != "" {
+		t.Fatalf("bound on a time it could not read: %q", got.DownloadID)
+	}
+}
+
+func TestAnOldFreshPairStillBindsTheOneFreshOne(t *testing.T) {
+	v, id := bindEnv(t)
+	j, _ := v.st.Job(id)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, []sonarr.QueueItem{queued("old", "o", time.Now().Add(-5*time.Hour)), queued("new", "n", time.Now())})
+	if got := v.status(t, id); got.DownloadID != "n" {
+		t.Fatalf("got %q: the old one must be ignored, the new one bound", got.DownloadID)
+	}
+}
+
+func storeJobOwning(hash string) store.Job {
+	return store.Job{InstID: 1, SeriesID: 1, Season: 4, Title: "Show", Status: "downloading", Kind: kindReview, DownloadID: hash}
 }
