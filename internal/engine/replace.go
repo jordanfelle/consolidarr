@@ -552,6 +552,11 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		e.RunNow() // a season finished: the jobs waiting their turn behind it should not wait out the rest of the cycle
 		return
 	}
+	if j.ImportCmd == 0 && j.Kind == kindReview {
+		// A relabelled pack is not in Sonarr's queue, so the queue-based retry below cannot find it; nothing was deleted.
+		e.revertReviewImport(j, "the import could not be started and nothing was changed")
+		return
+	}
 	if j.ImportCmd == 0 { // the delete happened but the import was never started (or its start failed)
 		mine := ownedItems(queue, j)
 		if len(mine) == 0 {
@@ -612,6 +617,11 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 	case finished && age > importSettle:
 		// A host or Sonarr that was down can lose the command (or fail it) while the pack is still queued: ask again a
 		// couple of times before handing the job to a human.
+		if j.Kind == kindReview {
+			// Not in Sonarr's queue: the human decides. Episodes Sonarr did swap now have the new file; the rest keep the old one.
+			e.revertReviewImport(j, fmt.Sprintf("the import finished with %d of %d episodes imported (the others still have your old file)", got, len(want)))
+			return
+		}
 		if mine := ownedItems(queue, j); len(mine) > 0 && !e.draining.Load() {
 			rk := fmt.Sprintf("reimport:%d", j.ID)
 			if n, _ := strconv.Atoi(e.St.KV(rk)); n < 2 {

@@ -13,8 +13,8 @@ export type Candidate = {
   quality: { quality: { name: string } }; blocking: string[]; picked: boolean; dual: boolean; kind: string;
 };
 export type ReviewPlan = {
-  ok: boolean; reason?: string; folder: string; skipped?: string[];
-  files: { path: string; episode: number; title: string; why: string }[];
+  ok: boolean; reason?: string; folder: string; skipped?: string[]; token?: string;
+  files: { path: string; episode: number; title: string; why: string; packQuality: string; replaces: string }[];
 };
 export type Job = {
   id: number; instId: number; seriesId: number; season: number; title: string; release: string;
@@ -104,7 +104,7 @@ export const api = {
   removePack: (a: Attention, o: { blocklist: boolean; deleteFiles: boolean; research: boolean }) =>
     req<{ removed: number; searched: boolean }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/remove`, o),
   reviewPlan: (id: number) => req<ReviewPlan>("GET", `/jobs/${id}/review`),
-  reviewApprove: (id: number) => req<{ ok: boolean }>("POST", `/jobs/${id}/review/approve`),
+  reviewApprove: (id: number, token: string) => req<{ ok: boolean }>("POST", `/jobs/${id}/review/approve?token=${encodeURIComponent(token)}`),
   retryJob: (id: number) => req<Job>("POST", `/jobs/${id}/retry`),
   rejectJob: (id: number, research = true) => req<Job>("POST", `/jobs/${id}/reject`, { research }),
   keys: () => req<ApiKey[]>("GET", "/keys"),

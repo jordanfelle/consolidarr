@@ -2316,6 +2316,13 @@
              },
              "why": {
               "type": "string"
+             },
+             "packQuality": {
+              "type": "string"
+             },
+             "replaces": {
+              "type": "string",
+              "description": "The library file this import overwrites (Sonarr has no recycle bin here)"
              }
             }
            }
@@ -2325,6 +2332,10 @@
            "items": {
             "type": "string"
            }
+          },
+          "token": {
+           "type": "string",
+           "description": "Identity of this exact mapping; pass it to the approve call"
           }
          }
         }
@@ -2362,7 +2373,7 @@
       }
      },
      "502": {
-      "description": "Sonarr failed",
+      "description": "Sonarr or qBittorrent failed",
       "content": {
        "application/json": {
         "schema": {
@@ -2401,7 +2412,7 @@
     "tags": [
      "jobs"
     ],
-    "summary": "Approve a parked relabelled pack: import it onto the season's episodes (copy; nothing is deleted, the torrent is kept)",
+    "summary": "Approve a parked relabelled pack: import exactly the reviewed plan (copy). Sonarr replaces each episode's file; the torrent is kept",
     "responses": {
      "200": {
       "description": "OK",
@@ -2439,7 +2450,7 @@
       }
      },
      "409": {
-      "description": "Not awaiting review, dry run on, or the pack cannot be mapped by consolidarr",
+      "description": "Not awaiting review, dry run on, the pack cannot be mapped, or the plan changed since it was reviewed",
       "content": {
        "application/json": {
         "schema": {
@@ -2449,7 +2460,17 @@
       }
      },
      "502": {
-      "description": "Sonarr failed",
+      "description": "Sonarr or qBittorrent failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "token missing",
       "content": {
        "application/json": {
         "schema": {
@@ -2467,6 +2488,15 @@
       "description": "Numeric id",
       "schema": {
        "type": "integer"
+      }
+     },
+     {
+      "name": "token",
+      "in": "query",
+      "required": true,
+      "description": "The token from GET /api/jobs/{id}/review",
+      "schema": {
+       "type": "string"
       }
      }
     ],

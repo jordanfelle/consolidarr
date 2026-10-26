@@ -19,7 +19,8 @@ func approveEnv(t *testing.T, names ...string) (*env, *fakeQbit, store.Job) {
 		{"id": 603, "seasonNumber": 3, "episodeNumber": 3, "title": "Correctness"}}
 	var items []map[string]any
 	for _, n := range names {
-		items = append(items, map[string]any{"path": "/dl/pack/" + n, "series": map[string]int{"id": 1}, "rejections": []map[string]string{}})
+		items = append(items, map[string]any{"path": "/dl/pack/" + n, "series": map[string]int{"id": 1}, "rejections": []map[string]string{},
+			"quality": map[string]any{"quality": map[string]any{"id": 7, "name": "Bluray-1080p Remux", "source": "bluray", "resolution": 1080}}})
 	}
 	v.fake.folderItems = items
 	_, _ = v.st.SaveInstance(storeInstance(v))
@@ -36,6 +37,15 @@ func approveEnv(t *testing.T, names ...string) (*env, *fakeQbit, store.Job) {
 	return v, q, j
 }
 
+func tokenOf(t *testing.T, v *env, j store.Job) string {
+	t.Helper()
+	plan, _, _, err := v.e.PlanReview(context.Background(), v.liveInst(), j)
+	if err != nil || !plan.OK {
+		t.Fatalf("plan %+v err %v", plan, err)
+	}
+	return plan.Token
+}
+
 func TestAnS03NamedPackIsPlannedOnItsEpisodesAndApprovedByCopy(t *testing.T) {
 	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv", "Show.S03E04.NCOP.mkv")
 	plan, mapping, _, err := v.e.PlanReview(context.Background(), v.liveInst(), j)
@@ -45,7 +55,7 @@ func TestAnS03NamedPackIsPlannedOnItsEpisodesAndApprovedByCopy(t *testing.T) {
 	if mapping["/dl/pack/Show.S03E02.mkv"][0] != 602 {
 		t.Fatalf("mapping %v", mapping)
 	}
-	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j); err != nil {
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, plan.Token); err != nil {
 		t.Fatal(err)
 	}
 	if len(v.fake.mappedImports) != 1 || len(v.fake.mappedImports[0]) != 3 {
@@ -76,7 +86,7 @@ func TestAPackNumberedS01ForALaterSeasonIsNeverMappedByGuessing(t *testing.T) {
 	if err != nil || plan.OK || !strings.Contains(plan.Reason, "will not guess") {
 		t.Fatalf("plan %+v err %v", plan, err)
 	}
-	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j); err == nil || len(v.fake.mappedImports) != 0 {
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, "x"); err == nil || len(v.fake.mappedImports) != 0 {
 		t.Fatalf("approved an unmappable pack: err=%v imports=%v", err, v.fake.mappedImports)
 	}
 }
@@ -99,7 +109,7 @@ func TestAPackWithoutEnglishAudioIsNotApproved(t *testing.T) {
 	if err != nil || plan.OK {
 		t.Fatalf("plan %+v err %v: a dub pack with no English track must not be approved", plan, err)
 	}
-	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j); err == nil || len(v.fake.mappedImports) != 0 {
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, "x"); err == nil || len(v.fake.mappedImports) != 0 {
 		t.Fatalf("imported a pack with no English audio: err=%v", err)
 	}
 }
@@ -125,7 +135,7 @@ func TestApproveRefusesUnlessThePackIsFinishedAwaitingReviewAndNotDryRun(t *test
 	if err := v.st.SaveSettings(set); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j); err == nil || !strings.Contains(err.Error(), "dry run") {
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, "x"); err == nil || !strings.Contains(err.Error(), "dry run") {
 		t.Fatalf("dry run did not block: %v", err)
 	}
 }

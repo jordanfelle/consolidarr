@@ -23,7 +23,7 @@ function ReviewDialog({ id, onClose }: { id: number; onClose: () => void }) {
   const qc = useQueryClient();
   const plan = useQuery({ queryKey: ["review", id], queryFn: () => api.reviewPlan(id), retry: false });
   const approve = useMutation({
-    mutationFn: () => api.reviewApprove(id),
+    mutationFn: () => api.reviewApprove(id, plan.data?.token ?? ""),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["jobs"] }); onClose(); },
   });
   const p = plan.data;
@@ -39,16 +39,17 @@ function ReviewDialog({ id, onClose }: { id: number; onClose: () => void }) {
             {p.ok ? (
               <div className="text-sm">
                 Every episode of the season has exactly one file, each file passed the probe, and each carries an English track.
-                Approving imports them onto these episodes by <b>copying</b> (nothing is deleted; Sonarr swaps each episode's file) and keeps the torrent seeding in its seed category.
+                Approving imports them onto these episodes by <b>copying</b> and keeps the torrent seeding in its seed category.
+                <b> Sonarr then replaces each episode's current file with the new one, and with no recycle bin the replaced file is gone for good</b>: the table shows what each one replaces.
               </div>
             ) : (
               <div className="text-sm text-warn">Consolidarr cannot map this pack by itself: {p.reason}. Import it by hand in Sonarr (Manual Import), or reject it.</div>
             )}
             {p.files.length > 0 && (
               <table className="w-full text-sm">
-                <thead><tr><th>Ep</th><th>Episode</th><th>File</th><th>Identified by</th></tr></thead>
+                <thead><tr><th>Ep</th><th>Episode</th><th>New file</th><th>Quality</th><th>Identified by</th><th>Replaces</th></tr></thead>
                 <tbody>{p.files.map((f) => (
-                  <tr key={f.path}><td className="num">{f.episode}</td><td>{f.title}</td><td className="max-w-xs truncate text-muted" title={f.path}>{f.path.split("/").pop()}</td><td className="text-muted">{f.why}</td></tr>
+                  <tr key={f.path}><td className="num">{f.episode}</td><td>{f.title}</td><td className="max-w-xs truncate text-muted" title={f.path}>{f.path.split("/").pop()}</td><td>{f.packQuality}</td><td className="text-muted">{f.why}</td><td className="max-w-xs truncate text-warn" title={f.replaces}>{f.replaces || "nothing (no file yet)"}</td></tr>
                 ))}</tbody>
               </table>
             )}

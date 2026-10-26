@@ -571,7 +571,7 @@ func (a *API) reviewPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, _, _, err := a.Eng.PlanReview(r.Context(), inst, j)
 	if err != nil {
-		fail(w, 409, err.Error())
+		failReview(w, err)
 		return
 	}
 	ok(w, plan)
@@ -583,11 +583,26 @@ func (a *API) reviewApprove(w http.ResponseWriter, r *http.Request) {
 	if !good {
 		return
 	}
-	if err := a.Eng.ApproveReview(r.Context(), inst, j); err != nil {
-		fail(w, 409, err.Error())
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		fail(w, 400, "token is required: it identifies the plan you reviewed (GET /api/jobs/{id}/review)")
+		return
+	}
+	if err := a.Eng.ApproveReview(r.Context(), inst, j, token); err != nil {
+		failReview(w, err)
 		return
 	}
 	ok(w, map[string]bool{"ok": true})
+}
+
+// failReview answers 409 for a refusal about the pack or job and 502 for an outage of Sonarr or qBittorrent.
+func failReview(w http.ResponseWriter, err error) {
+	var se *engine.ReviewStateError
+	if errors.As(err, &se) {
+		fail(w, 409, err.Error())
+		return
+	}
+	fail(w, 502, err.Error())
 }
 
 func (a *API) approve(w http.ResponseWriter, r *http.Request) {

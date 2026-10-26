@@ -101,9 +101,12 @@ Two rules about audio, both checked against the files themselves rather than rel
      until you say so. On **Replacements**, *Review* shows exactly how the pack would be imported: every file placed on an
      episode only by hard evidence in its name (an `S0N` naming this season, or one of this season's episode titles),
      every episode of the season covered by exactly one file, every file probed and carrying an English track. Anything
-     less and it says why, and you import by hand in Sonarr (Manual Import) or reject it. *Approve and import* sends the
-     mapping to Sonarr as a **copy** (nothing is deleted; Sonarr swaps each episode's file, and the torrent keeps seeding);
-     when the import is done the torrent moves to its seed category. A pack numbered `S01` for a later season is never
+     less and it says why, and you import by hand in Sonarr (Manual Import) or reject it. The review also lists, per
+     episode, the library file the import will replace: Sonarr swaps each episode's file and, with no recycle bin set,
+     the replaced file is gone for good. *Approve and import* runs only the exact plan you looked at (it carries a
+     token; if the folder or the season changed, review again) and sends it to Sonarr as a **copy** (the torrent keeps
+     seeding); if Sonarr refuses or only part of it is imported the job goes back to awaiting review; when the import is
+     done the torrent moves to its seed category. A pack numbered `S01` for a later season is never
      mapped by guessing.
    **consolidarr never deletes a torrent or its data**: its qBittorrent client has no delete call, and every Sonarr queue
    removal it makes (reject, auto-reject, *Remove pack*) is sent without remove-from-client. Rejecting or setting a pack
