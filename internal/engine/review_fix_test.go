@@ -61,6 +61,20 @@ func TestRejectingAParkedPackRemovesTheTorrent(t *testing.T) {
 	}
 }
 
+// Kilo: a rejected pack that is still downloading must be stopped too, not just moved.
+func TestRejectingAPackStillDownloadingStopsIt(t *testing.T) {
+	q := newFakeQbit(t, "consolidarr-review", 0.4, "p/01.mkv", "p/02.mkv", "p/03.mkv")
+	v, j := reviewEnv(t, q)
+	_, _ = v.st.SaveInstance(storeInstance(v))
+	v.st.SetKV(reviewCatKey(j.ID), "btn")
+	if _, err := v.e.RejectJob(context.Background(), j.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if l := q.log(); !strings.Contains(l, "park:seed-btn") || !strings.Contains(l, "stop") || strings.Contains(l, "remove") {
+		t.Fatalf("qBittorrent changes: %q", l)
+	}
+}
+
 func TestRejectingAPackThatWasNotAddedByTheGrabOnlyEndsTheJob(t *testing.T) {
 	q := newFakeQbit(t, "consolidarr-review", 1, "p/01.mkv")
 	q.torrent["added_on"] = time.Now().Add(-30 * 24 * time.Hour).Unix()

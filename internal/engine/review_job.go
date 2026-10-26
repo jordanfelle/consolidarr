@@ -236,6 +236,14 @@ func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, erro
 			if err != nil {
 				return j, err
 			}
+			if tr.Progress < 1 { // a rejected pack must not go on downloading the rest of itself
+				if stopErr := e.Qbit.Stop(ctx, j.DownloadID); stopErr == nil {
+					dest += ", download stopped"
+				} else {
+					dest += ", but it could not be stopped and keeps downloading: pause it in qBittorrent"
+					e.St.Event("warn", fmt.Sprintf("%s S%02d: could not stop the rejected pack: %v", j.Title, j.Season, stopErr))
+				}
+			}
 			shelved = " The torrent and its data were kept (" + dest + ")."
 		}
 	}
