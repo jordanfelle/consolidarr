@@ -317,3 +317,42 @@ func firstIfOne(e []Ep) (Ep, bool) {
 	}
 	return e[0], true
 }
+
+// TitleAnywhere is TitleOf for names that do not follow SxxExx: the title may sit anywhere in the file name
+// ("[Group] Show 2nd Season - 01 - Hello Baby! (REMUX ...)"). It is for telling which season a pack is, never for
+// placing files, so it is stricter about what counts: a one-word title shorter than six letters carries no evidence.
+func TitleAnywhere(path string, eps []Ep) (ep Ep, ok bool) {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	rest := words(base)
+	best, n := 0, 0
+	for _, e := range eps {
+		t := usableTitle(e.Title)
+		if t == nil || (len(t) == 1 && len(t[0]) < 6) {
+			continue
+		}
+		hit := false
+		for off := 0; off+len(t) <= len(rest) && !hit; off++ {
+			match := true
+			for i, w := range t {
+				if rest[off+i] != w {
+					match = false
+					break
+				}
+			}
+			if end := off + len(t); match && end < len(rest) && !isBoundary(rest[end]) {
+				match = false
+			}
+			hit = match
+		}
+		if !hit {
+			continue
+		}
+		switch {
+		case len(t) > best:
+			best, n, ep = len(t), 1, e
+		case len(t) == best:
+			n++
+		}
+	}
+	return ep, n == 1
+}

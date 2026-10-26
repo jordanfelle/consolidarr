@@ -19,6 +19,7 @@ import (
 
 	"github.com/jordanfelle/consolidarr/internal/audit"
 	"github.com/jordanfelle/consolidarr/internal/meta"
+	"github.com/jordanfelle/consolidarr/internal/qbit"
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 	"github.com/jordanfelle/consolidarr/internal/store"
 )
@@ -26,6 +27,8 @@ import (
 type Engine struct {
 	St   *store.Store
 	Meta *meta.Lookup // optional TVDB/TMDB lookups of alternative episode orders; nil = Sonarr's own titles only
+
+	Qbit *qbit.Client // optional (qui's client proxy): needed to fetch relabelled packs, which are parked and checked there
 
 	jobMu  locks // one job is advanced/approved/adopted by one caller at a time
 	instMu locks // one season per instance is deleted-and-imported at a time
@@ -579,6 +582,10 @@ func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season
 // but numbered S01 (see audit.PickOpts.Relabelled). It returns the pack and the override telling Sonarr its episodes.
 func (e *Engine) relabelledDub(ctx context.Context, c *sonarr.Client, r audit.Season, rels []sonarr.Release, set store.Settings) (*sonarr.Release, *relabelGrab) {
 	if !set.RelabelAnimeBytes || r.Season <= 1 {
+		return nil, nil
+	}
+	if e.Qbit == nil {
+		e.warnOften("relabel-noqbit", "relabelAnimeBytes is on but CONSOLIDARR_QBIT_URL is not set: relabelled packs are parked and checked in qBittorrent, so none is fetched")
 		return nil, nil
 	}
 	if active, err := e.St.Jobs(true, 1000); err != nil {
@@ -1139,6 +1146,10 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		return
 	case "importing":
 		e.finishImport(ctx, inst, c, &j, queue)
+		return
+	}
+	if j.Kind == kindReview && e.Qbit != nil {
+		e.advanceReview(ctx, inst, c, set, j, queue)
 		return
 	}
 	mine := ownedItems(queue, &j)
