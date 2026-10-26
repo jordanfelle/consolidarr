@@ -329,6 +329,14 @@ func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.S
 // alone, whatever it contains, until a human has looked: nothing is verified, imported or deleted by consolidarr.
 const kindReview = "dub-review"
 
+// maxReviewJobs caps downloads waiting for a human at once: each is a full pack that holds a slot until someone looks.
+// reviewBackOff is how long a season is left alone after its review pack was handled or rejected, so the next cour's
+// pack is not fetched an hour later.
+const (
+	maxReviewJobs = 2
+	reviewBackOff = 7 * 24 * time.Hour
+)
+
 // isDub reports whether the job is a dual-audio chase (an ordinary one or one awaiting review).
 func isDub(kind string) bool { return kind == "dub" || kind == kindReview }
 
@@ -572,6 +580,20 @@ func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season
 func (e *Engine) relabelledDub(ctx context.Context, c *sonarr.Client, r audit.Season, rels []sonarr.Release, set store.Settings) (*sonarr.Release, *relabelGrab) {
 	if !set.RelabelAnimeBytes || r.Season <= 1 {
 		return nil, nil
+	}
+	if active, err := e.St.Jobs(true, 1000); err != nil {
+		return nil, nil
+	} else {
+		n := 0
+		for _, j := range active {
+			if j.Kind == kindReview {
+				n++
+			}
+		}
+		if n >= maxReviewJobs {
+			e.warnOften("review-cap", fmt.Sprintf("%d relabelled packs are already waiting for your review; no more are fetched until you import or reject one", n))
+			return nil, nil
+		}
 	}
 	eps, err := c.Episodes(ctx, r.SeriesID, r.Season)
 	if err != nil || len(eps) == 0 {
@@ -1135,6 +1157,16 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 				return
 			}
 			if j.Status == "ready" {
+				return
+			}
+			if j.Kind == kindReview {
+				// The pack left Sonarr's queue while waiting for a human: they imported it by hand, or removed it. Either
+				// way consolidarr touched nothing, so it is neither "lost" nor retried straight away.
+				j.Status, j.Message = "done", "the pack left Sonarr's queue while awaiting review (imported by hand or removed); nothing was deleted by us"
+				e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "reviewed")
+				e.St.Skip("dub:"+skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "reviewed")
+				e.St.Event("info", label+": "+j.Message)
+				_ = e.St.UpdateJob(j)
 				return
 			}
 			j.Status = "lost"

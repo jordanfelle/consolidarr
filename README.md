@@ -91,7 +91,8 @@ Two rules about audio, both checked against the files themselves rather than rel
    against the season's episodes. Consolidarr cannot tell which cour such a pack is (an older cour's dub is published
    late too), so it **never verifies, imports or deletes it**: the job is parked as *holding* ("awaiting your review",
    with the download folder) and stays so, never auto-rejected, until you check it and import it in Sonarr (Manual Import
-   onto the season) or reject it here. Notifying you is a follow-up.
+   onto the season) or reject it here. At most 2 such packs wait at once; once one is imported, removed or rejected the
+   season is left alone for a week so the next cour's pack is not fetched. Notifying you is a follow-up.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started

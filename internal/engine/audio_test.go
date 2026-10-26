@@ -672,6 +672,12 @@ func TestAFinishedRelabelledPackWaitsForAHumanAndNothingIsTouched(t *testing.T) 
 	j, _ = v.st.Job(j.ID)
 	set := live()
 	set.HoldRejectHours = 1
+	oldProbe := probeFn
+	probeFn = func(store.Instance, string) (bool, string) {
+		t.Fatal("a review pack must not be probed")
+		return true, ""
+	}
+	t.Cleanup(func() { probeFn = oldProbe })
 	for i := 0; i < 3; i++ {
 		v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
 		j, _ = v.st.Job(j.ID)
@@ -682,5 +688,79 @@ func TestAFinishedRelabelledPackWaitsForAHumanAndNothingIsTouched(t *testing.T) 
 	}
 	if len(v.fake.deleted) != 0 || len(v.fake.removed) != 0 || v.fake.grabs != 0 {
 		t.Fatalf("nothing may be deleted, removed or regrabbed: deleted=%v removed=%v", v.fake.deleted, v.fake.removed)
+	}
+}
+
+func reviewJob(t *testing.T, v *env, age time.Duration) store.Job {
+	t.Helper()
+	j := v.job(t, time.Now().Add(-age))
+	_, _ = v.st.Exec(`update jobs set status='holding', kind=?, download_id='d' where id=?`, kindReview, j.ID)
+	j, _ = v.st.Job(j.ID)
+	return j
+}
+
+// The human imports the pack in Sonarr (or removes it): the queue item disappears. That is not a lost job.
+func TestAReviewPackThatLeavesTheQueueIsDoneNotLost(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := reviewJob(t, v, time.Hour)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+	got := v.status(t, j.ID)
+	if got.Status != "done" || !strings.Contains(got.Message, "nothing was deleted by us") {
+		t.Fatalf("got %s %q", got.Status, got.Message)
+	}
+	if !v.st.Skipped(skipKey(1, 1, 3)) || !v.st.Skipped("dub:"+skipKey(1, 1, 3)) {
+		t.Fatal("the season must be left alone after a review, or the next cour's pack is fetched")
+	}
+}
+
+// Rejecting a review pack must not hand the human the next wrong cour an hour later.
+func TestRejectingAReviewPackBacksTheSeasonOffForAWeek(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := reviewJob(t, v, time.Hour)
+	_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+	if _, err := v.e.RejectJob(context.Background(), j.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{skipKey(1, 1, 3), "dub:" + skipKey(1, 1, 3)} {
+		var until int64
+		if err := v.st.QueryRow(`select until from skips where key=?`, k).Scan(&until); err != nil || time.Until(time.Unix(until, 0)) < 6*24*time.Hour {
+			t.Fatalf("%s backed off until %v (%v), want about a week", k, time.Unix(until, 0), err)
+		}
+	}
+}
+
+// A download a review job waits on must never be offered to Adopt (which would run the normal replace on it).
+func TestAReviewDownloadIsNotOfferedForAdoption(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	reviewJob(t, v, time.Hour)
+	v.fake.queueItems = []map[string]any{{"id": 7, "seriesId": 1, "seasonNumber": 3, "downloadId": "d", "status": "completed",
+		"trackedDownloadState": "importBlocked", "trackedDownloadStatus": "warning", "title": "pack", "outputPath": "/dl/pack"}}
+	got, err := v.e.attentionFor(context.Background(), v.liveInst(), map[string]bool{})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("attention = %+v, err %v", got, err)
+	}
+}
+
+func TestOnlyAFewRelabelledPacksWaitForReviewAtOnce(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	pack := dualRelease("ab", "[GRP] Show S01 [Blu-ray][1080p][Dual Audio]", "Japanese")
+	pack["indexer"], pack["seasonNumber"] = "AnimeBytes (Prowlarr)", 1
+	pack["publishDate"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	v.fake.releases = []map[string]any{pack}
+	v.fake.episodes = []map[string]any{{"id": 601, "seasonNumber": 3, "episodeNumber": 1, "airDateUtc": time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)}}
+	for i := 0; i < maxReviewJobs; i++ {
+		id, err := v.st.AddJob(store.Job{InstID: 1, SeriesID: 100 + i, Season: 2, Title: "Other", Status: "holding", Kind: kindReview})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = id
+	}
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio, set.RelabelAnimeBytes = true, true, true
+	cycleOnce(v, set)
+	if v.fake.grabs != 0 {
+		t.Fatal("with the review slots full nothing more is fetched")
 	}
 }
