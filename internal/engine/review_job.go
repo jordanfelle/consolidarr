@@ -173,7 +173,7 @@ func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 		if q.Title == j.Release {
 			return q.DownloadID
 		}
-		if t, err := time.Parse(time.RFC3339, q.Added); err == nil && t.After(time.Unix(j.Created, 0).Add(-time.Minute)) {
+		if t, err := time.Parse(time.RFC3339, q.Added); err == nil && t.After(time.Unix(j.Created, 0).Add(-addedSlack)) {
 			seen := false
 			for _, id := range fresh {
 				seen = seen || strings.EqualFold(id, q.DownloadID)
