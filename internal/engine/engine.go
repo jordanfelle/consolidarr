@@ -325,7 +325,17 @@ func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.S
 }
 
 // Grab records the season's current files, grabs the release and starts tracking a job.
+// relabelGrab tells Sonarr which episodes a release really is (see sonarr.Client.GrabOverride).
+type relabelGrab struct {
+	rel        sonarr.Release
+	episodeIDs []int
+}
+
 func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer, kind string) (int64, error) {
+	return e.grab(ctx, inst, s, guid, indexerID, title, sizeGB, indexer, kind, nil)
+}
+
+func (e *Engine) grab(ctx context.Context, inst store.Instance, s audit.Season, guid string, indexerID int, title string, sizeGB float64, indexer, kind string, ov *relabelGrab) (int64, error) {
 	c := client(inst)
 	files, err := c.EpisodeFiles(ctx, s.SeriesID)
 	if err != nil {
@@ -348,7 +358,13 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 	if err != nil {
 		return 0, err
 	}
-	err = c.Grab(ctx, guid, indexerID)
+	send := func() error {
+		if ov != nil {
+			return c.GrabOverride(ctx, ov.rel, s.SeriesID, ov.episodeIDs)
+		}
+		return c.Grab(ctx, guid, indexerID)
+	}
+	err = send()
 	// Sonarr answers "Failed to connect to <client>" when the download client was unreachable: nothing was sent, so
 	// sending again cannot double-grab. A brief outage (qBittorrent's web UI stalls under load) is common; wait it out.
 	for attempt := 1; err != nil && clientUnreachable(err) && attempt < grabClientAttempts; attempt++ {
@@ -356,7 +372,7 @@ func (e *Engine) Grab(ctx context.Context, inst store.Instance, s audit.Season, 
 		case <-ctx.Done():
 		case <-time.After(time.Duration(attempt) * grabRetryWait):
 		}
-		err = c.Grab(ctx, guid, indexerID)
+		err = send()
 	}
 	if err != nil {
 		// a grab that timed out may still have reached the download client
@@ -544,6 +560,35 @@ func (e *Engine) dubSearch(ctx context.Context, c *sonarr.Client, r audit.Season
 	return rels, err
 }
 
+// relabelledDub looks, among the releases of the dub search, for an AnimeBytes pack that is really this later season
+// but numbered S01 (see audit.PickOpts.Relabelled). It returns the pack and the override telling Sonarr its episodes.
+func (e *Engine) relabelledDub(ctx context.Context, c *sonarr.Client, r audit.Season, rels []sonarr.Release, set store.Settings) (*sonarr.Release, *relabelGrab) {
+	if !set.RelabelAnimeBytes || r.Season <= 1 {
+		return nil, nil
+	}
+	eps, err := c.Episodes(ctx, r.SeriesID, r.Season)
+	if err != nil || len(eps) == 0 {
+		return nil, nil
+	}
+	var since time.Time
+	ids := make([]int, 0, len(eps))
+	for _, ep := range eps {
+		ids = append(ids, ep.ID)
+		t, err := time.Parse(time.RFC3339, ep.AirDateUTC)
+		if err != nil {
+			return nil, nil // an episode with no air date: the season is not provably over
+		}
+		if t.After(since) {
+			since = t
+		}
+	}
+	p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true, Relabelled: true, Since: since})
+	if p == nil {
+		return nil, nil
+	}
+	return p, &relabelGrab{rel: *p, episodeIDs: ids}
+}
+
 // topUp starts new replacements up to the in-flight cap (and, in a one-off run, up to its limit). It
 // returns true when there is nothing more to start: the limit was reached or every candidate was tried.
 func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings) bool {
@@ -615,10 +660,13 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		return false // an unreadable queue is not an empty one; regrabbing seasons already downloading would waste data
 	}
 	// start grabs (or, in a dry run, only reports) a picked pack. It returns true once the caller should stop.
-	start := func(r audit.Season, p *sonarr.Release, kind string, key string) (stop bool) {
+	start := func(r audit.Season, p *sonarr.Release, kind string, key string, ov *relabelGrab) (stop bool) {
 		what := ""
 		if kind == "dub" {
 			what = "dual-audio "
+		}
+		if ov != nil {
+			what += "relabelled (numbered S01 by the indexer) "
 		}
 		if set.DryRun {
 			e.St.Event("info", fmt.Sprintf("[dry run] would grab %s S%02d <- %s%s (%.1f GB, %s)", r.Title, r.Season, what, p.Title, float64(p.Size)/1e9, p.Indexer))
@@ -628,7 +676,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			}
 			return false
 		}
-		if _, err := e.Grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer, kind); err != nil {
+		if _, err := e.grab(ctx, inst, r, p.GUID, p.IndexerID, p.Title, float64(p.Size)/1e9, p.Indexer, kind, ov); err != nil {
 			wait := 24 * time.Hour
 			if clientUnreachable(err) {
 				wait = time.Hour // the download client was down, not the pack: try again soon
@@ -705,7 +753,11 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 				continue
 			}
 			if p := audit.Pick(dubRels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort, Dub: true}); p != nil {
-				start(r, p, "dub", "dub:"+key)
+				start(r, p, "dub", "dub:"+key, nil)
+				continue
+			}
+			if p, ov := e.relabelledDub(ctx, c, r, dubRels, set); p != nil {
+				start(r, p, "dub", "dub:"+key, ov)
 				continue
 			}
 			// Packs usually appear only after the season ends and dubs lag the sub, so look again in a week.
@@ -722,7 +774,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 			e.St.Skip(key, 7*24*time.Hour, "no pack")
 			continue
 		}
-		start(r, p, "", key)
+		start(r, p, "", key, nil)
 	}
 	return true
 }

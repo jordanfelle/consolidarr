@@ -166,8 +166,34 @@ type Release struct {
 	Languages  []struct {
 		Name string `json:"name"`
 	} `json:"languages"`
-	Rejected   bool     `json:"rejected"`
-	Rejections []string `json:"rejections"`
+	Rejected    bool     `json:"rejected"`
+	Rejections  []string `json:"rejections"`
+	PublishDate string   `json:"publishDate"`
+
+	// quality and languages exactly as Sonarr sent them, so an override grab can hand them back unchanged.
+	rawQuality, rawLanguages json.RawMessage
+}
+
+// UnmarshalJSON also keeps the raw quality and languages: Sonarr's override grab wants both back as it sent them.
+func (r *Release) UnmarshalJSON(b []byte) error {
+	type plain Release
+	if err := json.Unmarshal(b, (*plain)(r)); err != nil {
+		return err
+	}
+	var raw struct {
+		Quality, Languages json.RawMessage
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	r.rawQuality, r.rawLanguages = raw.Quality, raw.Languages
+	return nil
+}
+
+// Published is when the indexer published the release; zero when Sonarr did not say.
+func (r Release) Published() time.Time {
+	t, _ := time.Parse(time.RFC3339, r.PublishDate)
+	return t
 }
 
 type QueueItem struct {
@@ -340,6 +366,17 @@ func (c *Client) Releases(ctx context.Context, seriesID, season int) (out []Rele
 
 func (c *Client) Grab(ctx context.Context, guid string, indexerID int) error {
 	return c.do(ctx, "POST", "/release", map[string]any{"guid": guid, "indexerId": indexerID}, nil, 3*time.Minute)
+}
+
+// GrabOverride downloads a release but tells Sonarr which series and episodes it is, for releases Sonarr numbers
+// wrongly (AnimeBytes calls every cour "S01"). Sonarr then tracks, imports and reports the download against those
+// episodes, and refuses to import a file that parses to any other episode.
+func (c *Client) GrabOverride(ctx context.Context, r Release, seriesID int, episodeIDs []int) error {
+	if len(r.rawQuality) == 0 || len(r.rawLanguages) == 0 || len(episodeIDs) == 0 {
+		return fmt.Errorf("cannot override-grab %q: missing quality, languages or episodes", r.Title)
+	}
+	return c.do(ctx, "POST", "/release", map[string]any{"guid": r.GUID, "indexerId": r.IndexerID, "shouldOverride": true,
+		"seriesId": seriesID, "episodeIds": episodeIDs, "quality": r.rawQuality, "languages": r.rawLanguages}, nil, 3*time.Minute)
 }
 
 // Queue returns every item in Sonarr's download queue, following pagination. Reading only the first page would

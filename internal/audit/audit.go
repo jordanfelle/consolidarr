@@ -4,6 +4,7 @@ package audit
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 )
@@ -129,6 +130,18 @@ type PickOpts struct {
 	// Dub picks a dual-audio pack for a season that has no English audio: only packs advertising an English dub
 	// qualify, and the pack may be a lower source (a web dub for a Blu-ray sub) as long as it is not lower resolution.
 	Dub bool
+	// Relabelled accepts, instead of packs numbered as the season, AnimeBytes packs numbered "S01" that were published
+	// after Since (the season's last air date). AnimeBytes has no seasons: every cour is its own group and Prowlarr
+	// stamps "S01" on all of them, so the dub of a later cour only ever shows up as a season 1 pack. Dub only.
+	Relabelled bool
+	Since      time.Time
+}
+
+// relabelled reports whether x is an AnimeBytes pack numbered S01 that can only be the later season s: it appeared
+// after that season finished airing, so it cannot be the original season 1 release.
+func relabelled(x sonarr.Release, s Season, o PickOpts) bool {
+	return o.Relabelled && o.Dub && s.Season > 1 && x.SeasonNum == 1 && !o.Since.IsZero() &&
+		strings.Contains(strings.ToLower(x.Indexer), "animebytes") && x.Published().After(o.Since)
 }
 
 // Pick chooses a pack deterministically. Sonarr's own rejections are honoured except
@@ -136,7 +149,7 @@ type PickOpts struct {
 func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 	var c []sonarr.Release
 	for _, x := range rels {
-		if !x.FullSeason || x.SeasonNum != s.Season || (o.MaxGB > 0 && float64(x.Size)/1e9 > o.MaxGB) {
+		if !x.FullSeason || (x.SeasonNum != s.Season && !relabelled(x, s, o)) || (o.MaxGB > 0 && float64(x.Size)/1e9 > o.MaxGB) {
 			continue
 		}
 		if o.Dub {
@@ -151,7 +164,7 @@ func Pick(rels []sonarr.Release, s Season, o PickOpts) *sonarr.Release {
 		if s.Protected > 0 && !IsDual(x) {
 			continue
 		}
-		if len(blockingFor(x, o.Dub)) > 0 {
+		if len(blockingFor(x, o.Dub, x.SeasonNum != s.Season)) > 0 {
 			continue
 		}
 		c = append(c, x)
@@ -197,7 +210,7 @@ var ignorableForDub = []string{
 	"Full season pack",
 }
 
-func blockingFor(x sonarr.Release, dub bool) []string {
+func blockingFor(x sonarr.Release, dub, relabelled bool) []string {
 	if !dub {
 		return Blocking(x)
 	}
@@ -207,6 +220,8 @@ func blockingFor(x sonarr.Release, dub bool) []string {
 		for _, p := range ignorableForDub {
 			ignore = ignore || strings.HasPrefix(m, p)
 		}
+		// A relabelled pack is a different season to Sonarr, so it was "not requested" by the search for this one.
+		ignore = ignore || (relabelled && strings.HasPrefix(m, "Episode wasn't requested"))
 		if !ignore {
 			b = append(b, m)
 		}
@@ -215,7 +230,7 @@ func blockingFor(x sonarr.Release, dub bool) []string {
 }
 
 // BlockingForDub is Blocking as it applies to a dual-audio search (see ignorableForDub).
-func BlockingForDub(x sonarr.Release) []string { return blockingFor(x, true) }
+func BlockingForDub(x sonarr.Release) []string { return blockingFor(x, true, false) }
 
 // Blocking returns the rejections that actually matter.
 func Blocking(x sonarr.Release) []string {

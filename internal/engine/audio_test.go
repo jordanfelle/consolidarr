@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -611,5 +612,50 @@ func TestTheDubSearchRateIsASetting(t *testing.T) {
 				t.Fatalf("searches in one cycle = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// AnimeBytes numbers every cour "S01": the dub of season 3 only ever shows up as a season 1 pack, published after
+// season 3 aired. With the setting on it is grabbed through Sonarr's override so Sonarr files it under season 3.
+func TestARelabelledAnimeBytesPackIsGrabbedWithAnOverrideForTheLaterSeason(t *testing.T) {
+	grabPause = 0
+	v := setup(t, []int{1, 2, 3})
+	pack := dualRelease("ab", "[GRP] Show S01 [Blu-ray][1080p][Dual Audio]", "Japanese")
+	pack["indexer"], pack["seasonNumber"] = "AnimeBytes (Prowlarr)", 1
+	pack["publishDate"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	pack["rejections"] = []string{"Episode wasn't requested: 1x1-3", "Full season pack"}
+	v.fake.releases = []map[string]any{pack}
+	v.fake.episodes = []map[string]any{
+		{"id": 601, "seasonNumber": 3, "episodeNumber": 1, "airDateUtc": time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)},
+		{"id": 602, "seasonNumber": 3, "episodeNumber": 2, "airDateUtc": time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)}}
+	seedDubSeason(t, v, 0)
+	set := live()
+	set.SchedulerEnabled, set.DualAudio = true, true
+
+	cycleOnce(v, set)
+	if v.fake.grabs != 0 {
+		t.Fatal("with the setting off the relabelled pack must not be taken")
+	}
+
+	set.RelabelAnimeBytes = true
+	v.st.Skip("dub:"+skipKey(1, 1, 3), -time.Hour, "")
+	cycleOnce(v, set)
+	if v.fake.grabs != 1 {
+		t.Fatalf("grabs = %d, want the relabelled pack taken once", v.fake.grabs)
+	}
+	var body struct {
+		GUID           string          `json:"guid"`
+		ShouldOverride bool            `json:"shouldOverride"`
+		SeriesID       int             `json:"seriesId"`
+		EpisodeIDs     []int           `json:"episodeIds"`
+		Quality        json.RawMessage `json:"quality"`
+		Languages      json.RawMessage `json:"languages"`
+	}
+	if err := json.Unmarshal([]byte(v.fake.grabBody), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.GUID != "ab" || !body.ShouldOverride || body.SeriesID != 1 || len(body.EpisodeIDs) != 2 || body.EpisodeIDs[0] != 601 ||
+		!strings.Contains(string(body.Quality), "WEBDL-1080p") || !strings.Contains(string(body.Languages), "Japanese") {
+		t.Fatalf("override body = %s", v.fake.grabBody)
 	}
 }
