@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jordanfelle/consolidarr/internal/sonarr"
 )
@@ -278,6 +279,51 @@ func TestTheDubPassStillHonoursTheRejectionsThatMatter(t *testing.T) {
 			if len(blocked) == 0 {
 				t.Errorf("a pack under the size limit must stay blocked: %q", x.Title)
 			}
+		}
+	}
+}
+
+// AnimeBytes numbers every cour "S01", so the dub of season 3 arrives as a season 1 pack. Fields as Sonarr returned
+// them for Oshi no Ko (torrent 1233944 and an older real S1 pack).
+func relabelRel(guid, indexer string, published string, rej ...string) sonarr.Release {
+	r := rel(guid, indexer, 19.9, 65, q("Bluray-1080p", "bluray", 1080), rej...)
+	r.SeasonNum, r.Title, r.PublishDate = 1, "[YURASUKA] Oshi no Ko S01 [Blu-ray][1080p][Opus 2.0][Dual Audio]", published
+	return r
+}
+
+func TestARelabelledAnimeBytesPackStandsInForALaterSeasonOnlyWhenPublishedAfterItAired(t *testing.T) {
+	aired := time.Date(2026, 3, 25, 0, 0, 0, 0, time.UTC)
+	s := Season{Season: 3, CurRank: 10802}
+	notReq := "Episode wasn't requested: 1x1-11"
+	fresh := relabelRel("s3", "AnimeBytes (Prowlarr)", "2026-07-25T05:24:37Z", notReq, "Full season pack")
+	old := relabelRel("s1", "AnimeBytes (Prowlarr)", "2025-11-15T07:40:27Z", notReq, "Full season pack")
+	o := PickOpts{Dub: true, Relabelled: true, Since: aired}
+	if p := Pick([]sonarr.Release{old, fresh}, s, o); p == nil || p.GUID != "s3" {
+		t.Fatalf("want the pack published after the season aired, got %+v", p)
+	}
+	if p := Pick([]sonarr.Release{old}, s, o); p != nil {
+		t.Fatalf("a pack published before the season aired is the real season 1: %+v", p)
+	}
+	for name, mod := range map[string]func(*PickOpts, *sonarr.Release, *Season){
+		"off by default":    func(o *PickOpts, _ *sonarr.Release, _ *Season) { o.Relabelled = false },
+		"not the dub pass":  func(o *PickOpts, _ *sonarr.Release, _ *Season) { o.Dub = false },
+		"another indexer":   func(_ *PickOpts, r *sonarr.Release, _ *Season) { r.Indexer = "Nyaa.si" },
+		"not numbered S01":  func(_ *PickOpts, r *sonarr.Release, _ *Season) { r.SeasonNum = 2 },
+		"season 1 itself":   func(_ *PickOpts, _ *sonarr.Release, s *Season) { s.Season = 1 },
+		"no air date known": func(o *PickOpts, _ *sonarr.Release, _ *Season) { o.Since = time.Time{} },
+		"not dual audio":    func(_ *PickOpts, r *sonarr.Release, _ *Season) { r.Title = "[Group] Oshi no Ko S01 [1080p]" },
+		"other rejection": func(_ *PickOpts, r *sonarr.Release, _ *Season) {
+			r.Rejections = append(r.Rejections, "Release is blocklisted")
+		},
+		"size below minimum": func(_ *PickOpts, r *sonarr.Release, _ *Season) {
+			r.Rejections = append(r.Rejections, "15.9 GB is smaller than minimum allowed 16.0 GB")
+		},
+		"unpublished/no date": func(_ *PickOpts, r *sonarr.Release, _ *Season) { r.PublishDate = "" },
+	} {
+		oo, rr, ss := o, fresh, s
+		mod(&oo, &rr, &ss)
+		if p := Pick([]sonarr.Release{rr}, ss, oo); p != nil {
+			t.Errorf("%s: still picked %q", name, p.Title)
 		}
 	}
 }

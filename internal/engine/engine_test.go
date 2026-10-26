@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +33,7 @@ type fakeSonarr struct {
 	deleted       [][]int
 	imports       int
 	grabs         int
+	grabBody      string           // the JSON of the last POST /release
 	searches      [][2]int         // SeasonSearch commands (series, season)
 	onDelete      func()           // called as a delete request arrives, before it is recorded
 	failImport    int              // fail this many import commands with a 500
@@ -305,8 +307,10 @@ func newFake(packEps []int) *fakeSonarr {
 			http.Error(w, "grab refused", 500)
 			return
 		}
+		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.grabs++
+		f.grabBody = string(body)
 		f.mu.Unlock()
 		js(w, map[string]bool{"ok": true})
 	})

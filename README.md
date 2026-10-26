@@ -83,6 +83,17 @@ Two rules about audio, both checked against the files themselves rather than rel
    exists yet the season is looked at again in a week (dubs lag). The search is for the season's first episode, whose results include the season packs covering it: for anime Sonarr's own whole-season search asks the indexers about every episode separately (minutes, gigabytes of Sonarr memory on a real library), this takes 30-50 s whatever the season length. Searches are paced (4 per cycle); *Skip seasons over (files)* (default 0, no limit) is an escape hatch. This runs independently of *Include anime*, and the
    **Seasons** page has a *Needs English dub* filter listing the candidates.
 
+   **AnimeBytes labels every cour `S01`** (it has no seasons; each cour is its own group and Prowlarr stamps `S01` on
+   all of them), so the dub of season 2 or 3 only ever turns up as a season 1 pack, which Sonarr rejects for that season
+   ("Episode wasn't requested: 1x1-11"). With *accept AnimeBytes packs numbered S01 for a later season* on (off by
+   default), an AnimeBytes dual-audio `S01` full-season pack **published after the season finished airing** is
+   downloaded for that season (seasons 2 and up only), grabbed through Sonarr's release override so Sonarr tracks it
+   against the season's episodes. Consolidarr cannot tell which cour such a pack is (an older cour's dub is published
+   late too), so it **never verifies, imports or deletes it**: the job is parked as *holding* ("awaiting your review",
+   with the download folder) and stays so, never auto-rejected, until you check it and import it in Sonarr (Manual Import
+   onto the season) or reject it here. At most 2 such packs wait at once; once one is imported, removed or rejected the
+   season is left alone for a week so the next cour's pack is not fetched. Notifying you is a follow-up.
+
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started
 at all, so no download sits held for ever. Sonarr's recycle bin (Media Management) is the safety net for anything you

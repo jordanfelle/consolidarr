@@ -288,7 +288,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 		if why == "" {
 			rv := e.remapVerdict(inst, set, v, plan, byPath)
 			if rv.State == "ok" {
-				if h := audioGate(inst, rv, mappedEpisodes(plan.Files, eps), requiredEnglish(protected, rv.ExpectedEps, j.Kind == "dub"), j.Kind == "dub"); h != nil {
+				if h := audioGate(inst, rv, mappedEpisodes(plan.Files, eps), requiredEnglish(protected, rv.ExpectedEps, isDub(j.Kind)), isDub(j.Kind)); h != nil {
 					return *h
 				}
 			}
@@ -344,7 +344,7 @@ func (e *Engine) verifyNow(ctx context.Context, inst store.Instance, c *sonarr.C
 	case v.Unreach != "" && !set.AllowUnverified:
 		return hold(holdOther, fmt.Sprintf("cannot verify: ffprobe cannot read %s. Mount the download directory and set the instance path fields, or enable 'Allow unverified' in Settings", v.Unreach))
 	}
-	if h := audioGate(inst, v, packByPath, requiredEnglish(protected, v.ExpectedEps, j.Kind == "dub"), j.Kind == "dub"); h != nil {
+	if h := audioGate(inst, v, packByPath, requiredEnglish(protected, v.ExpectedEps, isDub(j.Kind)), isDub(j.Kind)); h != nil {
 		return *h
 	}
 	v.State = "ok"

@@ -103,11 +103,20 @@ func (e *Engine) attentionFor(ctx context.Context, inst store.Instance, owned ma
 	if err != nil {
 		return nil, err
 	}
+	// A download a relabelled-pack job is waiting on is for a human, never an "adopt" into a normal replace.
+	review := map[string]bool{}
+	if jobs, err := e.St.Jobs(false, 1000); err == nil {
+		for _, j := range jobs {
+			if j.Kind == kindReview && j.DownloadID != "" {
+				review[j.DownloadID] = true
+			}
+		}
+	}
 	type key struct{ s, n int }
 	groups := map[key]*Attention{}
 	counts := map[key]map[string]*Reason{}
 	for _, q := range queue {
-		if q.SeasonNumber == 0 || !stuck(q) || owned[skipKey(inst.ID, q.SeriesID, q.SeasonNumber)] {
+		if q.SeasonNumber == 0 || !stuck(q) || review[q.DownloadID] || owned[skipKey(inst.ID, q.SeriesID, q.SeasonNumber)] {
 			continue
 		}
 		k := key{q.SeriesID, q.SeasonNumber}
@@ -373,7 +382,11 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 	if research {
 		msg += "; searching for another"
 	}
-	return j, e.rejectBody(ctx, client(inst), &j, research, time.Hour, msg) // an hour lets a re-search settle
+	skip := time.Hour // an hour lets a re-search settle
+	if j.Kind == kindReview {
+		skip = reviewBackOff // the next wrong cour's pack would qualify just as well: leave the season alone
+	}
+	return j, e.rejectBody(ctx, client(inst), &j, research, skip, msg)
 }
 
 // rejectBody discards a job's pack (removed from the queue and the download client, release blocklisted) and ends the
@@ -411,7 +424,7 @@ func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job,
 	_ = e.St.UpdateJob(*j)
 	e.St.SetKV(holdKey(j.ID), "")
 	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), skip, "rejected")
-	if j.Kind == "dub" {
+	if isDub(j.Kind) {
 		e.St.Skip("dub:"+skipKey(j.InstID, j.SeriesID, j.Season), skip, "rejected") // do not pull the next "dual" pack straight away
 	}
 	e.St.Event("info", fmt.Sprintf("rejected the pack for %s S%02d (research=%v): %s", j.Title, j.Season, research, msg))
