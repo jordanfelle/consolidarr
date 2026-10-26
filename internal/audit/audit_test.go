@@ -327,3 +327,27 @@ func TestARelabelledAnimeBytesPackStandsInForALaterSeasonOnlyWhenPublishedAfterI
 		}
 	}
 }
+
+// Live (#88): a 1 TB "Complete [Extras]" whole-series torrent was picked for one cour.
+func TestARelabelledPackThatSaysItHoldsMoreThanOneSeasonIsNeverPicked(t *testing.T) {
+	aired := time.Date(2026, 3, 25, 0, 0, 0, 0, time.UTC)
+	s := Season{Season: 8, CurRank: 10802}
+	o := PickOpts{Dub: true, Relabelled: true, Since: aired}
+	for _, title := range []string{
+		"[JySzE] Naruto Shippuden [Dual Audio] [Complete] [Extras] [x265]",
+		"[Grp] Show Complete Collection Dual Audio",
+		"[Grp] Show S01-S08 Dual Audio",
+		"[Grp] Show Season 1-8 Dual Audio",
+		"[Grp] Show Batch Dual Audio",
+	} {
+		r := relabelRel("x", "AnimeBytes (Prowlarr)", "2026-07-25T05:24:37Z")
+		r.Title = title
+		if p := Pick([]sonarr.Release{r}, s, o); p != nil {
+			t.Errorf("picked %q", title)
+		}
+	}
+	ok := relabelRel("ok", "AnimeBytes (Prowlarr)", "2026-07-25T05:24:37Z") // "[YURASUKA] Oshi no Ko S01 [Blu-ray]..."
+	if p := Pick([]sonarr.Release{ok}, s, o); p == nil {
+		t.Fatal("an ordinary single-cour pack must still be picked")
+	}
+}

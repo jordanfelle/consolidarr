@@ -46,10 +46,11 @@ func TestRejectingAParkedPackRemovesTheTorrent(t *testing.T) {
 	q := newFakeQbit(t, "consolidarr-review", 1, "p/01.mkv", "p/02.mkv", "p/03.mkv")
 	v, j := reviewEnv(t, q)
 	_, _ = v.st.SaveInstance(storeInstance(v))
+	v.st.SetKV(reviewCatKey(j.ID), "btn") // where it was parked from
 	if _, err := v.e.RejectJob(context.Background(), j.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(q.log(), "remove:true") {
+	if !strings.Contains(q.log(), "park:seed-btn") || strings.Contains(q.log(), "remove") {
 		t.Fatalf("qBittorrent changes: %q", q.log())
 	}
 	if got := v.status(t, j.ID); got.Status != "failed" || len(v.fake.removed) != 0 {

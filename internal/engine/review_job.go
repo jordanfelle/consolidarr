@@ -88,6 +88,9 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 			e.warnOften(fmt.Sprintf("review-cat:%d", j.ID), label+": could not prepare the qBittorrent category "+cat+": "+err.Error())
 			return
 		}
+		if e.St.KV(reviewCatKey(j.ID)) == "" {
+			e.St.SetKV(reviewCatKey(j.ID), tr.Category) // where it came from, so a rejected pack goes to the matching seed category
+		}
 		if err := e.Qbit.Park(ctx, j.DownloadID, cat); err != nil {
 			e.warnOften(fmt.Sprintf("review-park:%d", j.ID), label+": could not move the torrent out of the arr's category: "+err.Error())
 			return
@@ -118,11 +121,12 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		}
 	}
 	if verdict == reviewMismatch {
-		if err := e.Qbit.Remove(ctx, j.DownloadID, true); err != nil {
-			e.warnOften(fmt.Sprintf("review-remove:%d", j.ID), label+": could not remove the wrong pack from qBittorrent: "+err.Error())
+		dest, err := e.shelve(ctx, j, cat)
+		if err != nil {
+			e.warnOften(fmt.Sprintf("review-shelve:%d", j.ID), label+": could not set the wrong pack aside in qBittorrent: "+err.Error())
 			return
 		}
-		finish("failed", "discarded: this pack is not this season ("+detail+"); your files were not touched", reviewBackOff)
+		finish("failed", "set aside: this pack is not this season ("+detail+"). The torrent and its data were kept ("+dest+"); your files were not touched", reviewBackOff)
 		return
 	}
 	if tr.Progress < 1 {
@@ -189,8 +193,8 @@ func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 	return "" // none yet, or several: never guess which one is ours
 }
 
-// RejectReview discards a relabelled pack on a human's say-so: the parked torrent and its data are removed from
-// qBittorrent (a reject must not orphan a 60 GB download), the job ends failed and the season is left alone for a week.
+// RejectReview sets a relabelled pack aside on a human's say-so: the torrent is moved to the matching seed category and
+// kept (a torrent with data is never deleted), the job ends failed and the season is left alone for a week.
 // Sonarr's queue is not touched: the pack is no longer in it, and guessing at a "same season" item could remove another
 // download.
 func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, error) {
@@ -202,6 +206,7 @@ func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, erro
 		// later with nobody to park or remove it. Wait for it to bind (or for the job to give up by itself).
 		return j, errors.New("the download has not appeared in Sonarr's queue yet, so there is nothing to remove; try again in a minute")
 	}
+	shelved := ""
 	{
 		tr, err := e.Qbit.Info(ctx, j.DownloadID)
 		switch {
@@ -211,17 +216,42 @@ func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, erro
 		case tr.AddedOn > 0 && time.Unix(tr.AddedOn, 0).Before(time.Unix(j.Created, 0).Add(-addedSlack)):
 			// not ours: leave the torrent alone and only end the job
 		default:
-			if err := e.Qbit.Remove(ctx, j.DownloadID, true); err != nil {
+			dest, err := e.shelve(ctx, j, tr.Category)
+			if err != nil {
 				return j, err
 			}
+			shelved = " The torrent and its data were kept (" + dest + ")."
 		}
 	}
-	j.Status, j.Message = "failed", "pack rejected: the torrent and its data were removed from qBittorrent; your files were not touched"
+	j.Status, j.Message = "failed", "pack rejected."+shelved+" Your files were not touched"
 	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "rejected")
 	e.St.Skip("dub:"+skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "rejected")
 	e.St.SetKV(holdKey(j.ID), "")
 	e.St.Event("info", fmt.Sprintf("rejected the relabelled pack for %s S%02d", j.Title, j.Season))
 	return j, e.St.UpdateJob(j)
+}
+
+func reviewCatKey(id int64) string { return fmt.Sprintf("reviewcat:%d", id) }
+
+// shelve sets a wrong or rejected pack aside. A torrent with data is NEVER deleted (operator rule): it goes to the seed
+// category matching the one it came from (btn -> seed-btn) and stays there. If that category does not exist, it is left
+// in the review category instead. It returns where the torrent now is.
+func (e *Engine) shelve(ctx context.Context, j store.Job, currentCat string) (string, error) {
+	orig := e.St.KV(reviewCatKey(j.ID))
+	if orig == "" {
+		orig = currentCat
+	}
+	dest := orig
+	if !strings.HasPrefix(dest, "seed-") {
+		dest = "seed-" + dest
+	}
+	if orig == "" || !e.Qbit.HasCategory(ctx, dest) {
+		return "left in category " + currentCat, nil
+	}
+	if err := e.Qbit.Park(ctx, j.DownloadID, dest); err != nil {
+		return "", err
+	}
+	return "moved to " + dest, nil
 }
 
 func splitVerdict(s string) (verdict, detail string) {
