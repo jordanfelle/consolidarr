@@ -38,8 +38,8 @@ func TestAPackNamedForTheSeasonMatches(t *testing.T) {
 	if v, why := reviewCheck(names, target, target, 2); v != reviewMatch {
 		t.Fatalf("verdict %s (%s), want match", v, why)
 	}
-	if v, _ := reviewCheck(names, target, target, 3); v != reviewMismatch {
-		t.Fatalf("S02 files for season 3 must be a mismatch, got %s", v)
+	if v, _ := reviewCheck(names, target, target, 3); v != reviewUnknown {
+		t.Fatalf("S02 numbering for season 3 may just be scene numbering: a human decides, got %s", v)
 	}
 }
 

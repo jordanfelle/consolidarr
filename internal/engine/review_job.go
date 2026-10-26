@@ -20,7 +20,7 @@ const DefaultReviewCategory = "consolidarr-review"
 const (
 	reviewBindWait   = 30 * time.Minute // how long a grab may take to show up in Sonarr's queue
 	reviewGoneChecks = 3                // consecutive "qBittorrent does not have it" answers before the job is closed
-	addedSlack       = 2 * time.Minute  // a torrent added this long before the grab was not added by the grab
+	addedSlack       = 30 * time.Second // a torrent added longer than this before the grab was not added by the grab
 )
 
 func reviewKey(id int64) string     { return fmt.Sprintf("reviewcheck:%d", id) }
@@ -131,9 +131,7 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 			j.Status, j.Progress = "downloading", prog // an unchanged job is not rewritten, so `updated` means "last progress"
 			_ = e.St.UpdateJob(j)
 		case time.Since(time.Unix(j.Updated, 0)) > stallAfter:
-			j.Status, j.Message = "failed", fmt.Sprintf("the download has not moved for %d hours (%d%%); your files were not touched. The torrent is still in qBittorrent (%s): remove it there or reject the pack here", int(stallAfter.Hours()), prog, cat)
-			e.St.Event("warn", label+": "+j.Message)
-			_ = e.St.UpdateJob(j)
+			finish("failed", fmt.Sprintf("the download has not moved for %d hours (%d%%); your files were not touched. The torrent is still in qBittorrent (%s): Reject pack removes it", int(stallAfter.Hours()), prog, cat), reviewBackOff)
 		}
 		return
 	}
@@ -150,10 +148,10 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 }
 
 // bindReview finds the Sonarr queue item of this job's grab by its exact release title, and only one no other job
-// already owns. It never falls back to "the biggest download of that season": an unrelated grab must not be adopted
+// (active job) already owns. It never falls back to "the biggest download of that season": an unrelated grab must not be adopted
 // (and then possibly thrown away).
 func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
-	all, err := e.St.Jobs(false, 100000)
+	all, err := e.St.Jobs(true, 100000) // active only: a finished job's hash must not block a later grab of the same release
 	if err != nil || j.Release == "" {
 		return ""
 	}
@@ -179,7 +177,12 @@ func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, erro
 	if e.Qbit == nil {
 		return j, errors.New("CONSOLIDARR_QBIT_URL is not set, so consolidarr cannot reach this torrent; remove it in qBittorrent by hand")
 	}
-	if j.DownloadID != "" {
+	if j.DownloadID == "" {
+		// The grab has not shown up in Sonarr's queue yet. Ending the job now would strand it: the torrent would land
+		// later with nobody to park or remove it. Wait for it to bind (or for the job to give up by itself).
+		return j, errors.New("the download has not appeared in Sonarr's queue yet, so there is nothing to remove; try again in a minute")
+	}
+	{
 		tr, err := e.Qbit.Info(ctx, j.DownloadID)
 		switch {
 		case errors.Is(err, qbit.ErrNotFound):

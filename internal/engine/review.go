@@ -42,13 +42,10 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 		case f.HasSxE && f.Season > 0:
 			if f.Season == season {
 				here++
-			} else if f.Season == 1 && season > 1 {
-				// A relabelled pack is "S01" by definition (the indexer calls every cour that), so an S01 in the file
-				// names says nothing about which cour it is.
-			} else {
-				elsewhere++
-				other[f.Season]++
 			}
+			// Any other SxxEyy is neutral too: scene numbering is not TVDB's (an S02 pack can be TVDB season 3), and
+			// "S01" is what the indexer calls every cour. Only an episode title that belongs to another season counts
+			// against a pack, because that cannot be a numbering convention.
 		default:
 			if _, ok := order.TitleAnywhere(n, target); ok {
 				here++

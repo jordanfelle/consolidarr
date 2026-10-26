@@ -375,7 +375,12 @@ func (e *Engine) RejectJob(ctx context.Context, jobID int64, research bool) (sto
 		return j, fmt.Errorf("job is %s; nothing to reject", j.Status)
 	}
 	if j.Kind == kindReview && e.Qbit != nil {
-		return e.RejectReview(ctx, j) // the pack is parked in qBittorrent, out of Sonarr's queue: remove it there
+		nj, err := e.RejectReview(ctx, j) // the pack is parked in qBittorrent, out of Sonarr's queue: remove it there
+		if err == nil && research {
+			nj.Message += " ('search again' does not apply to relabelled packs: the season is left alone for a week)"
+			_ = e.St.UpdateJob(nj)
+		}
+		return nj, err
 	}
 	inst, err := e.St.Instance(j.InstID)
 	if err != nil {
