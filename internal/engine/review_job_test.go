@@ -68,6 +68,11 @@ func newFakeQbit(t *testing.T, category string, progress float64, files ...strin
 		f.changes = append(f.changes, "park:"+r.Form.Get("category"))
 		f.mu.Unlock()
 	})
+	mux.HandleFunc("/api/v2/torrents/stop", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.changes = append(f.changes, "stop")
+		f.mu.Unlock()
+	})
 	mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
 		f.mu.Lock()

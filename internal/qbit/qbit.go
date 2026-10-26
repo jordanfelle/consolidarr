@@ -138,6 +138,16 @@ func (c *Client) Park(ctx context.Context, hash, category string) error {
 	return c.do(ctx, "POST", "/torrents/setCategory", url.Values{"hashes": {strings.ToLower(hash)}, "category": {category}}, nil)
 }
 
+// Stop pauses the torrent (qBittorrent 5 calls it stop, 4.x pause). Nothing is removed: it only stops a wrong pack from
+// downloading the rest of itself.
+func (c *Client) Stop(ctx context.Context, hash string) error {
+	form := url.Values{"hashes": {strings.ToLower(hash)}}
+	if err := c.do(ctx, "POST", "/torrents/stop", form, nil); err == nil {
+		return nil
+	}
+	return c.do(ctx, "POST", "/torrents/pause", form, nil)
+}
+
 // HasCategory reports whether qBittorrent already has the category (false on any error). There is deliberately no way
 // to delete a torrent here: the operator's rule is that a torrent with data is only ever moved to a seed category.
 func (c *Client) HasCategory(ctx context.Context, name string) bool {

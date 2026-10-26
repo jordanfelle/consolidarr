@@ -337,21 +337,23 @@ func (e *Engine) RetryImport(ctx context.Context, inst store.Instance, seriesID,
 
 type RemoveOpts struct {
 	Blocklist   bool `json:"blocklist"`   // never grab this release again
-	DeleteFiles bool `json:"deleteFiles"` // also delete the download from the client (library files are untouched)
+	DeleteFiles bool `json:"deleteFiles"` // ignored: a downloaded torrent is never deleted, only moved to its seed category
 	Research    bool `json:"research"`    // then search the season again
 }
 
-// RemovePack takes a stuck pack out of Sonarr's queue.
+// RemovePack takes a stuck pack out of Sonarr's queue. The download itself is kept: with qBittorrent access it is moved
+// to the matching seed category first (so Sonarr does not pick it up again), without it, it stays where it is.
 func (e *Engine) RemovePack(ctx context.Context, inst store.Instance, seriesID, season int, o RemoveOpts) (removed int, searched bool, err error) {
 	g, err := e.findAttention(ctx, inst, seriesID, season)
 	if err != nil {
 		return 0, false, err
 	}
 	c := client(inst)
-	if err := c.RemoveQueue(ctx, g.QueueIDs, o.DeleteFiles, o.Blocklist); err != nil {
+	kept := e.keepDownload(ctx, g.DownloadID)
+	if err := c.RemoveQueue(ctx, g.QueueIDs, o.Blocklist); err != nil {
 		return 0, false, err
 	}
-	e.St.Event("info", fmt.Sprintf("removed %d queue items for %s S%02d (blocklist=%v deleteFiles=%v)", len(g.QueueIDs), g.Series, season, o.Blocklist, o.DeleteFiles))
+	e.St.Event("info", fmt.Sprintf("removed %d queue items for %s S%02d (blocklist=%v); the download was kept (%s)", len(g.QueueIDs), g.Series, season, o.Blocklist, kept))
 	if o.Research {
 		if _, err := c.SeasonSearch(ctx, seriesID, season); err != nil {
 			return len(g.QueueIDs), false, err
@@ -415,13 +417,17 @@ func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job,
 		return err
 	}
 	var ids []int
+	kept := ""
 	for _, q := range ownedItems(queue, j) { // this job's own download, not every grab for the season
 		ids = append(ids, q.ID)
+		kept = e.keepDownload(ctx, q.DownloadID)
 	}
 	if len(ids) > 0 {
-		if err := c.RemoveQueue(ctx, ids, true, true); err != nil {
+		// Blocklist the release and drop it from Sonarr's queue, but never delete the torrent or its data.
+		if err := c.RemoveQueue(ctx, ids, true); err != nil {
 			return err
 		}
+		msg += " (the download was kept: " + kept + ")"
 	}
 	if research {
 		if _, err := c.SeasonSearch(ctx, j.SeriesID, j.Season); err != nil {

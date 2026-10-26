@@ -107,7 +107,7 @@ func TestRemovePackFlagsAndResearch(t *testing.T) {
 		t.Fatalf("n=%d searched=%v err=%v", n, searched, err)
 	}
 	r := v.fake.removed[0]
-	if len(r.IDs) != 2 || !strings.Contains(r.Query, "removeFromClient=true") || !strings.Contains(r.Query, "blocklist=true") || !strings.Contains(r.Query, "skipRedownload=true") {
+	if len(r.IDs) != 2 || !strings.Contains(r.Query, "removeFromClient=false") || !strings.Contains(r.Query, "blocklist=true") || !strings.Contains(r.Query, "skipRedownload=true") {
 		t.Fatalf("wrong removal %+v", r)
 	}
 	if len(v.fake.searches) != 1 || v.fake.searches[0] != [2]int{1, 3} {

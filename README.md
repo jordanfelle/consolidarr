@@ -99,8 +99,10 @@ Two rules about audio, both checked against the files themselves rather than rel
      Releases whose title says Complete, Collection, Batch, Extras or a season range are never picked in the first place;
    - otherwise it downloads and then **stops as *holding*, "awaiting your review"**, with the folder. Nothing is imported
      by consolidarr. You import it in Sonarr (Manual Import onto the season) or reject it here.
-   **consolidarr never deletes a torrent or its data** (the qBittorrent client has no delete call): rejecting or setting
-   a pack aside moves it to the seed category and it stays there. At most 2 such packs wait at once; after one is handled
+   **consolidarr never deletes a torrent or its data**: its qBittorrent client has no delete call, and every Sonarr queue
+   removal it makes (reject, auto-reject, *Remove pack*) is sent without remove-from-client. Rejecting or setting a pack
+   aside moves the torrent to its seed category (`btn` -> `seed-btn`) and it stays there; a wrong pack that is still
+   downloading is also stopped. Without qBittorrent access the torrent is simply left where it is. At most 2 such packs wait at once; after one is handled
    the season is left alone for a week. Notifying you is #82; an in-app Approve is #85.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because

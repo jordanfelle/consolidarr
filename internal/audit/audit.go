@@ -147,7 +147,8 @@ func relabelled(x sonarr.Release, s Season, o PickOpts) bool {
 
 // multiSeasonTitle matches release names that say they hold more than one season (a "Complete" series pack, a batch,
 // a collection, "Extras"): never the single later cour a relabelled pack is meant to be.
-var multiSeasonTitle = regexp.MustCompile(`(?i)(^|[^a-z0-9])(complete|collection|batch|all[ ._-]seasons?|extras?|seasons?[ ._-]?\d+[ ._-]?(-|to)[ ._-]?\d+|s\d+[ ._-]?-[ ._-]?s\d+)([^a-z0-9]|$)`)
+var multiSeasonTitle = regexp.MustCompile(`(?i)(^|[^a-z0-9])(complete|collection|batch|box[ ._-]?set|bd[ ._-]?box|all[ ._-]seasons?|extras?|` +
+	`seasons?[ ._-]?\d+[ ._-]?(-|–|to|~|\+|&|,|and)[ ._-]?\d+|s\d+[ ._-]?(-|–|~|\+|&)[ ._-]?s?\d+|vol(ume)?s?[ ._-]?\d+[ ._-]?(-|–|to)[ ._-]?\d+)([^a-z0-9]|$)`)
 
 // Pick chooses a pack deterministically. Sonarr's own rejections are honoured except
 // "Existing file meets cutoff", which is expected because the old files get replaced.

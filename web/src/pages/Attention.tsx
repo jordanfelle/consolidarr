@@ -16,10 +16,9 @@ const label: Record<string, string> = {
 function RemoveDialog({ a, onClose }: { a: Item; onClose: () => void }) {
   const qc = useQueryClient();
   const [blocklist, setBlocklist] = useState(false);
-  const [deleteFiles, setDeleteFiles] = useState(false);
   const [research, setResearch] = useState(false);
   const rm = useMutation({
-    mutationFn: () => api.removePack(a, { blocklist, deleteFiles, research }),
+    mutationFn: () => api.removePack(a, { blocklist, deleteFiles: false, research }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["attention"] }); onClose(); },
   });
   return (
@@ -29,8 +28,7 @@ function RemoveDialog({ a, onClose }: { a: Item; onClose: () => void }) {
         <div className="text-sm text-muted">
           {a.series} S{String(a.season).padStart(2, "0")}: <span className="break-all">{a.pack}</span>. Your library files are never touched.
         </div>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
-          <span>Also delete the download from the download client<span className="block text-xs text-muted">Frees the disk space. Off = keep it seeding.</span></span></label>
+        <div className="text-xs text-muted">The download itself is never deleted: it is moved to its seed category and kept seeding.</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={blocklist} onChange={(e) => setBlocklist(e.target.checked)} />
           <span>Blocklist this release<span className="block text-xs text-muted">Sonarr will never grab it again. Use this for bad or encrypted releases.</span></span></label>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={research} onChange={(e) => setResearch(e.target.checked)} />
