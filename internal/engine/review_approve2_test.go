@@ -206,3 +206,31 @@ func TestARunningImportWhoseIdWasLostIsAdoptedNotReverted(t *testing.T) {
 		t.Fatalf("got %s cmd=%d %q: a running import must be adopted", got.Status, got.ImportCmd, got.Message)
 	}
 }
+
+// A command still 'started' after the hard stop puts the job back to review (it does not wait for ever).
+func TestAnImportStillRunningAfterTheHardStopGoesBackToReview(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	token := tokenOf(t, v, j)
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, token); err != nil {
+		t.Fatal(err)
+	}
+	v.fake.cmdStatus = "started"
+	_, _ = v.st.Exec(`update jobs set import_at=? where id=?`, time.Now().Add(-importHardStop-time.Hour).Unix(), j.ID)
+	j2, _ := v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j2, nil)
+	got := v.status(t, j.ID)
+	if got.Status != "holding" || !strings.Contains(got.Message, "has not finished after") {
+		t.Fatalf("got %s %q", got.Status, got.Message)
+	}
+}
+
+// The reason the import did not start is not lost.
+func TestARefusedImportKeepsItsReasonInTheError(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	token := tokenOf(t, v, j)
+	v.fake.failImport = 1
+	err := v.e.ApproveReview(context.Background(), v.liveInst(), j, token)
+	if err == nil || !strings.Contains(err.Error(), "import refused") {
+		t.Fatalf("err = %v", err)
+	}
+}

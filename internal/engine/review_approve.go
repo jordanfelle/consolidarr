@@ -323,9 +323,10 @@ func (e *Engine) ApproveReview(ctx context.Context, inst store.Instance, j0 stor
 		}
 		return stateErr("the import did not start: %s. Nothing was changed; approve again in a minute", msg)
 	}
-	if after.ImportCmd == 0 { // Sonarr refused the import command: nothing was imported, so put the job back for another try
-		e.revertReviewImport(&after, "Sonarr did not accept the import and nothing was changed")
-		return stateErr("Sonarr did not accept the import; nothing was changed. Try again")
+	if after.ImportCmd == 0 { // the import did not start: nothing was imported, so put the job back for another try
+		reason := after.Message // replace() recorded why (Sonarr refused it, a file now reads Unknown quality, ...)
+		e.revertReviewImport(&after, "the import did not start and nothing was changed")
+		return stateErr("the import did not start; nothing was changed (%s). Try again", reason)
 	}
 	return nil
 }
