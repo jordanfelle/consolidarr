@@ -98,12 +98,18 @@ Two rules about audio, both checked against the files themselves rather than rel
      **set aside** (moved to the matching seed category, `btn` -> `seed-btn`) and the season left alone for a week.
      Releases whose title says Complete, Collection, Batch, Extras or a season range are never picked in the first place;
    - otherwise it downloads and then **stops as *holding*, "awaiting your review"**, with the folder. Nothing is imported
-     by consolidarr. You import it in Sonarr (Manual Import onto the season) or reject it here.
+     until you say so. On **Replacements**, *Review* shows exactly how the pack would be imported: every file placed on an
+     episode only by hard evidence in its name (an `S0N` naming this season, or one of this season's episode titles),
+     every episode of the season covered by exactly one file, every file probed and carrying an English track. Anything
+     less and it says why, and you import by hand in Sonarr (Manual Import) or reject it. *Approve and import* sends the
+     mapping to Sonarr as a **copy** (nothing is deleted; Sonarr swaps each episode's file, and the torrent keeps seeding);
+     when the import is done the torrent moves to its seed category. A pack numbered `S01` for a later season is never
+     mapped by guessing.
    **consolidarr never deletes a torrent or its data**: its qBittorrent client has no delete call, and every Sonarr queue
    removal it makes (reject, auto-reject, *Remove pack*) is sent without remove-from-client. Rejecting or setting a pack
    aside moves the torrent to its seed category (`btn` -> `seed-btn`) and it stays there; a wrong pack that is still
    downloading is also stopped. Without qBittorrent access the torrent is simply left where it is. At most 2 such packs wait at once; after one is handled
-   the season is left alone for a week. Notifying you is #82; an in-app Approve is #85.
+   the season is left alone for a week. Notifying you is #82.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started

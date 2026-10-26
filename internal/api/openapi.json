@@ -2276,6 +2276,213 @@
     ]
    }
   },
+  "/api/jobs/{id}/review": {
+   "get": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Preview how a parked relabelled AnimeBytes pack would be imported (changes nothing)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          },
+          "reason": {
+           "type": "string",
+           "description": "Why consolidarr cannot map the pack itself (import it by hand in Sonarr)"
+          },
+          "folder": {
+           "type": "string"
+          },
+          "files": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "path": {
+              "type": "string"
+             },
+             "episode": {
+              "type": "integer"
+             },
+             "title": {
+              "type": "string"
+             },
+             "why": {
+              "type": "string"
+             }
+            }
+           }
+          },
+          "skipped": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Not a finished relabelled pack awaiting review, or qBittorrent is not configured",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
+  "/api/jobs/{id}/review/approve": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Approve a parked relabelled pack: import it onto the season's episodes (copy; nothing is deleted, the torrent is kept)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Missing or invalid credentials",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such job",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Not awaiting review, dry run on, or the pack cannot be mapped by consolidarr",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "Sonarr failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "Numeric id",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "BearerAuth": []
+     },
+     {
+      "SessionCookie": []
+     }
+    ]
+   }
+  },
   "/api/settings": {
    "get": {
     "tags": [

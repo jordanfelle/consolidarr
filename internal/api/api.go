@@ -106,6 +106,8 @@ func (a *API) Routes() []route {
 		{"POST", "/api/jobs/{id}/retry", a.retryJob, false},
 		{"POST", "/api/jobs/{id}/reject", a.rejectJob, false},
 		{"POST", "/api/jobs/{id}/approve", a.approve, false},
+		{"GET", "/api/jobs/{id}/review", a.reviewPlan, false},
+		{"POST", "/api/jobs/{id}/review/approve", a.reviewApprove, false},
 		{"DELETE", "/api/jobs/{id}", a.deleteJob, false},
 
 		{"GET", "/api/settings", func(w http.ResponseWriter, r *http.Request) { ok(w, a.St.Settings()) }, false},
@@ -543,6 +545,49 @@ func (a *API) job(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fail(w, 404, "no such job")
+}
+
+// reviewJob loads a job and its instance for the review endpoints.
+func (a *API) reviewJob(w http.ResponseWriter, r *http.Request) (store.Job, store.Instance, bool) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	j, err := a.St.Job(id)
+	if err != nil {
+		fail(w, 404, "no such job")
+		return store.Job{}, store.Instance{}, false
+	}
+	inst, err := a.St.Instance(j.InstID)
+	if err != nil {
+		fail(w, 404, "instance gone")
+		return store.Job{}, store.Instance{}, false
+	}
+	return j, inst, true
+}
+
+// reviewPlan previews how a parked relabelled pack would be imported (changes nothing).
+func (a *API) reviewPlan(w http.ResponseWriter, r *http.Request) {
+	j, inst, good := a.reviewJob(w, r)
+	if !good {
+		return
+	}
+	plan, _, _, err := a.Eng.PlanReview(r.Context(), inst, j)
+	if err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	ok(w, plan)
+}
+
+// reviewApprove imports a parked relabelled pack the human has looked at (see Engine.ApproveReview).
+func (a *API) reviewApprove(w http.ResponseWriter, r *http.Request) {
+	j, inst, good := a.reviewJob(w, r)
+	if !good {
+		return
+	}
+	if err := a.Eng.ApproveReview(r.Context(), inst, j); err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	ok(w, map[string]bool{"ok": true})
 }
 
 func (a *API) approve(w http.ResponseWriter, r *http.Request) {

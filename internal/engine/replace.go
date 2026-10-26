@@ -381,7 +381,7 @@ func (e *Engine) replace(ctx context.Context, inst store.Instance, c *sonarr.Cli
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	defer cancel()
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
-	if time.Since(v.At) > 30*time.Second { // we may have waited behind another season; what was true then may not be now
+	if j.Kind != kindReview && time.Since(v.At) > 30*time.Second { // (a relabelled pack is not in Sonarr's queue: verify() cannot judge it) we may have waited behind another season; what was true then may not be now
 		fresh := e.verify(ctx, inst, c, e.St.Settings(), j, v.Items)
 		if fresh.State != "ok" {
 			j.Status = "holding"
@@ -544,6 +544,9 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		j.Status, j.Message = "done", fmt.Sprintf("%d episodes imported", got)
 		e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), 30*24*time.Hour, "done")
 		_ = e.St.UpdateJob(*j)
+		if j.Kind == kindReview {
+			e.afterReviewImport(ctx, *j) // the parked torrent goes to its seed category and keeps seeding
+		}
 		e.St.Event("info", fmt.Sprintf("done %s: %d episodes imported", label, got))
 		e.rescanSeries(ctx, inst, j.SeriesID)
 		e.RunNow() // a season finished: the jobs waiting their turn behind it should not wait out the rest of the cycle

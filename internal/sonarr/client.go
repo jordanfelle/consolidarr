@@ -537,7 +537,13 @@ func (c *Client) ImportMapped(ctx context.Context, seriesID int, downloadID stri
 			"quality": it.Quality, "languages": it.Languages, "indexerFlags": it.IndexerFlags, "releaseType": it.ReleaseType, "downloadId": downloadID})
 	}
 	var cmd Command
-	err = c.do(ctx, "POST", "/command", map[string]any{"name": "ManualImport", "files": files, "importMode": "auto"}, &cmd, 2*time.Minute)
+	// A download Sonarr tracks is copied or hardlinked as it would itself ("auto"). Files with no download id are not
+	// Sonarr's to move: "auto" would move them out from under a seeding torrent, so they are copied.
+	mode := "auto"
+	if downloadID == "" {
+		mode = "copy"
+	}
+	err = c.do(ctx, "POST", "/command", map[string]any{"name": "ManualImport", "files": files, "importMode": mode}, &cmd, 2*time.Minute)
 	return cmd.ID, err
 }
 
