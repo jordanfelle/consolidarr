@@ -17,6 +17,7 @@ import (
 	"github.com/jordanfelle/consolidarr/internal/api"
 	"github.com/jordanfelle/consolidarr/internal/engine"
 	"github.com/jordanfelle/consolidarr/internal/meta"
+	"github.com/jordanfelle/consolidarr/internal/qbit"
 	"github.com/jordanfelle/consolidarr/internal/store"
 	"github.com/jordanfelle/consolidarr/web"
 )
@@ -49,6 +50,12 @@ func main() {
 		log.Fatalf("database: %v", err)
 	}
 	eng := engine.New(st)
+	// qBittorrent through qui's client proxy (http://qui:7476/proxy/<key>), like Sonarr's own download client. The URL
+	// holds a key, so it comes from the environment and never the settings API. Without it relabelled packs are not fetched.
+	if u := strings.TrimSpace(os.Getenv("CONSOLIDARR_QBIT_URL")); u != "" {
+		eng.Qbit = qbit.New(u, os.Getenv("CONSOLIDARR_QBIT_USER"), os.Getenv("CONSOLIDARR_QBIT_PASS"))
+		log.Printf("qBittorrent access on (relabelled packs are parked and checked there)")
+	}
 	eng.Meta = metaFromEnv()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

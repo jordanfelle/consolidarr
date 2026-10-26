@@ -86,13 +86,19 @@ Two rules about audio, both checked against the files themselves rather than rel
    **AnimeBytes labels every cour `S01`** (it has no seasons; each cour is its own group and Prowlarr stamps `S01` on
    all of them), so the dub of season 2 or 3 only ever turns up as a season 1 pack, which Sonarr rejects for that season
    ("Episode wasn't requested: 1x1-11"). With *accept AnimeBytes packs numbered S01 for a later season* on (off by
-   default), an AnimeBytes dual-audio `S01` full-season pack **published after the season finished airing** is
-   downloaded for that season (seasons 2 and up only), grabbed through Sonarr's release override so Sonarr tracks it
-   against the season's episodes. Consolidarr cannot tell which cour such a pack is (an older cour's dub is published
-   late too), so it **never verifies, imports or deletes it**: the job is parked as *holding* ("awaiting your review",
-   with the download folder) and stays so, never auto-rejected, until you check it and import it in Sonarr (Manual Import
-   onto the season) or reject it here. At most 2 such packs wait at once; once one is imported, removed or rejected the
-   season is left alone for a week so the next cour's pack is not fetched. Notifying you is a follow-up.
+   default; needs `CONSOLIDARR_QBIT_URL`, qBittorrent through qui's client proxy, e.g. `http://qui:7476/proxy/<key>`,
+   plus optional `CONSOLIDARR_QBIT_USER`/`_PASS`), an AnimeBytes dual-audio `S01` full-season pack **published after the
+   season finished airing** is grabbed for that season through Sonarr's release override. consolidarr cannot tell which
+   cour such a pack is from its name, so it never trusts it:
+   - the torrent is **moved to the `consolidarr-review` category** (setting *reviewCategory*) at once, which no arr app
+     watches, so Sonarr never imports it;
+   - as soon as qBittorrent has the file list, the **file names are checked against the season** (an `S03` in the name,
+     or episode titles). A clear mismatch (a "2nd Season" pack grabbed for season 4) is **deleted with its data at once**
+     and the season left alone for a week;
+   - otherwise it downloads and then **stops as *holding*, "awaiting your review"**, with the folder. Nothing is imported
+     or deleted by consolidarr. You import it in Sonarr (Manual Import onto the season) or reject it here.
+   At most 2 such packs wait at once; after one is handled the season is left alone for a week. Notifying you is a
+   follow-up (#82); an in-app Approve is #83's last step.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started

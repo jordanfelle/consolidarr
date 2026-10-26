@@ -120,6 +120,16 @@ func newFake(packEps []int) *fakeSonarr {
 			return
 		}
 		if f.episodes != nil {
+			if sn := r.URL.Query().Get("seasonNumber"); sn != "" { // like Sonarr, a season filter narrows the list
+				var out []map[string]any
+				for _, e := range f.episodes {
+					if fmt.Sprint(e["seasonNumber"]) == sn {
+						out = append(out, e)
+					}
+				}
+				js(w, out)
+				return
+			}
 			js(w, f.episodes)
 			return
 		}

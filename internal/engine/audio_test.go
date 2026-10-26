@@ -624,6 +624,7 @@ func TestARelabelledAnimeBytesPackIsGrabbedWithAnOverrideForTheLaterSeason(t *te
 	pack["indexer"], pack["seasonNumber"] = "AnimeBytes (Prowlarr)", 1
 	pack["publishDate"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	pack["rejections"] = []string{"Episode wasn't requested: 1x1-3", "Full season pack"}
+	v.e.Qbit = newFakeQbit(t, "btn", 0).client()
 	v.fake.releases = []map[string]any{pack}
 	v.fake.episodes = []map[string]any{
 		{"id": 601, "seasonNumber": 3, "episodeNumber": 1, "airDateUtc": time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)},
@@ -748,6 +749,7 @@ func TestOnlyAFewRelabelledPacksWaitForReviewAtOnce(t *testing.T) {
 	pack["indexer"], pack["seasonNumber"] = "AnimeBytes (Prowlarr)", 1
 	pack["publishDate"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	v.fake.releases = []map[string]any{pack}
+	v.e.Qbit = newFakeQbit(t, "btn", 0).client()
 	v.fake.episodes = []map[string]any{{"id": 601, "seasonNumber": 3, "episodeNumber": 1, "airDateUtc": time.Now().Add(-72 * time.Hour).UTC().Format(time.RFC3339)}}
 	for i := 0; i < maxReviewJobs; i++ {
 		id, err := v.st.AddJob(store.Job{InstID: 1, SeriesID: 100 + i, Season: 2, Title: "Other", Status: "holding", Kind: kindReview})

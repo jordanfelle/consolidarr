@@ -218,6 +218,7 @@ type Settings struct {
 	DualAudio           bool     `json:"dualAudio"`           // look for dual-audio packs for finished anime seasons that have no English audio
 	DubSearchesPerCycle int      `json:"dubSearchesPerCycle"` // dual-audio searches per scheduler cycle (0 = the default, 1)
 	DubMaxFiles         int      `json:"dubMaxFiles"`         // skip seasons with more files than this when looking for a dub (0 = no limit)
+	ReviewCategory      string   `json:"reviewCategory"`      // qBittorrent category a relabelled pack is parked in (no arr watches it); empty = consolidarr-review
 	RelabelAnimeBytes   bool     `json:"relabelAnimeBytes"`   // take AnimeBytes dual-audio packs numbered S01 for a later season published after it aired
 }
 
