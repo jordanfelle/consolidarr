@@ -349,11 +349,16 @@ func (e *Engine) RemovePack(ctx context.Context, inst store.Instance, seriesID, 
 		return 0, false, err
 	}
 	c := client(inst)
-	kept := e.keepDownload(ctx, g.DownloadID)
-	if err := c.RemoveQueue(ctx, g.QueueIDs, o.Blocklist); err != nil {
+	kept, safe := e.keepDownload(ctx, g.DownloadID)
+	blocklist := o.Blocklist && safe // see keepDownload: a blocklisted download is "failed", which Sonarr may remove from the client
+	if err := c.RemoveQueue(ctx, g.QueueIDs, blocklist); err != nil {
 		return 0, false, err
 	}
-	e.St.Event("info", fmt.Sprintf("removed %d queue items for %s S%02d (blocklist=%v); the download was kept (%s)", len(g.QueueIDs), g.Series, season, o.Blocklist, kept))
+	note := ""
+	if o.Blocklist && !blocklist {
+		note = "; NOT blocklisted, because the torrent could not be moved out of Sonarr's reach first"
+	}
+	e.St.Event("info", fmt.Sprintf("removed %d queue items for %s S%02d (blocklist=%v); the download was kept (%s)%s", len(g.QueueIDs), g.Series, season, blocklist, kept, note))
 	if o.Research {
 		if _, err := c.SeasonSearch(ctx, seriesID, season); err != nil {
 			return len(g.QueueIDs), false, err
@@ -417,17 +422,23 @@ func (e *Engine) rejectBody(ctx context.Context, c *sonarr.Client, j *store.Job,
 		return err
 	}
 	var ids []int
-	kept := ""
+	kept, safe := "", true
 	for _, q := range ownedItems(queue, j) { // this job's own download, not every grab for the season
 		ids = append(ids, q.ID)
-		kept = e.keepDownload(ctx, q.DownloadID)
+		w, ok := e.keepDownload(ctx, q.DownloadID)
+		kept, safe = w, safe && ok
 	}
 	if len(ids) > 0 {
-		// Blocklist the release and drop it from Sonarr's queue, but never delete the torrent or its data.
-		if err := c.RemoveQueue(ctx, ids, true); err != nil {
+		// Drop it from Sonarr's queue and blocklist the release, but never delete the torrent or its data. Blocklisting
+		// marks the download failed, and Sonarr may then remove a failed download from the client by itself, so it is
+		// done only when the torrent has been moved out of Sonarr's reach (a seed category).
+		if err := c.RemoveQueue(ctx, ids, safe); err != nil {
 			return err
 		}
 		msg += " (the download was kept: " + kept + ")"
+		if !safe {
+			msg += "; the release was NOT blocklisted, because the torrent could not be moved out of Sonarr's reach first"
+		}
 	}
 	if research {
 		if _, err := c.SeasonSearch(ctx, j.SeriesID, j.Season); err != nil {

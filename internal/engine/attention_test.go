@@ -102,6 +102,7 @@ func TestAdoptStillRefusesToDeleteWhenVerificationFails(t *testing.T) {
 
 func TestRemovePackFlagsAndResearch(t *testing.T) {
 	v := attentionEnv(t, stuckItem(10, 1, 3, "Not an upgrade"), stuckItem(11, 1, 3, "Not an upgrade"))
+	v.e.Qbit = newFakeQbit(t, "btn", 1, "p/01.mkv").client() // the torrent can be moved to seed-btn, so blocklisting is safe
 	n, searched, err := v.e.RemovePack(context.Background(), v.inst, 1, 3, RemoveOpts{Blocklist: true, DeleteFiles: true, Research: true})
 	if err != nil || n != 2 || !searched {
 		t.Fatalf("n=%d searched=%v err=%v", n, searched, err)
@@ -126,6 +127,7 @@ func TestRemovePackFlagsAndResearch(t *testing.T) {
 
 func TestRejectJobBlocklistsSearchesAndNeverTouchesLibraryFiles(t *testing.T) {
 	v := attentionEnv(t, stuckItem(10, 1, 3, "x"))
+	v.e.Qbit = newFakeQbit(t, "btn", 1, "p/01.mkv").client() // the torrent can be moved to seed-btn, so blocklisting is safe
 	j := v.job(t, time.Time{})
 	j.Status = "holding"
 	_ = v.st.UpdateJob(j)

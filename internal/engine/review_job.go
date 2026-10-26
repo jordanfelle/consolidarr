@@ -31,10 +31,10 @@ func reviewGoneKey(id int64) string { return fmt.Sprintf("reviewgone:%d", id) }
 //  1. bind the job to its download (exact release title, never another job's);
 //  2. move the torrent out of every arr's category so nothing imports it;
 //  3. as soon as the torrent's file list exists, check the names against the season (reviewCheck): a clear mismatch
-//     (Tenchi's "2nd Season" grabbed for season 4) throws that download away;
+//     (Tenchi's "2nd Season" grabbed for season 4) sets that download aside (moved to the seed category and stopped, never deleted);
 //  4. when it has finished, stop and wait for a human.
 //
-// It never touches your library. It only ever removes a torrent this grab added.
+// It never touches your library. It never deletes a torrent, and only moves or stops one this grab added.
 func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j store.Job, queue []sonarr.QueueItem) {
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
 	finish := func(status, msg string, backOff time.Duration) {
@@ -89,6 +89,9 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		if tr.Progress < 1 {
 			if err := e.Qbit.Stop(ctx, j.DownloadID); err == nil {
 				dest += ", download stopped"
+			} else {
+				dest += ", but it could not be stopped and keeps downloading: pause it in qBittorrent"
+				e.St.Event("warn", label+": could not stop the wrong pack: "+err.Error())
 			}
 		}
 		finish("failed", "set aside: this pack is not this season ("+detail+"). The torrent and its data were kept ("+dest+"); your files were not touched", reviewBackOff)
@@ -248,26 +251,32 @@ func reviewCatKey(id int64) string { return fmt.Sprintf("reviewcat:%d", id) }
 
 // keepDownload is what happens to a download when its Sonarr queue item is removed (a reject, "remove pack"): it is
 // never deleted. With qBittorrent access it is moved to the seed category matching its own (btn -> seed-btn), so Sonarr
-// does not re-track it; without access it stays exactly where it is. It returns where it is, for the event log.
-func (e *Engine) keepDownload(ctx context.Context, hash string) string {
+// does not re-track it; without access it stays exactly where it is. It returns where it is, for the event log, and
+// whether the torrent is now OUT of Sonarr's reach (in a seed category). Only then may the release be blocklisted:
+// Sonarr treats a blocklisted download as failed and, with the download client's "Remove Failed Downloads" on (it is on
+// for this qBittorrent client), removes it from the client itself.
+func (e *Engine) keepDownload(ctx context.Context, hash string) (where string, safe bool) {
 	if hash == "" || e.Qbit == nil {
-		return "left in the download client, as no qBittorrent access is set"
+		return "left in the download client, as no qBittorrent access is set", false
 	}
 	tr, err := e.Qbit.Info(ctx, hash)
 	if err != nil {
-		return "left in the download client (" + err.Error() + ")"
+		return "left in the download client (" + err.Error() + ")", false
 	}
-	if strings.HasPrefix(tr.Category, "seed-") || tr.Category == "" {
-		return "already in " + tr.Category
+	if strings.HasPrefix(tr.Category, "seed-") {
+		return "already in " + tr.Category, true
+	}
+	if tr.Category == "" {
+		return "has no category", false
 	}
 	dest := "seed-" + tr.Category
 	if !e.Qbit.HasCategory(ctx, dest) {
-		return "left in category " + tr.Category + " (no " + dest + " category)"
+		return "left in category " + tr.Category + " (no " + dest + " category)", false
 	}
 	if err := e.Qbit.Park(ctx, hash, dest); err != nil {
-		return "left in category " + tr.Category + " (" + err.Error() + ")"
+		return "left in category " + tr.Category + " (" + err.Error() + ")", false
 	}
-	return "moved to " + dest
+	return "moved to " + dest, true
 }
 
 // shelve sets a wrong or rejected pack aside. A torrent with data is NEVER deleted (operator rule): it goes to the seed

@@ -354,8 +354,10 @@ func TestARelabelledPackThatSaysItHoldsMoreThanOneSeasonIsNeverPicked(t *testing
 
 func TestMultiSeasonTitlePatterns(t *testing.T) {
 	yes := []string{"Show S01-S08 Dual", "Show S01-08 Dual", "Show S01+S02", "Show Seasons 1+2", "Show Seasons 1&2", "Show S01–S03",
-		"Show Seasons 1, 2", "Show BD-BOX", "Show Box Set", "Show Vol.1-4", "Show Complete Series", "Show Batch"}
-	no := []string{"[YURASUKA] Oshi no Ko S01 [Blu-ray][1080p][Opus 2.0][Dual Audio]", "Show S01E01-E02", "Show S01E01-S01E13 Dual", "Show S03 1080p BluRay x265-GRP", "Show 2nd Season [BD]"}
+		"Show Seasons 1, 2", "Show BD-BOX", "Show Box Set", "Show Vol.1-4", "Show Complete Series", "Show Batch",
+		"Show S01.S02.1080p", "Show S01S02", "Show S01 to S03", "Show Seasons 1 thru 3", "Show Extras"}
+	no := []string{"[YURASUKA] Oshi no Ko S01 [Blu-ray][1080p][Opus 2.0][Dual Audio]", "Show S01E01-E02", "Show S01E01-S01E13 Dual", "Show S03 1080p BluRay x265-GRP", "Show 2nd Season [BD]",
+		"Show S01 - 1080 BluRay", "Show S01 - 10 Dual", "Show S01 + 1080", "Show Season 3 - 2024", "Show - Extra Edition S01", "Show S03-1080p x265"}
 	for _, s := range yes {
 		if !multiSeasonTitle.MatchString(s) {
 			t.Errorf("should be multi-season: %q", s)

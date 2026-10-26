@@ -64,3 +64,30 @@ func TestRejectingAnOrdinaryJobKeepsTheTorrentInItsSeedCategory(t *testing.T) {
 		t.Fatalf("qBittorrent changes: %q", l)
 	}
 }
+
+// Sonarr treats a blocklisted download as failed and (Remove Failed Downloads is on for this qBittorrent client) may
+// remove it from the client itself. So the release is blocklisted only after the torrent has been moved out of reach.
+func TestTheReleaseIsOnlyBlocklistedOnceTheTorrentIsOutOfSonarrsReach(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		seedCat   bool
+		wantBlock string
+	}{{"seed category exists", true, "blocklist=true"}, {"no seed category", false, "blocklist=false"}} {
+		q := newFakeQbit(t, "btn", 1, "p/01.mkv")
+		if !c.seedCat {
+			delete(q.cats, "seed-btn")
+		}
+		v := setup(t, []int{1, 2, 3})
+		v.e.Qbit = q.client()
+		j := v.job(t, time.Now().Add(-time.Hour))
+		_, _ = v.st.Exec(`update jobs set status='holding', download_id='d', release='r' where id=?`, j.ID)
+		_, _ = v.st.SaveInstance(storeInstance(v))
+		v.fake.queueItems = []map[string]any{{"id": 7, "seriesId": 1, "seasonNumber": 3, "downloadId": "d", "status": "completed", "title": "r", "outputPath": "/dl/pack"}}
+		if _, err := v.e.RejectJob(context.Background(), j.ID, false); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if len(v.fake.removed) != 1 || !strings.Contains(v.fake.removed[0].Query, c.wantBlock) || !strings.Contains(v.fake.removed[0].Query, "removeFromClient=false") {
+			t.Fatalf("%s: removal = %+v", c.name, v.fake.removed)
+		}
+	}
+}
