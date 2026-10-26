@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,28 +17,26 @@ import (
 // them imports the download; only a human decides what happens next.
 const DefaultReviewCategory = "consolidarr-review"
 
-func reviewKey(id int64) string { return fmt.Sprintf("reviewcheck:%d", id) }
+const (
+	reviewBindWait   = 30 * time.Minute // how long a grab may take to show up in Sonarr's queue
+	reviewGoneChecks = 3                // consecutive "qBittorrent does not have it" answers before the job is closed
+	addedSlack       = 2 * time.Minute  // a torrent added this long before the grab was not added by the grab
+)
+
+func reviewKey(id int64) string     { return fmt.Sprintf("reviewcheck:%d", id) }
+func reviewGoneKey(id int64) string { return fmt.Sprintf("reviewgone:%d", id) }
 
 // advanceReview drives a relabelled-pack job through qBittorrent (reached via qui) instead of Sonarr's queue, which the
 // pack leaves the moment it is parked:
-//  1. move the torrent out of every arr's category so nothing imports it;
-//  2. as soon as the torrent's file list exists, check the names against the season (reviewCheck): a clear mismatch
-//     (Tenchi's "2nd Season" grabbed for season 4) throws the download away at once;
-//  3. when it has finished, stop and wait for a human.
+//  1. bind the job to its download (exact release title, never another job's);
+//  2. move the torrent out of every arr's category so nothing imports it;
+//  3. as soon as the torrent's file list exists, check the names against the season (reviewCheck): a clear mismatch
+//     (Tenchi's "2nd Season" grabbed for season 4) throws that download away;
+//  4. when it has finished, stop and wait for a human.
 //
-// Nothing here imports or deletes your library files.
+// It never touches your library. It only ever removes a torrent this grab added.
 func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sonarr.Client, set store.Settings, j store.Job, queue []sonarr.QueueItem) {
 	label := fmt.Sprintf("%s S%02d", j.Title, j.Season)
-	if j.DownloadID == "" {
-		mine := ownedItems(queue, &j)
-		if len(mine) == 0 {
-			return // not in Sonarr's queue yet; the reservation logic above handles one that never arrives
-		}
-		j.DownloadID = mine[0].DownloadID
-		if err := e.St.UpdateJob(j); err != nil {
-			return
-		}
-	}
 	finish := func(status, msg string, backOff time.Duration) {
 		j.Status, j.Message = status, msg
 		if backOff > 0 {
@@ -47,13 +46,37 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		e.St.Event("info", label+": "+msg)
 		_ = e.St.UpdateJob(j)
 	}
+	if j.DownloadID == "" {
+		id := e.bindReview(&j, queue)
+		if id == "" {
+			if time.Since(time.Unix(j.Created, 0)) > reviewBindWait {
+				finish("failed", "the grab never showed up in Sonarr's queue; nothing was downloaded or changed", 24*time.Hour)
+			}
+			return
+		}
+		j.DownloadID = id
+		if err := e.St.UpdateJob(j); err != nil {
+			return
+		}
+	}
 	tr, err := e.Qbit.Info(ctx, j.DownloadID)
 	if errors.Is(err, qbit.ErrNotFound) {
-		finish("done", "the torrent is no longer in qBittorrent (removed by hand); nothing was deleted by us", reviewBackOff)
+		// One empty answer can be a proxy or qBittorrent restart: close the job only when it is repeatedly gone.
+		n, _ := strconv.Atoi(e.St.KV(reviewGoneKey(j.ID)))
+		e.St.SetKV(reviewGoneKey(j.ID), strconv.Itoa(n+1))
+		if n+1 >= reviewGoneChecks {
+			finish("done", "the torrent is no longer in qBittorrent (removed by hand, or Sonarr imported it first); nothing was deleted by us", reviewBackOff)
+		}
 		return
 	}
 	if err != nil {
 		return // qui or qBittorrent hiccup: look again next cycle
+	}
+	e.St.SetKV(reviewGoneKey(j.ID), "")
+	if tr.AddedOn > 0 && time.Unix(tr.AddedOn, 0).Before(time.Unix(j.Created, 0).Add(-addedSlack)) {
+		// Sonarr re-used a torrent that was already there (an earlier copy, a cross-seed). It is not ours to move or remove.
+		finish("failed", "this release was already in qBittorrent before consolidarr grabbed it; left exactly as it was", reviewBackOff)
+		return
 	}
 	cat := set.ReviewCategory
 	if cat == "" {
@@ -61,11 +84,11 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 	}
 	if tr.Category != cat {
 		if err := e.Qbit.EnsureCategory(ctx, cat); err != nil {
-			e.St.Event("warn", label+": could not prepare the qBittorrent category "+cat+": "+err.Error())
+			e.warnOften(fmt.Sprintf("review-cat:%d", j.ID), label+": could not prepare the qBittorrent category "+cat+": "+err.Error())
 			return
 		}
 		if err := e.Qbit.Park(ctx, j.DownloadID, cat); err != nil {
-			e.St.Event("warn", label+": could not move the torrent out of the arr's category: "+err.Error())
+			e.warnOften(fmt.Sprintf("review-park:%d", j.ID), label+": could not move the torrent out of the arr's category: "+err.Error())
 			return
 		}
 		e.St.Event("info", fmt.Sprintf("%s: moved the torrent from %q to %q so no arr app imports it", label, tr.Category, cat))
@@ -95,20 +118,26 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 	}
 	if verdict == reviewMismatch {
 		if err := e.Qbit.Remove(ctx, j.DownloadID, true); err != nil {
-			e.St.Event("warn", label+": could not remove the wrong pack from qBittorrent: "+err.Error())
+			e.warnOften(fmt.Sprintf("review-remove:%d", j.ID), label+": could not remove the wrong pack from qBittorrent: "+err.Error())
 			return
 		}
 		finish("failed", "discarded: this pack is not this season ("+detail+"); your files were not touched", reviewBackOff)
 		return
 	}
 	if tr.Progress < 1 {
-		if prog := int(tr.Progress * 100); j.Status != "downloading" || j.Progress != prog {
-			j.Status, j.Progress = "downloading", prog
+		prog := int(tr.Progress * 100)
+		switch {
+		case j.Status != "downloading" || j.Progress != prog:
+			j.Status, j.Progress = "downloading", prog // an unchanged job is not rewritten, so `updated` means "last progress"
+			_ = e.St.UpdateJob(j)
+		case time.Since(time.Unix(j.Updated, 0)) > stallAfter:
+			j.Status, j.Message = "failed", fmt.Sprintf("the download has not moved for %d hours (%d%%); your files were not touched. The torrent is still in qBittorrent (%s): remove it there or reject the pack here", int(stallAfter.Hours()), prog, cat)
+			e.St.Event("warn", label+": "+j.Message)
 			_ = e.St.UpdateJob(j)
 		}
 		return
 	}
-	how := "its file names could not settle which season it is"
+	how := "its file names could not settle which season it is (" + detail + ")"
 	if verdict == reviewMatch {
 		how = "its file names say it is this season (" + detail + ")"
 	}
@@ -118,6 +147,58 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		e.St.Event("warn", label+": "+msg)
 		_ = e.St.UpdateJob(j)
 	}
+}
+
+// bindReview finds the Sonarr queue item of this job's grab by its exact release title, and only one no other job
+// already owns. It never falls back to "the biggest download of that season": an unrelated grab must not be adopted
+// (and then possibly thrown away).
+func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
+	all, err := e.St.Jobs(false, 100000)
+	if err != nil || j.Release == "" {
+		return ""
+	}
+	owners := map[string]bool{}
+	for _, o := range all {
+		if o.ID != j.ID && o.DownloadID != "" {
+			owners[strings.ToLower(o.DownloadID)] = true
+		}
+	}
+	for _, q := range queue {
+		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && q.Title == j.Release && q.DownloadID != "" && !owners[strings.ToLower(q.DownloadID)] {
+			return q.DownloadID
+		}
+	}
+	return ""
+}
+
+// RejectReview discards a relabelled pack on a human's say-so: the parked torrent and its data are removed from
+// qBittorrent (a reject must not orphan a 60 GB download), the job ends failed and the season is left alone for a week.
+// Sonarr's queue is not touched: the pack is no longer in it, and guessing at a "same season" item could remove another
+// download.
+func (e *Engine) RejectReview(ctx context.Context, j store.Job) (store.Job, error) {
+	if e.Qbit == nil {
+		return j, errors.New("CONSOLIDARR_QBIT_URL is not set, so consolidarr cannot reach this torrent; remove it in qBittorrent by hand")
+	}
+	if j.DownloadID != "" {
+		tr, err := e.Qbit.Info(ctx, j.DownloadID)
+		switch {
+		case errors.Is(err, qbit.ErrNotFound):
+		case err != nil:
+			return j, err
+		case tr.AddedOn > 0 && time.Unix(tr.AddedOn, 0).Before(time.Unix(j.Created, 0).Add(-addedSlack)):
+			// not ours: leave the torrent alone and only end the job
+		default:
+			if err := e.Qbit.Remove(ctx, j.DownloadID, true); err != nil {
+				return j, err
+			}
+		}
+	}
+	j.Status, j.Message = "failed", "pack rejected: the torrent and its data were removed from qBittorrent; your files were not touched"
+	e.St.Skip(skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "rejected")
+	e.St.Skip("dub:"+skipKey(j.InstID, j.SeriesID, j.Season), reviewBackOff, "rejected")
+	e.St.SetKV(holdKey(j.ID), "")
+	e.St.Event("info", fmt.Sprintf("rejected the relabelled pack for %s S%02d", j.Title, j.Season))
+	return j, e.St.UpdateJob(j)
 }
 
 func splitVerdict(s string) (verdict, detail string) {

@@ -39,6 +39,7 @@ type Torrent struct {
 	SavePath    string  `json:"save_path"`
 	ContentPath string  `json:"content_path"`
 	Size        int64   `json:"size"`
+	AddedOn     int64   `json:"added_on"`
 }
 
 type File struct {

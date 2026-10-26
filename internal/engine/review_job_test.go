@@ -27,7 +27,7 @@ type fakeQbit struct {
 
 func newFakeQbit(t *testing.T, category string, progress float64, files ...string) *fakeQbit {
 	f := &fakeQbit{files: files, cats: map[string]bool{"btn": true},
-		torrent: map[string]any{"hash": "d", "category": category, "progress": progress, "content_path": "/dl/pack"}}
+		torrent: map[string]any{"hash": "d", "category": category, "progress": progress, "content_path": "/dl/pack", "added_on": time.Now().Unix()}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/torrents/info", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -160,6 +160,12 @@ func TestAReviewPackRemovedFromQbittorrentByHandIsDone(t *testing.T) {
 	q.mu.Lock()
 	q.torrent = nil
 	q.mu.Unlock()
+	for i := 0; i < reviewGoneChecks-1; i++ { // one empty answer can be a proxy hiccup: not yet
+		v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
+		if got := v.status(t, j.ID); got.Status == "done" {
+			t.Fatalf("closed after %d empty answers", i+1)
+		}
+	}
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	if got := v.status(t, j.ID); got.Status != "done" {
 		t.Fatalf("got %s %q", got.Status, got.Message)

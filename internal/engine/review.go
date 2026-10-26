@@ -31,9 +31,9 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 	if len(videos) == 0 {
 		return reviewUnknown, "no video files in the torrent"
 	}
-	if len(videos) < len(target) {
-		return reviewMismatch, fmt.Sprintf("the pack has %d video files but season %d has %d episodes", len(videos), season, len(target))
-	}
+	// Only positive evidence from the names may condemn a pack (the caller throws it away on a mismatch). A short file
+	// count proves nothing: Sonarr's list can include recaps, specials and merged episodes.
+	short := len(videos) < len(target)
 	var here, elsewhere int
 	other := map[int]int{}
 	for _, n := range videos {
@@ -42,6 +42,9 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 		case f.HasSxE && f.Season > 0:
 			if f.Season == season {
 				here++
+			} else if f.Season == 1 && season > 1 {
+				// A relabelled pack is "S01" by definition (the indexer calls every cour that), so an S01 in the file
+				// names says nothing about which cour it is.
 			} else {
 				elsewhere++
 				other[f.Season]++
@@ -56,9 +59,9 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 		}
 	}
 	switch {
-	case here*5 >= len(videos)*4:
+	case here*5 >= len(videos)*4 && !short:
 		return reviewMatch, fmt.Sprintf("%d of %d files name season %d or one of its episode titles", here, len(videos), season)
-	case elsewhere > here && elsewhere*2 >= len(videos):
+	case elsewhere > here && elsewhere*5 >= len(videos)*4:
 		best := 0
 		for s, n := range other {
 			if n > other[best] || best == 0 {
@@ -66,6 +69,9 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 			}
 		}
 		return reviewMismatch, fmt.Sprintf("%d of %d files are season %d, not season %d", elsewhere, len(videos), best, season)
+	}
+	if short {
+		return reviewUnknown, fmt.Sprintf("the pack has %d video files but season %d has %d episodes", len(videos), season, len(target))
 	}
 	return reviewUnknown, fmt.Sprintf("only %d of %d file names identify the season", here, len(videos))
 }

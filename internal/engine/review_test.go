@@ -43,10 +43,19 @@ func TestAPackNamedForTheSeasonMatches(t *testing.T) {
 	}
 }
 
+// A relabelled pack is "S01" by definition, so S01 in its file names must never condemn it for season 2+.
+func TestS01FileNamesSayNothingAboutALaterSeason(t *testing.T) {
+	names := []string{"P/Show.S01E01.1080p.mkv", "P/Show.S01E02.1080p.mkv"}
+	target := []order.Ep{{ID: 1, Season: 3, Number: 1, Title: "Alpha Episode"}, {ID: 2, Season: 3, Number: 2, Title: "Beta Episode"}}
+	if v, why := reviewCheck(names, target, target, 3); v != reviewUnknown {
+		t.Fatalf("verdict %s (%s), want unknown", v, why)
+	}
+}
+
 func TestAPackWithTooFewFilesOrNoNamesNeedsAHuman(t *testing.T) {
 	target := []order.Ep{{ID: 1, Season: 3, Number: 1, Title: "Alpha Episode"}, {ID: 2, Season: 3, Number: 2, Title: "Beta Episode"}}
-	if v, _ := reviewCheck([]string{"p/one.mkv"}, target, target, 3); v != reviewMismatch {
-		t.Fatalf("fewer files than episodes: %s", v)
+	if v, _ := reviewCheck([]string{"p/one.mkv"}, target, target, 3); v != reviewUnknown {
+		t.Fatalf("fewer files than episodes proves nothing (specials, merged episodes): %s", v)
 	}
 	if v, _ := reviewCheck([]string{"p/01.mkv", "p/02.mkv"}, target, target, 3); v != reviewUnknown {
 		t.Fatalf("names that say nothing: %s", v)
