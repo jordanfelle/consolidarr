@@ -118,3 +118,91 @@ func TestARestartedReviewImportWithNoCommandGoesBackToReview(t *testing.T) {
 		t.Fatalf("got %s %q deleted=%d dl=%q", got.Status, got.Message, got.Deleted, got.DownloadID)
 	}
 }
+
+func libFiles(ids ...int) []sonarr.EpisodeFile {
+	var out []sonarr.EpisodeFile
+	for _, id := range ids {
+		out = append(out, sonarr.EpisodeFile{ID: id, SeasonNumber: 3, Path: "/lib/Show - S03E0x [WEBDL-1080p].mkv", Size: 300e6})
+	}
+	return out
+}
+
+// The token covers what the human was shown, including which library file each episode overwrites.
+func TestTheTokenChangesWhenALibraryFileChangesAfterTheReview(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	v.fake.episodes[0]["episodeFileId"] = 11
+	v.fake.filesAfter = libFiles(11)
+	token := tokenOf(t, v, j)
+	v.fake.episodes[0]["episodeFileId"] = 12 // Sonarr upgraded the episode meanwhile: a different file would be destroyed
+	v.fake.filesAfter = libFiles(12)
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, token); err == nil || len(v.fake.mappedImports) != 0 {
+		t.Fatalf("an approval of a stale review went through: err=%v imports=%v", err, v.fake.mappedImports)
+	}
+}
+
+func TestOneLibraryFileCoveringTwoEpisodesIsFlaggedAndAMissingOneIsNotCalledNothing(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	v.fake.episodes[0]["episodeFileId"] = 11
+	v.fake.episodes[1]["episodeFileId"] = 11 // a two-episode library file
+	v.fake.episodes[2]["episodeFileId"] = 99 // an id Sonarr does not list
+	v.fake.filesAfter = libFiles(11)
+	plan, _, _, err := v.e.PlanReview(context.Background(), v.liveInst(), j)
+	if err != nil || !plan.OK {
+		t.Fatalf("plan %+v err %v", plan, err)
+	}
+	if !strings.Contains(plan.Files[0].Replaces, "ONE FILE FOR") || !strings.Contains(plan.Files[1].Replaces, "S03E01") {
+		t.Fatalf("shared file not flagged: %+v", plan.Files)
+	}
+	if !strings.Contains(plan.Files[2].Replaces, "did not list") {
+		t.Fatalf("a missing library file must not read as 'nothing': %q", plan.Files[2].Replaces)
+	}
+}
+
+// 1 of 3 episodes imported: back to review, with the number, not a failure about Sonarr's queue.
+func TestAnImportThatSwappedOnlySomeEpisodesGoesBackToReviewWithTheCount(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	for i, id := range []int{11, 12, 13} {
+		v.fake.episodes[i]["episodeFileId"] = id
+	}
+	v.fake.filesAfter = libFiles(11, 12, 13)
+	token := tokenOf(t, v, j)
+	if err := v.e.ApproveReview(context.Background(), v.liveInst(), j, token); err != nil {
+		t.Fatal(err)
+	}
+	v.fake.episodes[0]["episodeFileId"] = 99 // Sonarr swapped episode 1 only
+	_, _ = v.st.Exec(`update jobs set import_at=? where id=?`, time.Now().Add(-3*time.Hour).Unix(), j.ID)
+	j2, _ := v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j2, nil)
+	got := v.status(t, j.ID)
+	if got.Status != "holding" || !strings.Contains(got.Message, "1 of 3") || !strings.Contains(got.Message, "already imported keep the new file") {
+		t.Fatalf("got %s %q", got.Status, got.Message)
+	}
+}
+
+// A second approve must not start another import of the same files while Sonarr is still running one.
+func TestAnImportStillRunningBlocksASecondApproval(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	token := tokenOf(t, v, j)
+	v.fake.cmds = []map[string]any{{"id": 77, "name": "ManualImport", "status": "started", "queued": time.Now().UTC().Format(time.RFC3339Nano),
+		"body": map[string]any{"files": []map[string]any{{"path": "/dl/pack/Show.S03E01.mkv"}}}}}
+	err := v.e.ApproveReview(context.Background(), v.liveInst(), j, token)
+	if err == nil || !strings.Contains(err.Error(), "still importing") || len(v.fake.mappedImports) != 0 {
+		t.Fatalf("err=%v imports=%v", err, v.fake.mappedImports)
+	}
+}
+
+// A lost import id with the command still running in Sonarr is adopted, not reverted (and not imported twice).
+func TestARunningImportWhoseIdWasLostIsAdoptedNotReverted(t *testing.T) {
+	v, _, j := approveEnv(t, "Show.S03E01.mkv", "Show.S03E02.mkv", "Show.S03E03.mkv")
+	v.st.SetKV(reviewHashKey(j.ID), j.DownloadID)
+	_, _ = v.st.Exec(`update jobs set status='importing', import_cmd=0, deleted=?, import_at=?, download_id='', mapping=? where id=?`,
+		time.Now().Unix(), time.Now().Unix(), `{"/dl/pack/Show.S03E01.mkv":[601]}`, j.ID)
+	v.fake.cmds = []map[string]any{{"id": 77, "name": "ManualImport", "status": "started", "queued": time.Now().UTC().Format(time.RFC3339Nano),
+		"body": map[string]any{"files": []map[string]any{{"path": "/dl/pack/Show.S03E01.mkv"}}}}}
+	j2, _ := v.st.Job(j.ID)
+	v.e.advance(context.Background(), v.inst, v.c, live(), j2, nil)
+	got := v.status(t, j.ID)
+	if got.Status != "importing" || got.ImportCmd != 77 {
+		t.Fatalf("got %s cmd=%d %q: a running import must be adopted", got.Status, got.ImportCmd, got.Message)
+	}
+}

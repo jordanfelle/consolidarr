@@ -24,7 +24,9 @@ type ReviewFile struct {
 	Title       string `json:"title"`
 	Why         string `json:"why"`         // how the episode was identified
 	PackQuality string `json:"packQuality"` // what Sonarr reads the pack file as
+	PackLangs   string `json:"packLangs"`   // the languages Sonarr reads from it (often "Unknown" for a folder listing)
 	Replaces    string `json:"replaces"`    // the library file this import overwrites ("" when the episode has none yet)
+	FileID      int    `json:"fileId"`      // that library file's id in Sonarr (0 = none)
 }
 
 // ReviewPlan is what Approve would do, shown to the human first.
@@ -66,7 +68,10 @@ func qualityName(raw json.RawMessage) string {
 	return q.Quality.Name
 }
 
-func planToken(mapping map[string][]int) string {
+// planToken identifies everything the human is shown: the mapping, each pack file's quality and languages, and which
+// library file each episode overwrites. If any of it changes between the review and the approval (Sonarr upgraded an
+// episode meanwhile, the folder changed), the token no longer matches and the human must look again.
+func planToken(mapping map[string][]int, files []ReviewFile) string {
 	keys := make([]string, 0, len(mapping))
 	for k := range mapping {
 		keys = append(keys, k)
@@ -76,7 +81,24 @@ func planToken(mapping map[string][]int) string {
 	for _, k := range keys {
 		fmt.Fprintf(h, "%s=%v\n", k, mapping[k])
 	}
+	for _, f := range files {
+		fmt.Fprintf(h, "%d|%s|%s|%s|%d\n", f.Episode, f.PackQuality, f.PackLangs, f.Replaces, f.FileID)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func languageNames(raw json.RawMessage) string {
+	var ls []struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &ls) != nil || len(ls) == 0 {
+		return "Unknown"
+	}
+	var out []string
+	for _, l := range ls {
+		out = append(out, l.Name)
+	}
+	return strings.Join(out, ", ")
 }
 
 // PlanReview works out, without changing anything, how a parked pack would be imported onto the season: every file
@@ -127,6 +149,16 @@ func (e *Engine) PlanReview(ctx context.Context, inst store.Instance, j store.Jo
 	for _, f := range files {
 		libFile[f.ID] = f
 	}
+	allEps, err := c.SeriesEpisodes(ctx, j.SeriesID)
+	if err != nil {
+		return plan, nil, v, err
+	}
+	sharers := map[int][]string{} // library file id -> the episodes it covers (a multi-episode file covers several)
+	for _, ep := range allEps {
+		if ep.EpisodeFileID != 0 {
+			sharers[ep.EpisodeFileID] = append(sharers[ep.EpisodeFileID], fmt.Sprintf("S%02dE%02d", ep.SeasonNumber, ep.EpisodeNumber))
+		}
+	}
 	target := orderEps(eps)
 	byNumber := map[int]sonarr.Episode{}
 	for _, ep := range eps {
@@ -171,13 +203,20 @@ func (e *Engine) PlanReview(ctx context.Context, inst store.Instance, j store.Jo
 			return fail("Sonarr cannot read the quality of %s (it lists it as Unknown), so importing it could mark your episode Unknown; import it by hand", filepath.Base(it.Path))
 		}
 		replaces := ""
-		if lf, ok := libFile[ep.EpisodeFileID]; ok && ep.EpisodeFileID != 0 {
-			replaces = fmt.Sprintf("%s (%s, %.1f GB)", filepath.Base(lf.Path), lf.Quality.Quality.Name, float64(lf.Size)/1e9)
+		if ep.EpisodeFileID != 0 {
+			if lf, ok := libFile[ep.EpisodeFileID]; ok {
+				replaces = fmt.Sprintf("%s (%s, %.1f GB)", filepath.Base(lf.Path), lf.Quality.Quality.Name, float64(lf.Size)/1e9)
+			} else {
+				replaces = fmt.Sprintf("a library file (id %d) that Sonarr did not list", ep.EpisodeFileID)
+			}
+			if sh := sharers[ep.EpisodeFileID]; len(sh) > 1 {
+				replaces += " - ONE FILE FOR " + strings.Join(sh, " + ") + ": replacing it removes it for all of them"
+			}
 		}
 		covered[ep.EpisodeNumber] = filepath.Base(it.Path)
 		mapping[it.Path] = []int{ep.ID}
 		packByPath[it.Path] = []int{ep.EpisodeNumber}
-		plan.Files = append(plan.Files, ReviewFile{Path: it.Path, Episode: ep.EpisodeNumber, Title: ep.Title, Why: how, PackQuality: qn, Replaces: replaces})
+		plan.Files = append(plan.Files, ReviewFile{Path: it.Path, Episode: ep.EpisodeNumber, Title: ep.Title, Why: how, PackQuality: qn, PackLangs: languageNames(it.Languages), Replaces: replaces, FileID: ep.EpisodeFileID})
 	}
 	var missing []int
 	for _, ep := range eps {
@@ -207,7 +246,7 @@ func (e *Engine) PlanReview(ctx context.Context, inst store.Instance, j store.Jo
 		return fail("%s", h.Message)
 	}
 	plan.OK = true
-	plan.Token = planToken(mapping)
+	plan.Token = planToken(mapping, plan.Files)
 	return plan, mapping, v, nil
 }
 
@@ -241,6 +280,18 @@ func (e *Engine) ApproveReview(ctx context.Context, inst store.Instance, j0 stor
 	queue, err := c.Queue(ctx, time.Minute)
 	if err != nil {
 		return err
+	}
+	// Never start a second import of the same files while Sonarr is still running one (a revert can leave a slow copy going).
+	cmds, err := c.Commands(ctx)
+	if err != nil {
+		return err
+	}
+	if id := findMappedImportCommand(cmds, v.Mapping, 0); id != 0 {
+		for _, cm := range cmds {
+			if cm.ID == id && (strings.EqualFold(cm.Status, "queued") || strings.EqualFold(cm.Status, "started")) {
+				return stateErr("Sonarr is still importing files of this pack (command %d); wait for it to finish, then review again", id)
+			}
+		}
 	}
 	// "Done" is judged by episodes that now have a file which is not one of the old files: the old files are whatever the
 	// season has today, not what it had when the pack was grabbed days ago.
@@ -287,7 +338,7 @@ func reviewHashKey(id int64) string { return fmt.Sprintf("reviewhash:%d", id) }
 func (e *Engine) revertReviewImport(j *store.Job, why string) {
 	j.Status, j.Deleted, j.ImportAt, j.ImportCmd, j.Mapping = "holding", 0, 0, 0, nil
 	j.DownloadID = e.St.KV(reviewHashKey(j.ID))
-	j.Message = "awaiting your review: " + why + ". Review it again and approve to retry"
+	j.Message = "awaiting your review: " + why + ". Episodes that were already imported keep the new file; review again and approve to retry the rest"
 	_ = e.St.UpdateJob(*j)
 	e.St.Event("warn", fmt.Sprintf("%s S%02d: %s", j.Title, j.Season, j.Message))
 }

@@ -553,6 +553,17 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		return
 	}
 	if j.ImportCmd == 0 && j.Kind == kindReview {
+		// The command may have reached Sonarr although its id was never saved (a restart, a timed-out request): adopt it
+		// instead of reverting while Sonarr is still importing.
+		cmds, cerr := c.Commands(ctx)
+		if cerr != nil {
+			return // cannot tell: wait, never guess
+		}
+		if id := findMappedImportCommand(cmds, j.Mapping, j.ImportAt); id != 0 {
+			j.ImportCmd, j.Message = id, "import already started (found after a restart)"
+			_ = e.St.UpdateJob(*j)
+			return
+		}
 		// A relabelled pack is not in Sonarr's queue, so the queue-based retry below cannot find it; nothing was deleted.
 		e.revertReviewImport(j, "the import could not be started and nothing was changed")
 		return
@@ -612,6 +623,9 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 		return
 	}
 	cmd, cerr := c.Command(ctx, j.ImportCmd)
+	if j.Kind == kindReview && cerr != nil && age < importHardStop {
+		return // Sonarr could not be asked: a slow copy may still be running, so do not judge by the files yet
+	}
 	finished := cerr != nil || cmd.Status == "completed" || cmd.Status == "failed" // an unknown command was pruned: judge by the files
 	switch {
 	case finished && age > importSettle:
@@ -637,6 +651,8 @@ func (e *Engine) finishImport(ctx context.Context, inst store.Instance, c *sonar
 			return
 		}
 		fail(fmt.Sprintf("the import finished but only %d of %d episodes have files. Your old files were already replaced; use Needs attention to retry or adopt the pack", got, len(want)))
+	case !finished && age > importHardStop && j.Kind == kindReview:
+		e.revertReviewImport(j, fmt.Sprintf("the import has not finished after %d hours (%d of %d episodes have a new file)", int(age.Hours()), got, len(want)))
 	case !finished && age > importHardStop:
 		fail(fmt.Sprintf("the import has not finished after %d hours; %d of %d episodes have files", int(age.Hours()), got, len(want)))
 	}

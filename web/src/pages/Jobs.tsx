@@ -47,9 +47,9 @@ function ReviewDialog({ id, onClose }: { id: number; onClose: () => void }) {
             )}
             {p.files.length > 0 && (
               <table className="w-full text-sm">
-                <thead><tr><th>Ep</th><th>Episode</th><th>New file</th><th>Quality</th><th>Identified by</th><th>Replaces</th></tr></thead>
+                <thead><tr><th>Ep</th><th>Episode</th><th>New file</th><th>Quality / language</th><th>Identified by</th><th>Replaces</th></tr></thead>
                 <tbody>{p.files.map((f) => (
-                  <tr key={f.path}><td className="num">{f.episode}</td><td>{f.title}</td><td className="max-w-xs truncate text-muted" title={f.path}>{f.path.split("/").pop()}</td><td>{f.packQuality}</td><td className="text-muted">{f.why}</td><td className="max-w-xs truncate text-warn" title={f.replaces}>{f.replaces || "nothing (no file yet)"}</td></tr>
+                  <tr key={f.path}><td className="num">{f.episode}</td><td>{f.title}</td><td className="max-w-xs truncate text-muted" title={f.path}>{f.path.split("/").pop()}</td><td className="whitespace-nowrap">{f.packQuality}<div className="text-xs text-muted">{f.packLangs}</div></td><td className="text-muted">{f.why}</td><td className="max-w-xs truncate text-warn" title={f.replaces}>{f.replaces || "nothing (no file yet)"}</td></tr>
                 ))}</tbody>
               </table>
             )}

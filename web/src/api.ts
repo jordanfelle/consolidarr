@@ -14,7 +14,7 @@ export type Candidate = {
 };
 export type ReviewPlan = {
   ok: boolean; reason?: string; folder: string; skipped?: string[]; token?: string;
-  files: { path: string; episode: number; title: string; why: string; packQuality: string; replaces: string }[];
+  files: { path: string; episode: number; title: string; why: string; packQuality: string; packLangs: string; replaces: string; fileId: number }[];
 };
 export type Job = {
   id: number; instId: number; seriesId: number; season: number; title: string; release: string;
