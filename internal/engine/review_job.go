@@ -18,7 +18,7 @@ import (
 const DefaultReviewCategory = "consolidarr-review"
 
 const (
-	reviewBindWait   = 30 * time.Minute // how long a grab may take to show up in Sonarr's queue
+	reviewBindWait   = 2 * time.Hour    // how long a grab may take to show up in Sonarr's queue (and be told apart from others)
 	reviewGoneChecks = 3                // consecutive "qBittorrent does not have it" answers before the job is closed
 	addedSlack       = 30 * time.Second // a torrent added longer than this before the grab was not added by the grab
 )
@@ -50,7 +50,8 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 		id := e.bindReview(&j, queue)
 		if id == "" {
 			if time.Since(time.Unix(j.Created, 0)) > reviewBindWait {
-				finish("failed", "the grab never showed up in Sonarr's queue; nothing was downloaded or changed", 24*time.Hour)
+				e.St.Event("warn", label+": could not tell which Sonarr download is this grab (none new, or several). If a pack for this season is in Sonarr's queue, check it before it imports: it was NOT parked")
+				finish("failed", "could not bind to its download in Sonarr's queue (none appeared, or several were new); nothing was parked or changed by consolidarr. Check Sonarr's queue for this season", 24*time.Hour)
 			}
 			return
 		}
@@ -147,9 +148,9 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 	}
 }
 
-// bindReview finds the Sonarr queue item of this job's grab by its exact release title, and only one no other job
-// (active job) already owns. It never falls back to "the biggest download of that season": an unrelated grab must not be adopted
-// (and then possibly thrown away).
+// bindReview finds the Sonarr queue item of this job's grab: by its exact release title, else the single download of
+// this series and season added after the job was created, and never one an active job already owns. It never falls
+// back to "the biggest download of that season": an unrelated grab must not be adopted (and then possibly thrown away).
 func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 	all, err := e.St.Jobs(true, 100000) // active only: a finished job's hash must not block a later grab of the same release
 	if err != nil || j.Release == "" {
@@ -161,12 +162,31 @@ func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 			owners[strings.ToLower(o.DownloadID)] = true
 		}
 	}
+	// Sonarr names a queue item by the torrent's own name, which is rarely the release title the indexer showed
+	// ("...Ryo-Ohki S01 [Blu-ray]..." vs "...Ryo-Ohki OVA 1 v2 [BD]..."), so an exact title is a bonus, not a
+	// requirement: otherwise the one download of this series and season that appeared after the grab was made.
+	var fresh []string
 	for _, q := range queue {
-		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && q.Title == j.Release && q.DownloadID != "" && !owners[strings.ToLower(q.DownloadID)] {
+		if q.SeriesID != j.SeriesID || q.SeasonNumber != j.Season || q.DownloadID == "" || owners[strings.ToLower(q.DownloadID)] {
+			continue
+		}
+		if q.Title == j.Release {
 			return q.DownloadID
 		}
+		if t, err := time.Parse(time.RFC3339, q.Added); err == nil && t.After(time.Unix(j.Created, 0).Add(-addedSlack)) {
+			seen := false
+			for _, id := range fresh {
+				seen = seen || strings.EqualFold(id, q.DownloadID)
+			}
+			if !seen {
+				fresh = append(fresh, q.DownloadID)
+			}
+		}
 	}
-	return ""
+	if len(fresh) == 1 {
+		return fresh[0]
+	}
+	return "" // none yet, or several: never guess which one is ours
 }
 
 // RejectReview discards a relabelled pack on a human's say-so: the parked torrent and its data are removed from
