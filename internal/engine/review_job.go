@@ -147,9 +147,9 @@ func (e *Engine) advanceReview(ctx context.Context, inst store.Instance, c *sona
 	}
 }
 
-// bindReview finds the Sonarr queue item of this job's grab by its exact release title, and only one no other job
-// (active job) already owns. It never falls back to "the biggest download of that season": an unrelated grab must not be adopted
-// (and then possibly thrown away).
+// bindReview finds the Sonarr queue item of this job's grab: by its exact release title, else the single download of
+// this series and season added after the job was created, and never one an active job already owns. It never falls
+// back to "the biggest download of that season": an unrelated grab must not be adopted (and then possibly thrown away).
 func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 	all, err := e.St.Jobs(true, 100000) // active only: a finished job's hash must not block a later grab of the same release
 	if err != nil || j.Release == "" {
@@ -161,12 +161,31 @@ func (e *Engine) bindReview(j *store.Job, queue []sonarr.QueueItem) string {
 			owners[strings.ToLower(o.DownloadID)] = true
 		}
 	}
+	// Sonarr names a queue item by the torrent's own name, which is rarely the release title the indexer showed
+	// ("...Ryo-Ohki S01 [Blu-ray]..." vs "...Ryo-Ohki OVA 1 v2 [BD]..."), so an exact title is a bonus, not a
+	// requirement: otherwise the one download of this series and season that appeared after the grab was made.
+	var fresh []string
 	for _, q := range queue {
-		if q.SeriesID == j.SeriesID && q.SeasonNumber == j.Season && q.Title == j.Release && q.DownloadID != "" && !owners[strings.ToLower(q.DownloadID)] {
+		if q.SeriesID != j.SeriesID || q.SeasonNumber != j.Season || q.DownloadID == "" || owners[strings.ToLower(q.DownloadID)] {
+			continue
+		}
+		if q.Title == j.Release {
 			return q.DownloadID
 		}
+		if t, err := time.Parse(time.RFC3339, q.Added); err == nil && t.After(time.Unix(j.Created, 0).Add(-time.Minute)) {
+			seen := false
+			for _, id := range fresh {
+				seen = seen || strings.EqualFold(id, q.DownloadID)
+			}
+			if !seen {
+				fresh = append(fresh, q.DownloadID)
+			}
+		}
 	}
-	return ""
+	if len(fresh) == 1 {
+		return fresh[0]
+	}
+	return "" // none yet, or several: never guess which one is ours
 }
 
 // RejectReview discards a relabelled pack on a human's say-so: the parked torrent and its data are removed from

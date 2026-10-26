@@ -214,6 +214,7 @@ type QueueItem struct {
 	OutputPath   string  `json:"outputPath"`
 	TrackedState string  `json:"trackedDownloadState"`
 	Quality      Quality `json:"quality"`
+	Added        string  `json:"added"` // when Sonarr queued it (RFC 3339)
 }
 
 type ManualImportItem struct {
