@@ -18,9 +18,58 @@ const tracker = (indexer: string) => indexer.replace(/\s*\((?:Prowlarr|Jackett)\
 // A pack that was rejected is gone from the download client and blocklisted, so "Retry now" can only end as "lost".
 const wasRejected = (message: string) => /^(auto-)?rejected|pack rejected/i.test(message);
 
+// ReviewDialog shows how a parked relabelled pack would be imported (changes nothing) and lets the human approve it.
+function ReviewDialog({ id, onClose }: { id: number; onClose: () => void }) {
+  const qc = useQueryClient();
+  const plan = useQuery({ queryKey: ["review", id], queryFn: () => api.reviewPlan(id), retry: false });
+  const approve = useMutation({
+    mutationFn: () => api.reviewApprove(id, plan.data?.token ?? ""),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["jobs"] }); onClose(); },
+  });
+  const p = plan.data;
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="card max-h-[90vh] w-full max-w-3xl space-y-3 overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="text-lg font-semibold">Review this pack</div>
+        {plan.isLoading && <div className="text-muted">Checking the pack…</div>}
+        {plan.error && <div className="text-sm text-bad">{(plan.error as Error).message}</div>}
+        {p && (
+          <>
+            <div className="break-all text-xs text-muted">{p.folder}</div>
+            {p.ok ? (
+              <div className="text-sm">
+                Every episode of the season has exactly one file, each file passed the probe, and each carries an English track.
+                Approving imports them onto these episodes by <b>copying</b> and keeps the torrent seeding in its seed category.
+                <b> Sonarr then replaces each episode's current file with the new one, and with no recycle bin the replaced file is gone for good</b>: the table shows what each one replaces.
+              </div>
+            ) : (
+              <div className="text-sm text-warn">Consolidarr cannot map this pack by itself: {p.reason}. Import it by hand in Sonarr (Manual Import), or reject it.</div>
+            )}
+            {p.files.length > 0 && (
+              <table className="w-full text-sm">
+                <thead><tr><th>Ep</th><th>Episode</th><th>New file</th><th>Quality / language</th><th>Identified by</th><th>Replaces</th></tr></thead>
+                <tbody>{p.files.map((f) => (
+                  <tr key={f.path}><td className="num">{f.episode}</td><td>{f.title}</td><td className="max-w-xs truncate text-muted" title={f.path}>{f.path.split("/").pop()}</td><td className="whitespace-nowrap">{f.packQuality}<div className="text-xs text-muted">{f.packLangs}</div></td><td className="text-muted">{f.why}</td><td className="max-w-xs truncate text-warn" title={f.replaces}>{f.replaces || "nothing (no file yet)"}</td></tr>
+                ))}</tbody>
+              </table>
+            )}
+            {p.skipped && p.skipped.length > 0 && <div className="text-xs text-muted">Not imported (not episodes): {p.skipped.join(", ")}</div>}
+          </>
+        )}
+        {approve.error && <div className="text-sm text-bad">{(approve.error as Error).message}</div>}
+        <div className="flex justify-end gap-2">
+          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn btn-primary" disabled={!p?.ok || approve.isPending} onClick={() => approve.mutate()}>Approve and import</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Jobs() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState("all");
+  const [reviewing, setReviewing] = useState<number | null>(null);
   const jobs = useQuery({ queryKey: ["jobs", false], queryFn: () => api.jobs(false), refetchInterval: 10000 });
   const refresh = () => qc.invalidateQueries({ queryKey: ["jobs"] });
   const approve = useMutation({ mutationFn: api.approve, onSuccess: refresh });
@@ -67,13 +116,14 @@ export default function Jobs() {
                 <td className="max-w-sm text-xs text-muted">{j.message}</td>
                 <td className="space-x-2 whitespace-nowrap text-right">
                   {j.status === "ready" && <button className="btn btn-primary" onClick={() => approve.mutate(j.id)}>Approve</button>}
+                  {j.kind === "dub-review" && j.status === "holding" && <button className="btn btn-primary" onClick={() => setReviewing(j.id)} title="See how this pack would be imported, then approve it">Review</button>}
                   {["holding", "lost", "failed", "ready"].includes(j.status) && !wasRejected(j.message) && (
                     <button className="btn" disabled={retry.isPending} onClick={() => retry.mutate(j.id)} title="Re-check this job now instead of waiting for the next cycle">Retry now</button>
                   )}
                   {["holding", "ready", "lost"].includes(j.status) && (
                     <button className="btn btn-danger" disabled={reject.isPending}
-                      onClick={() => confirm(`Reject this pack for ${j.title} S${String(j.season).padStart(2, "0")}? It is removed from the download client and blocklisted, a new search starts, and your current files are not touched.`) && reject.mutate(j.id)}
-                      title="Bad or encrypted pack: remove it, blocklist the release and search again">Reject pack</button>
+                      onClick={() => confirm(`Reject this pack for ${j.title} S${String(j.season).padStart(2, "0")}? The download is kept (moved to its seed category, never deleted), the release is blocklisted when that is safe, and your current files are not touched.`) && reject.mutate(j.id)}
+                      title="Bad pack: take it out of the queue and set the download aside (never deleted)">Reject pack</button>
                   )}
                   <button className="btn btn-danger" onClick={() => del.mutate(j.id)} title="Stop tracking (does not cancel the download or restore files)">Remove</button>
                 </td>
@@ -83,6 +133,7 @@ export default function Jobs() {
           </tbody>
         </table>
       </div>
+      {reviewing !== null && <ReviewDialog id={reviewing} onClose={() => setReviewing(null)} />}
     </div>
   );
 }

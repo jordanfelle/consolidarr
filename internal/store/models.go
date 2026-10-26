@@ -234,6 +234,17 @@ func (s *Store) AddJob(j Job) (int64, error) {
 	return j.ID, err
 }
 
+// SetOldFiles replaces the list of library files a job is replacing (UpdateJob does not touch it). A relabelled pack is
+// approved days after it was grabbed, so the list recorded at grab time is refreshed to what the season has today.
+func (s *Store) SetOldFiles(id int64, ids []int) error {
+	b, _ := json.Marshal(ids)
+	if ids == nil {
+		b = []byte("[]")
+	}
+	_, err := s.Exec(`update jobs set old_file_ids=? where id=?`, string(b), id)
+	return err
+}
+
 // UpdateJob saves a job's mutable state.
 func (s *Store) UpdateJob(j Job) error {
 	eps, _ := json.Marshal(j.ExpectedEps)

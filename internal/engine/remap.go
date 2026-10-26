@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -114,6 +115,18 @@ func startImport(ctx context.Context, c *sonarr.Client, j *store.Job, path, down
 	}
 	if err != nil {
 		return 0, err
+	}
+	if j.Kind == kindReview {
+		// The listing is fetched again here, after the plan was shown: never import a file Sonarr now reads as Unknown quality.
+		byPath := map[string]sonarr.ManualImportItem{}
+		for _, it := range items {
+			byPath[it.Path] = it
+		}
+		for path := range j.Mapping {
+			if q := qualityName(byPath[path].Quality); q == "" || strings.EqualFold(q, "unknown") {
+				return 0, fmt.Errorf("Sonarr now reads %s as Unknown quality; nothing was imported", filepath.Base(path))
+			}
+		}
 	}
 	return c.ImportMapped(ctx, j.SeriesID, downloadID, j.Mapping, items)
 }

@@ -65,6 +65,7 @@ type fakeSonarr struct {
 	failByID      bool               // GET /manualimport?downloadId=... answers 500
 	episodes      []map[string]any   // when set, GET /episode answers exactly this
 	mappedImports [][]map[string]any // the "files" of every ManualImport command
+	importMode    string             // importMode of the last ManualImport command
 	releases      []map[string]any   // when set, GET /release answers exactly this
 	failReleases  bool               // GET /release answers 500
 	connectFails  int                // the next N POST /release answer Sonarr's "Failed to connect to qBittorrent" 500
@@ -168,12 +169,14 @@ func newFake(packEps []int) *fakeSonarr {
 			SeasonNumber int              `json:"seasonNumber"`
 			Path         string           `json:"path"`
 			ClientID     string           `json:"downloadClientId"`
+			ImportMode   string           `json:"importMode"`
 			Files        []map[string]any `json:"files"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
 		if b.Name == "ManualImport" {
 			f.mappedImports = append(f.mappedImports, b.Files)
+			f.importMode = b.ImportMode
 		}
 		if b.Name != "SeasonSearch" && f.failImport > 0 {
 			f.failImport--

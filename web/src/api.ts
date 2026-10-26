@@ -12,6 +12,10 @@ export type Candidate = {
   guid: string; indexerId: number; indexer: string; title: string; size: number; seeders: number | null;
   quality: { quality: { name: string } }; blocking: string[]; picked: boolean; dual: boolean; kind: string;
 };
+export type ReviewPlan = {
+  ok: boolean; reason?: string; folder: string; skipped?: string[]; token?: string;
+  files: { path: string; episode: number; title: string; why: string; packQuality: string; packLangs: string; replaces: string; fileId: number }[];
+};
 export type Job = {
   id: number; instId: number; seriesId: number; season: number; title: string; release: string;
   indexer: string; sizeGB: number; status: string; message: string; progress: number; oldFileIds: number[];
@@ -99,6 +103,8 @@ export const api = {
   retryImport: (a: Attention) => req<{ commandId: number }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/retry`),
   removePack: (a: Attention, o: { blocklist: boolean; deleteFiles: boolean; research: boolean }) =>
     req<{ removed: number; searched: boolean }>("POST", `/attention/${a.instId}/${a.seriesId}/${a.season}/remove`, o),
+  reviewPlan: (id: number) => req<ReviewPlan>("GET", `/jobs/${id}/review`),
+  reviewApprove: (id: number, token: string) => req<{ ok: boolean }>("POST", `/jobs/${id}/review/approve?token=${encodeURIComponent(token)}`),
   retryJob: (id: number) => req<Job>("POST", `/jobs/${id}/retry`),
   rejectJob: (id: number, research = true) => req<Job>("POST", `/jobs/${id}/reject`, { research }),
   keys: () => req<ApiKey[]>("GET", "/keys"),
