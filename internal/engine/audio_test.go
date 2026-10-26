@@ -654,8 +654,33 @@ func TestARelabelledAnimeBytesPackIsGrabbedWithAnOverrideForTheLaterSeason(t *te
 	if err := json.Unmarshal([]byte(v.fake.grabBody), &body); err != nil {
 		t.Fatal(err)
 	}
+	if js, _ := v.st.Jobs(true, 10); len(js) != 1 || js[0].Kind != kindReview {
+		t.Fatalf("want one active %q job, got %+v", kindReview, js)
+	}
 	if body.GUID != "ab" || !body.ShouldOverride || body.SeriesID != 1 || len(body.EpisodeIDs) != 2 || body.EpisodeIDs[0] != 601 ||
 		!strings.Contains(string(body.Quality), "WEBDL-1080p") || !strings.Contains(string(body.Languages), "Japanese") {
 		t.Fatalf("override body = %s", v.fake.grabBody)
+	}
+}
+
+// A relabelled pack cannot be mapped or proved by consolidarr, so once downloaded it is parked for a human: no verify,
+// no import, nothing deleted, and never auto-rejected however long it sits.
+func TestAFinishedRelabelledPackWaitsForAHumanAndNothingIsTouched(t *testing.T) {
+	v := setup(t, []int{1, 2, 3})
+	j := v.job(t, time.Now().Add(-time.Hour))
+	_, _ = v.st.Exec(`update jobs set status='downloading', kind=? where id=?`, kindReview, j.ID)
+	j, _ = v.st.Job(j.ID)
+	set := live()
+	set.HoldRejectHours = 1
+	for i := 0; i < 3; i++ {
+		v.e.advance(context.Background(), v.inst, v.c, set, j, done(100, 0, "completed"))
+		j, _ = v.st.Job(j.ID)
+	}
+	got := v.status(t, j.ID)
+	if got.Status != "holding" || !strings.Contains(got.Message, "awaiting your review") || !strings.Contains(got.Message, "/dl/pack") {
+		t.Fatalf("got %s %q", got.Status, got.Message)
+	}
+	if len(v.fake.deleted) != 0 || len(v.fake.removed) != 0 || v.fake.grabs != 0 {
+		t.Fatalf("nothing may be deleted, removed or regrabbed: deleted=%v removed=%v", v.fake.deleted, v.fake.removed)
 	}
 }

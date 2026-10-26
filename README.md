@@ -86,11 +86,12 @@ Two rules about audio, both checked against the files themselves rather than rel
    **AnimeBytes labels every cour `S01`** (it has no seasons; each cour is its own group and Prowlarr stamps `S01` on
    all of them), so the dub of season 2 or 3 only ever turns up as a season 1 pack, which Sonarr rejects for that season
    ("Episode wasn't requested: 1x1-11"). With *accept AnimeBytes packs numbered S01 for a later season* on (off by
-   default), an AnimeBytes dual-audio `S01` full-season pack **published after the season finished airing** is taken for
-   that season (seasons 2 and up only). It is grabbed through Sonarr's release override, so Sonarr tracks and imports it
-   against the season's episodes and refuses any file that parses to other episodes; the usual proof (episode numbering or
-   titles, `ffprobe` English audio on every episode) still has to pass before anything is deleted. A true season 1 pack
-   published after a later season aired (a re-encode) could be mistaken for it; the proof is what catches that.
+   default), an AnimeBytes dual-audio `S01` full-season pack **published after the season finished airing** is
+   downloaded for that season (seasons 2 and up only), grabbed through Sonarr's release override so Sonarr tracks it
+   against the season's episodes. Consolidarr cannot tell which cour such a pack is (an older cour's dub is published
+   late too), so it **never verifies, imports or deletes it**: the job is parked as *holding* ("awaiting your review",
+   with the download folder) and stays so, never auto-rejected, until you check it and import it in Sonarr (Manual Import
+   onto the season) or reject it here. Notifying you is a follow-up.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started

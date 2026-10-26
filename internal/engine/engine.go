@@ -325,6 +325,13 @@ func (e *Engine) CurrentRank(ctx context.Context, inst store.Instance, s audit.S
 }
 
 // Grab records the season's current files, grabs the release and starts tracking a job.
+// kindReview marks a dub job for a pack the indexer numbered wrongly (see relabelledDub). It is downloaded and then left
+// alone, whatever it contains, until a human has looked: nothing is verified, imported or deleted by consolidarr.
+const kindReview = "dub-review"
+
+// isDub reports whether the job is a dual-audio chase (an ordinary one or one awaiting review).
+func isDub(kind string) bool { return kind == "dub" || kind == kindReview }
+
 // relabelGrab tells Sonarr which episodes a release really is (see sonarr.Client.GrabOverride).
 type relabelGrab struct {
 	rel        sonarr.Release
@@ -576,6 +583,7 @@ func (e *Engine) relabelledDub(ctx context.Context, c *sonarr.Client, r audit.Se
 		ids = append(ids, ep.ID)
 		t, err := time.Parse(time.RFC3339, ep.AirDateUTC)
 		if err != nil {
+			e.warnOften("relabel-airdate:"+skipKey(0, r.SeriesID, r.Season), fmt.Sprintf("%s S%02d: an episode has no air date, so a relabelled pack cannot be told from the original season 1; skipped", r.Title, r.Season))
 			return nil, nil // an episode with no air date: the season is not provably over
 		}
 		if t.After(since) {
@@ -662,7 +670,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 	// start grabs (or, in a dry run, only reports) a picked pack. It returns true once the caller should stop.
 	start := func(r audit.Season, p *sonarr.Release, kind string, key string, ov *relabelGrab) (stop bool) {
 		what := ""
-		if kind == "dub" {
+		if isDub(kind) {
 			what = "dual-audio "
 		}
 		if ov != nil {
@@ -757,7 +765,7 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 				continue
 			}
 			if p, ov := e.relabelledDub(ctx, c, r, dubRels, set); p != nil {
-				start(r, p, "dub", "dub:"+key, ov)
+				start(r, p, kindReview, "dub:"+key, ov)
 				continue
 			}
 			// Packs usually appear only after the season ends and dubs lag the sub, so look again in a week.
@@ -1159,6 +1167,17 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 		}
 		return
 	}
+	if j.Kind == kindReview {
+		// The pack is numbered S01 by the indexer, so consolidarr cannot map or prove it. It stays where it is (never
+		// auto-rejected, nothing deleted) until a human has checked it and imported it in Sonarr, or rejected it here.
+		msg := "awaiting your review: the indexer numbers this pack S01 but it was grabbed as the later season's dub. Check it is the right cour, then import it in Sonarr (Manual Import onto this season) or reject it here. Folder: " + mine[0].OutputPath
+		if j.Status != "holding" || j.Message != msg {
+			j.Status, j.Message = "holding", msg
+			e.St.Event("warn", label+": "+msg)
+			_ = e.St.UpdateJob(j)
+		}
+		return
+	}
 	// finished downloading: verify before touching anything
 	v := e.verify(ctx, inst, c, set, &j, mine)
 	switch v.State {
@@ -1171,7 +1190,7 @@ func (e *Engine) advance(ctx context.Context, inst store.Instance, c *sonarr.Cli
 			// A rejected dual-audio pack is blocklisted, so a few hours later the search finds the next best one; a dub
 			// has often several candidates (some of them another series' pack that Sonarr's matcher let through).
 			skip := 7 * 24 * time.Hour
-			if j.Kind == "dub" {
+			if isDub(j.Kind) {
 				skip = dubRetryAfterReject
 			}
 			if err := e.rejectBody(ctx, c, &j, false, skip, fmt.Sprintf("auto-rejected after %dh on hold: %s", set.HoldRejectHours, v.Message)); err != nil {

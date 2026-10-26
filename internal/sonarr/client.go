@@ -372,7 +372,8 @@ func (c *Client) Grab(ctx context.Context, guid string, indexerID int) error {
 // wrongly (AnimeBytes calls every cour "S01"). Sonarr then tracks, imports and reports the download against those
 // episodes, and refuses to import a file that parses to any other episode.
 func (c *Client) GrabOverride(ctx context.Context, r Release, seriesID int, episodeIDs []int) error {
-	if len(r.rawQuality) == 0 || len(r.rawLanguages) == 0 || len(episodeIDs) == 0 {
+	null := func(b json.RawMessage) bool { return len(b) == 0 || string(b) == "null" }
+	if null(r.rawQuality) || null(r.rawLanguages) || len(episodeIDs) == 0 {
 		return fmt.Errorf("cannot override-grab %q: missing quality, languages or episodes", r.Title)
 	}
 	return c.do(ctx, "POST", "/release", map[string]any{"guid": r.GUID, "indexerId": r.IndexerID, "shouldOverride": true,
