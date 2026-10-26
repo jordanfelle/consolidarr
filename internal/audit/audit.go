@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -141,8 +142,17 @@ type PickOpts struct {
 // after that season finished airing, so it cannot be the original season 1 release.
 func relabelled(x sonarr.Release, s Season, o PickOpts) bool {
 	return o.Relabelled && o.Dub && s.Season > 1 && x.SeasonNum == 1 && !o.Since.IsZero() &&
-		strings.Contains(strings.ToLower(x.Indexer), "animebytes") && x.Published().After(o.Since)
+		strings.Contains(strings.ToLower(x.Indexer), "animebytes") && x.Published().After(o.Since) && !multiSeasonTitle.MatchString(x.Title)
 }
+
+// multiSeasonTitle matches release names that say they hold more than one season (a "Complete" series pack, a batch,
+// a collection, "Extras"): never the single later cour a relabelled pack is meant to be.
+var multiSeasonTitle = regexp.MustCompile(`(?i)(^|[^a-z0-9])(complete|collection|batch|box[ ._-]?set|bd[ ._-]?box|all[ ._-]seasons?|extras|` +
+	// a season range needs two small numbers ("Seasons 1-3", "Season 1 and 2"), never a year or a resolution
+	`seasons?[ ._-]?\d{1,2}[ ._-]?(-|–|to|thru|~|\+|&|,|and)[ ._-]?\d{1,2}|` +
+	// "S01-S08", "S01+S02", "S01.S02", "S01S02", "S01 to S03"; "S01-08" only without spaces
+	`s\d{1,2}[ ._-]?(-|–|~|\+|&|to|thru)?[ ._-]?s\d{1,2}|s\d{1,2}(-|–|~)\d{1,2}|` +
+	`vol(ume)?s?[ ._-]?\d+[ ._-]?(-|–|to)[ ._-]?\d+)([^a-z0-9]|$)`)
 
 // Pick chooses a pack deterministically. Sonarr's own rejections are honoured except
 // "Existing file meets cutoff", which is expected because the old files get replaced.

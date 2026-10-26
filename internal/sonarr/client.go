@@ -485,11 +485,11 @@ func logSkippedCommands(skipped, total int) {
 	log.Printf("sonarr: %d of %d commands in the command listing could not be decoded and were skipped (Sonarr changed a shape?)", skipped, total)
 }
 
-// RemoveQueue removes items from Sonarr's queue. removeFromClient also deletes the download (and its files in
-// the download directory) from the download client; library files are never touched. Sonarr is told not to
+// RemoveQueue takes items out of Sonarr's queue. It NEVER removes the download from the download client: a torrent with
+// data is never deleted (operator rule), so callers move it to the seed category themselves first. Sonarr is told not to
 // search again on its own: callers decide whether to search.
-func (c *Client) RemoveQueue(ctx context.Context, ids []int, removeFromClient, blocklist bool) error {
-	p := fmt.Sprintf("/queue/bulk?removeFromClient=%t&blocklist=%t&skipRedownload=true", removeFromClient, blocklist)
+func (c *Client) RemoveQueue(ctx context.Context, ids []int, blocklist bool) error {
+	p := fmt.Sprintf("/queue/bulk?removeFromClient=false&blocklist=%t&skipRedownload=true", blocklist)
 	return c.do(ctx, "DELETE", p, map[string]any{"ids": ids}, nil, 2*time.Minute)
 }
 

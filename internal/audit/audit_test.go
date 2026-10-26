@@ -327,3 +327,45 @@ func TestARelabelledAnimeBytesPackStandsInForALaterSeasonOnlyWhenPublishedAfterI
 		}
 	}
 }
+
+// Live (#88): a 1 TB "Complete [Extras]" whole-series torrent was picked for one cour.
+func TestARelabelledPackThatSaysItHoldsMoreThanOneSeasonIsNeverPicked(t *testing.T) {
+	aired := time.Date(2026, 3, 25, 0, 0, 0, 0, time.UTC)
+	s := Season{Season: 8, CurRank: 10802}
+	o := PickOpts{Dub: true, Relabelled: true, Since: aired}
+	for _, title := range []string{
+		"[JySzE] Naruto Shippuden [Dual Audio] [Complete] [Extras] [x265]",
+		"[Grp] Show Complete Collection Dual Audio",
+		"[Grp] Show S01-S08 Dual Audio",
+		"[Grp] Show Season 1-8 Dual Audio",
+		"[Grp] Show Batch Dual Audio",
+	} {
+		r := relabelRel("x", "AnimeBytes (Prowlarr)", "2026-07-25T05:24:37Z")
+		r.Title = title
+		if p := Pick([]sonarr.Release{r}, s, o); p != nil {
+			t.Errorf("picked %q", title)
+		}
+	}
+	ok := relabelRel("ok", "AnimeBytes (Prowlarr)", "2026-07-25T05:24:37Z") // "[YURASUKA] Oshi no Ko S01 [Blu-ray]..."
+	if p := Pick([]sonarr.Release{ok}, s, o); p == nil {
+		t.Fatal("an ordinary single-cour pack must still be picked")
+	}
+}
+
+func TestMultiSeasonTitlePatterns(t *testing.T) {
+	yes := []string{"Show S01-S08 Dual", "Show S01-08 Dual", "Show S01+S02", "Show Seasons 1+2", "Show Seasons 1&2", "Show S01–S03",
+		"Show Seasons 1, 2", "Show BD-BOX", "Show Box Set", "Show Vol.1-4", "Show Complete Series", "Show Batch",
+		"Show S01.S02.1080p", "Show S01S02", "Show S01 to S03", "Show Seasons 1 thru 3", "Show Extras"}
+	no := []string{"[YURASUKA] Oshi no Ko S01 [Blu-ray][1080p][Opus 2.0][Dual Audio]", "Show S01E01-E02", "Show S01E01-S01E13 Dual", "Show S03 1080p BluRay x265-GRP", "Show 2nd Season [BD]",
+		"Show S01 - 1080 BluRay", "Show S01 - 10 Dual", "Show S01 + 1080", "Show Season 3 - 2024", "Show - Extra Edition S01", "Show S03-1080p x265"}
+	for _, s := range yes {
+		if !multiSeasonTitle.MatchString(s) {
+			t.Errorf("should be multi-season: %q", s)
+		}
+	}
+	for _, s := range no {
+		if multiSeasonTitle.MatchString(s) {
+			t.Errorf("should NOT be multi-season: %q", s)
+		}
+	}
+}

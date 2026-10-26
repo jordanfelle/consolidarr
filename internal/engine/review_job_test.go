@@ -26,7 +26,7 @@ type fakeQbit struct {
 }
 
 func newFakeQbit(t *testing.T, category string, progress float64, files ...string) *fakeQbit {
-	f := &fakeQbit{files: files, cats: map[string]bool{"btn": true},
+	f := &fakeQbit{files: files, cats: map[string]bool{"btn": true, "seed-btn": true},
 		torrent: map[string]any{"hash": "d", "category": category, "progress": progress, "content_path": "/dl/pack", "added_on": time.Now().Unix()}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/torrents/info", func(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +66,11 @@ func newFakeQbit(t *testing.T, category string, progress float64, files ...strin
 		f.mu.Lock()
 		f.torrent["category"] = r.Form.Get("category")
 		f.changes = append(f.changes, "park:"+r.Form.Get("category"))
+		f.mu.Unlock()
+	})
+	mux.HandleFunc("/api/v2/torrents/stop", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.changes = append(f.changes, "stop")
 		f.mu.Unlock()
 	})
 	mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +117,7 @@ func TestAReviewPackIsParkedOutOfTheArrsCategoryAndWaitsForAHuman(t *testing.T) 
 		!strings.Contains(got.Message, "say it is this season") {
 		t.Fatalf("got %s %q", got.Status, got.Message)
 	}
-	if l := q.log(); !strings.Contains(l, "create:consolidarr-review") || !strings.Contains(l, "park:consolidarr-review") || strings.Contains(l, "remove") {
+	if l := q.log(); !strings.Contains(l, "create:consolidarr-review") || !strings.Contains(l, "park:consolidarr-review") || strings.Contains(l, "seed-btn") {
 		t.Fatalf("qBittorrent changes: %q", l)
 	}
 	if len(v.fake.deleted) != 0 || len(v.fake.removed) != 0 {
@@ -126,7 +131,7 @@ func TestAPackThatIsAnotherSeasonIsDiscardedWhileStillDownloading(t *testing.T) 
 	v, j := reviewEnv(t, q)
 	v.e.advance(context.Background(), v.inst, v.c, live(), j, nil)
 	got := v.status(t, j.ID)
-	if got.Status != "failed" || !strings.Contains(got.Message, "not this season") || !strings.Contains(q.log(), "remove:true") {
+	if got.Status != "failed" || !strings.Contains(got.Message, "not this season") || !strings.Contains(q.log(), "park:seed-btn") {
 		t.Fatalf("got %s %q, qbit %q", got.Status, got.Message, q.log())
 	}
 	if !v.st.Skipped(skipKey(1, 1, 3)) || !v.st.Skipped("dub:"+skipKey(1, 1, 3)) {

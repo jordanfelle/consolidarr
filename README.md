@@ -92,13 +92,18 @@ Two rules about audio, both checked against the files themselves rather than rel
    cour such a pack is from its name, so it never trusts it:
    - the torrent is **moved to the `consolidarr-review` category** (setting *reviewCategory*) at once, which no arr app
      watches, so Sonarr never imports it;
-   - as soon as qBittorrent has the file list, the **file names are checked against the season** (an `S03` in the name,
-     or episode titles). A clear mismatch (a "2nd Season" pack grabbed for season 4) is **deleted with its data at once**
-     and the season left alone for a week;
+   - as soon as qBittorrent has the file list, the **file names are checked against the season**. Positive evidence
+     against a pack is episode titles that belong to another season (a "2nd Season" pack grabbed for season 4), or far
+     more video files than the season has episodes (52 files for a 13-episode season, a 500-file "Complete"): it is
+     **set aside** (moved to the matching seed category, `btn` -> `seed-btn`) and the season left alone for a week.
+     Releases whose title says Complete, Collection, Batch, Extras or a season range are never picked in the first place;
    - otherwise it downloads and then **stops as *holding*, "awaiting your review"**, with the folder. Nothing is imported
-     or deleted by consolidarr. You import it in Sonarr (Manual Import onto the season) or reject it here.
-   At most 2 such packs wait at once; after one is handled the season is left alone for a week. Notifying you is a
-   follow-up (#82); an in-app Approve is #83's last step.
+     by consolidarr. You import it in Sonarr (Manual Import onto the season) or reject it here.
+   **consolidarr never deletes a torrent or its data**: its qBittorrent client has no delete call, and every Sonarr queue
+   removal it makes (reject, auto-reject, *Remove pack*) is sent without remove-from-client. Rejecting or setting a pack
+   aside moves the torrent to its seed category (`btn` -> `seed-btn`) and it stays there; a wrong pack that is still
+   downloading is also stopped. Without qBittorrent access the torrent is simply left where it is. At most 2 such packs wait at once; after one is handled
+   the season is left alone for a week. Notifying you is #82; an in-app Approve is #85.
 
 The audio proof ignores *Allow unverified*: if `ffprobe` cannot read the pack (no mount), the job is held, because
 nothing may be deleted on a guess about audio. Without `ffprobe` installed, seasons that need the proof are not started

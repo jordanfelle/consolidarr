@@ -34,6 +34,11 @@ func reviewCheck(names []string, target, all []order.Ep, season int) (verdict, d
 	// Only positive evidence from the names may condemn a pack (the caller throws it away on a mismatch). A short file
 	// count proves nothing: Sonarr's list can include recaps, specials and merged episodes.
 	short := len(videos) < len(target)
+	// Far more files than the season has episodes is positive evidence of a multi-season or whole-series pack (a 52-file
+	// pack for a 13-episode season, a 500-file "Complete" for 24). It is only set aside (the torrent is kept), never imported.
+	if n, m := len(videos), len(target); m > 0 && n >= 3*m && n-m >= 6 {
+		return reviewMismatch, fmt.Sprintf("the pack has %d video files but this season has %d episodes: a multi-season pack", n, m)
+	}
 	var here, elsewhere int
 	other := map[int]int{}
 	for _, n := range videos {

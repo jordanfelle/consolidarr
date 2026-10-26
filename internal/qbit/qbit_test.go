@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestInfoFilesParkAndRemove(t *testing.T) {
+func TestInfoFilesAndPark(t *testing.T) {
 	var posted []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/torrents/info", func(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +22,7 @@ func TestInfoFilesParkAndRemove(t *testing.T) {
 		w.Write([]byte(`[{"name":"x/E01.mkv","size":5,"progress":1}]`))
 	})
 	mux.HandleFunc("/api/v2/torrents/categories", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"btn":{}}`)) })
-	for _, p := range []string{"setCategory", "createCategory", "delete"} {
+	for _, p := range []string{"setCategory", "createCategory"} {
 		p := p
 		mux.HandleFunc("/api/v2/torrents/"+p, func(w http.ResponseWriter, r *http.Request) {
 			r.ParseForm()
@@ -47,9 +47,11 @@ func TestInfoFilesParkAndRemove(t *testing.T) {
 	}
 	_ = c.EnsureCategory(ctx, "review")
 	_ = c.Park(ctx, "ABC", "review")
-	_ = c.Remove(ctx, "ABC", true)
+	if !c.HasCategory(ctx, "btn") || c.HasCategory(ctx, "seed-btn") {
+		t.Fatal("HasCategory")
+	}
 	got := strings.Join(posted, " ")
-	for _, want := range []string{"createCategory?category=review", "setCategory?category=review&hashes=abc", "delete?deleteFiles=true&hashes=abc"} {
+	for _, want := range []string{"createCategory?category=review", "setCategory?category=review&hashes=abc"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
