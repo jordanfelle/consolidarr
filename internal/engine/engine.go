@@ -422,6 +422,13 @@ func inQueue(q []sonarr.QueueItem, series, season int) bool {
 	return false
 }
 
+// noPackBackOff is how long a season is left alone after a search found no usable pack: soon at first, since packs
+// usually appear days after a season ends (a fixed week meant a pack published on day 3 waited until day 7), then
+// slower for seasons that really have none, so a host with hundreds of flagged seasons does not hammer the indexers.
+var noPackBackOff = []time.Duration{6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 48 * time.Hour, 96 * time.Hour, 7 * 24 * time.Hour}
+
+const airingBackOff = 48 * time.Hour
+
 func skipKey(inst int64, series, season int) string {
 	return fmt.Sprintf("%d:%d:%d", inst, series, season)
 }
@@ -808,7 +815,13 @@ func (e *Engine) topUp(ctx context.Context, inst store.Instance, c *sonarr.Clien
 		}
 		p := audit.Pick(rels, r, audit.PickOpts{MaxGB: set.MaxPackGB, LastResort: set.LastResort})
 		if p == nil {
-			e.St.Skip(key, 7*24*time.Hour, "no pack")
+			if !r.Complete {
+				// Still airing: a full-season pack cannot exist yet, so searching often only burns the ladder before the
+				// finale. Look again in a couple of days, and start the graduated schedule once the season is complete.
+				e.St.Skip(key, airingBackOff, "no pack")
+			} else {
+				e.St.SkipGraduated(key, noPackBackOff, "no pack")
+			}
 			continue
 		}
 		start(r, p, "", key, nil)

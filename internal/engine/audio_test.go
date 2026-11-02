@@ -766,3 +766,49 @@ func TestOnlyAFewRelabelledPacksWaitForReviewAtOnce(t *testing.T) {
 		t.Fatal("with the review slots full nothing more is fetched")
 	}
 }
+
+// A finished season with no pack is searched again soon, on a graduated schedule; one still airing is only re-checked
+// every two days and does not use up the schedule before its finale.
+func TestNoPackBackOffGraduatesForFinishedSeasonsAndNotWhileAiring(t *testing.T) {
+	grabPause = 0
+	backOff := func(v *env) time.Duration {
+		var until int64
+		if err := v.st.QueryRow(`select until from skips where key=?`, skipKey(1, 1, 3)).Scan(&until); err != nil {
+			t.Fatal(err)
+		}
+		return time.Until(time.Unix(until, 0)).Round(time.Hour)
+	}
+	seed := func(v *env, complete bool) {
+		rows := []audit.Season{{InstID: 1, SeriesID: 1, Season: 3, Title: "Show", SeriesType: "standard", Files: 12, Aired: 12,
+			Complete: complete, Qualities: []string{"WEBDL-1080p"}, Sources: []string{"web"}, CurRank: 10802}}
+		if err := v.st.ReplaceSeasons(1, 0, rows); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = v.st.SaveInstance(store.Instance{Name: "t", URL: v.fake.srv.URL, APIKey: "k", Enabled: true})
+		v.st.SetKV("lastScan:1", fmt.Sprint(time.Now().Unix()))
+	}
+	set := live()
+	set.SchedulerEnabled = true
+
+	v := setup(t, []int{1, 2, 3})
+	v.fake.releases = []map[string]any{}
+	seed(v, true)
+	for i, want := range []time.Duration{6 * time.Hour, 12 * time.Hour, 24 * time.Hour} {
+		cycleOnce(v, set)
+		if got := backOff(v); got != want {
+			t.Fatalf("finished season, search %d: backed off %v, want %v", i+1, got, want)
+		}
+		_, _ = v.st.Exec(`update skips set until=? where key=?`, time.Now().Add(-time.Minute).Unix(), skipKey(1, 1, 3))
+	}
+
+	w := setup(t, []int{1, 2, 3})
+	w.fake.releases = []map[string]any{}
+	seed(w, false)
+	for i := 0; i < 3; i++ {
+		cycleOnce(w, set)
+		if got := backOff(w); got != 48*time.Hour {
+			t.Fatalf("airing season, search %d: backed off %v, want 48h every time", i+1, got)
+		}
+		_, _ = w.st.Exec(`update skips set until=? where key=?`, time.Now().Add(-time.Minute).Unix(), skipKey(1, 1, 3))
+	}
+}
