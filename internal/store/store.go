@@ -128,7 +128,8 @@ var migrations = []migration{
 	{"seasons", "no_english", `alter table seasons add column no_english bigint not null default 0`},
 	{"seasons", "audio_unknown", `alter table seasons add column audio_unknown bigint not null default 0`},
 	{"seasons", "complete", `alter table seasons add column complete bigint not null default 0`},
-	{"jobs", "kind", `alter table jobs add column kind text not null default ''`}, // "dub" when the job exists to add an English dub
+	{"jobs", "kind", `alter table jobs add column kind text not null default ''`},      // "dub" when the job exists to add an English dub
+	{"skips", "tries", `alter table skips add column tries bigint not null default 0`}, // consecutive identical outcomes, for graduated back-off
 }
 
 func (s *Store) hasColumn(table, column string) (bool, error) {
@@ -289,8 +290,26 @@ func (s *Store) Skipped(key string) bool {
 }
 
 func (s *Store) Skip(key string, d time.Duration, reason string) {
-	_, _ = s.Exec(`insert into skips(key,until,reason) values(?,?,?) on conflict(key) do update set until=excluded.until, reason=excluded.reason`,
+	_, _ = s.Exec(`insert into skips(key,until,reason) values(?,?,?) on conflict(key) do update set until=excluded.until, reason=excluded.reason, tries=0`,
 		key, time.Now().Add(d).Unix(), reason)
+}
+
+// SkipGraduated backs key off for steps[n], where n counts the consecutive times this same reason was recorded for the
+// key (an expired skip still counts; a different reason, or no row, starts again at steps[0]). The last step repeats.
+// A search that finds nothing should be repeated soon at first, because packs usually appear a few days after a season
+// ends, and only then slow to the long interval for seasons that really have none.
+func (s *Store) SkipGraduated(key string, steps []time.Duration, reason string) {
+	if len(steps) == 0 {
+		return
+	}
+	var tries int
+	var prev string
+	if err := s.QueryRow(`select tries, reason from skips where key=?`, key).Scan(&tries, &prev); err != nil || prev != reason {
+		tries = 0
+	}
+	d := steps[min(tries, len(steps)-1)]
+	_, _ = s.Exec(`insert into skips(key,until,reason,tries) values(?,?,?,?) on conflict(key) do update set until=excluded.until, reason=excluded.reason, tries=excluded.tries`,
+		key, time.Now().Add(d).Unix(), reason, tries+1)
 }
 
 var ErrNotFound = errors.New("not found")

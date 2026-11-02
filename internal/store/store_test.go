@@ -225,8 +225,8 @@ func TestAnExistingDatabaseIsMigratedInPlace(t *testing.T) {
 		t.Fatalf("the new columns must be writable: %v", err)
 	}
 	st.DB.Close()
-	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "12" {
-		t.Fatalf("reopening must be a no-op at version 12, got version %q err=%v", st2.KV("schema_version"), err)
+	if st2, err := Open(dir, ""); err != nil || st2.KV("schema_version") != "13" {
+		t.Fatalf("reopening must be a no-op at version 13, got version %q err=%v", st2.KV("schema_version"), err)
 	}
 }
 
@@ -242,8 +242,8 @@ func TestMigrationsSurviveACrashBetweenTheAlterAndTheVersionBump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-running migrations over existing columns must not fail: %v", err)
 	}
-	if v := st2.KV("schema_version"); v != "12" {
-		t.Fatalf("version must catch up to 12, got %q", v)
+	if v := st2.KV("schema_version"); v != "13" {
+		t.Fatalf("version must catch up to 13, got %q", v)
 	}
 }
 
@@ -385,5 +385,28 @@ func TestJobDeletionProtectsTheCrashRecoveryRecord(t *testing.T) {
 	addJob(8, "importing", 3)
 	if err := st.DeleteInstance(8); err != ErrJobBusy {
 		t.Fatalf("an instance with an importing job must not be deletable, got %v", err)
+	}
+}
+
+func TestSkipGraduatedWalksTheStepsAndResetsOnADifferentReason(t *testing.T) {
+	st := open(t)
+	steps := []time.Duration{time.Hour, 2 * time.Hour, 4 * time.Hour}
+	until := func() time.Duration {
+		var u int64
+		if err := st.QueryRow(`select until from skips where key='k'`).Scan(&u); err != nil {
+			t.Fatal(err)
+		}
+		return time.Until(time.Unix(u, 0)).Round(10 * time.Minute)
+	}
+	for i, want := range []time.Duration{time.Hour, 2 * time.Hour, 4 * time.Hour, 4 * time.Hour} {
+		st.SkipGraduated("k", steps, "no pack")
+		if got := until(); got != want {
+			t.Fatalf("attempt %d backs off %v, want %v", i+1, got, want)
+		}
+	}
+	st.Skip("k", 24*time.Hour, "rejected") // some other outcome: the count starts again
+	st.SkipGraduated("k", steps, "no pack")
+	if got := until(); got != time.Hour {
+		t.Fatalf("after a different reason backs off %v, want the first step", got)
 	}
 }
