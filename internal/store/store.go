@@ -304,7 +304,10 @@ func (s *Store) SkipGraduated(key string, steps []time.Duration, reason string) 
 	}
 	var tries int
 	var prev string
-	if err := s.QueryRow(`select tries, reason from skips where key=?`, key).Scan(&tries, &prev); err != nil || prev != reason {
+	var until int64
+	// A row that expired long ago (a season flagged again months later) is history, not a streak.
+	if err := s.QueryRow(`select tries, reason, until from skips where key=?`, key).Scan(&tries, &prev, &until); err != nil || prev != reason ||
+		time.Since(time.Unix(until, 0)) > 2*steps[len(steps)-1] {
 		tries = 0
 	}
 	d := steps[min(tries, len(steps)-1)]

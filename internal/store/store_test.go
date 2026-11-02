@@ -410,3 +410,18 @@ func TestSkipGraduatedWalksTheStepsAndResetsOnADifferentReason(t *testing.T) {
 		t.Fatalf("after a different reason backs off %v, want the first step", got)
 	}
 }
+
+func TestSkipGraduatedForgetsAStreakThatExpiredLongAgo(t *testing.T) {
+	st := open(t)
+	steps := []time.Duration{time.Hour, 2 * time.Hour}
+	_, err := st.Exec(`insert into skips(key,until,reason,tries) values('k',?,?,?)`, time.Now().Add(-90*24*time.Hour).Unix(), "no pack", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SkipGraduated("k", steps, "no pack")
+	var u int64
+	_ = st.QueryRow(`select until from skips where key='k'`).Scan(&u)
+	if got := time.Until(time.Unix(u, 0)).Round(10 * time.Minute); got != time.Hour {
+		t.Fatalf("a streak that expired 90 days ago backs off %v, want the first step", got)
+	}
+}

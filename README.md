@@ -60,8 +60,10 @@ consolidarr still checks episode coverage but cannot probe the files, and says s
 Nothing is deleted before step 6, and step 6 only runs when every check passes. Jobs that fail a check show as **holding**
 with the reason. With *Dry run* on (the default), the scheduler only logs what it would grab.
 
-A search that finds no usable pack is repeated on a graduated schedule (6 h, 12 h, 1 d, 2 d, 4 d, then weekly), because
-packs usually show up a few days after a season ends; a season that really has none settles at weekly.
+For a finished season, a search that finds no usable pack is repeated on a graduated schedule (6 h, 12 h, 1 d, 2 d, 4 d,
+then weekly), because packs usually show up a few days after a season ends; a season that really has none settles at
+weekly. A season still airing is only re-checked every 2 days and does not start the schedule until its finale has aired.
+(The dual-audio search keeps its own weekly back-off.)
 
 ### English dubs (dual-audio packs)
 
