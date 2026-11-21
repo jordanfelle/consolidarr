@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-26.04 # pinned: ubuntu-latest moves to 26 on 2026-10-19; bump deliberately
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:19-alpine
         env: { POSTGRES_PASSWORD: pw, POSTGRES_DB: consolidarr }
         ports: ["5432:5432"]
         options: >-
